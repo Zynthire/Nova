@@ -1440,81 +1440,15 @@ onTheme(function()
     mainStroke.Color = Theme.Stroke
 end)
 
-New("TextLabel", {
-    Position = UDim2.fromOffset(20, 76),
-    Size = UDim2.fromOffset(120, 14),
-    BackgroundTransparency = 1,
-    Text = "MODULES",
-    Font = FONT.Bold,
-    TextSize = 10,
-    TextColor3 = Theme.TextFaint,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = Sidebar,
-})
-
 local TabHolder = New("Frame", {
     Name = "Tabs",
-    Position = UDim2.fromOffset(10, 96),
-    Size = UDim2.new(1, -20, 1, -96 - 74),
+    Position = UDim2.fromOffset(10, 80),
+    Size = UDim2.new(1, -20, 1, -80 - 12),
     BackgroundTransparency = 1,
     Parent = Sidebar,
 }, {
     New("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
 })
-
--- Profile card
-do
-    local card = New("Frame", {
-        AnchorPoint = Vector2.new(0, 1),
-        Position = UDim2.new(0, 10, 1, -10),
-        Size = UDim2.new(1, -20, 0, 54),
-        BackgroundColor3 = Theme.Card,
-        BorderSizePixel = 0,
-        Parent = Sidebar,
-    }, { Round(11), Stroke(Theme.Stroke, 1) })
-    local avatar = New("ImageLabel", {
-        Position = UDim2.fromOffset(10, 10),
-        Size = UDim2.fromOffset(34, 34),
-        BackgroundColor3 = Theme.Track,
-        BorderSizePixel = 0,
-        Image = "",
-        Parent = card,
-    }, { Round(17) })
-    pcall(function()
-        avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=150&h=150"
-    end)
-    New("Frame", {
-        Position = UDim2.fromOffset(35, 35),
-        Size = UDim2.fromOffset(10, 10),
-        BackgroundColor3 = Theme.Good,
-        BorderSizePixel = 0,
-        Parent = card,
-    }, { Round(5), Stroke(Theme.Card, 2) })
-    New("TextLabel", {
-        Position = UDim2.fromOffset(54, 11),
-        Size = UDim2.new(1, -62, 0, 16),
-        BackgroundTransparency = 1,
-        Text = LocalPlayer.DisplayName,
-        Font = FONT.Bold,
-        TextSize = 12,
-        TextColor3 = Theme.Text,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = card,
-    })
-    New("TextLabel", {
-        Position = UDim2.fromOffset(54, 28),
-        Size = UDim2.new(1, -62, 0, 14),
-        BackgroundTransparency = 1,
-        Text = "@" .. LocalPlayer.Name,
-        Font = FONT.Regular,
-        TextSize = 11,
-        TextColor3 = Theme.TextDim,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = card,
-    })
-end
 
 -- Top bar --------------------------------------------------------------
 local TopBar = New("Frame", {
@@ -1680,7 +1614,7 @@ New("TextLabel", {
     Position = UDim2.fromOffset(RIGHT_X + PAGE_PAD, WINDOW_H - FOOTER_H + 1),
     Size = UDim2.fromOffset(340, FOOTER_H - 1),
     BackgroundTransparency = 1,
-    Text = "RightShift hides this window   ·   Right-click a slider to reset it",
+    Text = "RightShift hides this window",
     Font = FONT.Regular,
     TextSize = 11,
     TextColor3 = Theme.TextFaint,
@@ -1970,10 +1904,20 @@ function UI:CreateTab(name, subtitle)
             Parent = header,
         }, { Round(7), chipStroke })
 
+        -- An unbound chip stays out of sight until the card is hovered or the chip is being edited
+        local chipHover = false
+        local function refreshChip()
+            local unbound = (cfg.Key == nil or cfg.Key == "None")
+            local show = (not unbound) or hovered or chipHover or keyBox:IsFocused()
+            keyBox.BackgroundTransparency = show and 0 or 1
+            chipStroke.Transparency = show and 0 or 1
+            keyBox.PlaceholderText = show and "type key" or ""
+        end
         local function paintChip()
             local unbound = (cfg.Key == nil or cfg.Key == "None")
             keyBox.Text = keyText(cfg.Key)
             keyBox.TextColor3 = unbound and Theme.TextFaint or Theme.AccentLight
+            refreshChip()
         end
         paintChip()
         onTheme(paintChip)
@@ -1986,19 +1930,25 @@ function UI:CreateTab(name, subtitle)
         keyBox.Focused:Connect(function()
             chipStroke.Color = Theme.Accent
             UI:HideTip()
+            refreshChip()
         end)
         keyBox.MouseEnter:Connect(function()
+            chipHover = true
+            refreshChip()
             if not keyBox:IsFocused() then
                 chipStroke.Color = Theme.StrokeHover
             end
         end)
         keyBox.MouseLeave:Connect(function()
+            chipHover = false
+            refreshChip()
             if not keyBox:IsFocused() then
                 chipStroke.Color = Theme.Stroke
             end
         end)
         keyBox.FocusLost:Connect(function()
             chipStroke.Color = Theme.Stroke
+            task.defer(refreshChip)
             local text = string.gsub(keyBox.Text, "%s+", "")
             local lowered = string.lower(text)
             if text ~= "" and text ~= keyText(cfg.Key) then
@@ -2093,6 +2043,9 @@ function UI:CreateTab(name, subtitle)
             end
         end
         mod.SetExpanded = setExpanded
+        mod.IsExpanded = function()
+            return expanded
+        end
 
         local function ensureExpandable()
             if not expandable then
@@ -2151,10 +2104,12 @@ function UI:CreateTab(name, subtitle)
         headerButton.MouseEnter:Connect(function()
             hovered = true
             paintCard(false)
+            refreshChip()
         end)
         headerButton.MouseLeave:Connect(function()
             hovered = false
             paintCard(false)
+            task.defer(refreshChip)
         end)
         headerButton.MouseButton1Click:Connect(function()
             if expandable then
@@ -2251,8 +2206,9 @@ function UI:CreateTab(name, subtitle)
                     for _ = 1, 3 do
                         reason = string.gsub(reason, "^[%w_%.%[%]\" ]-:%d+: ", "")
                     end
-                    warn("[Nova] " .. def.Name .. " failed to enable: " .. tostring(err))
-                    Nova.Notify(def.Name, string.sub(reason, 1, 90), 4, "error", true)
+                    if not silent then
+                        Nova.Notify(def.Name, string.sub(reason, 1, 90), 4, "error", true)
+                    end
                     self:SetStatus("Couldn't start: " .. reason, "error")
                     setSwitch(false, true)
                     paintCard(false)
@@ -2843,6 +2799,7 @@ end)
 -- ---------------------------------------------------------------------
 -- Config save / load (manual, needs executor file access)
 -- ---------------------------------------------------------------------
+Nova.UI = UI
 local CONFIG_DIR, CONFIG_FILE = "Nova", "Nova/config.json"
 
 -- A profile name maps to a file. "default" is the original Nova/config.json.
@@ -2855,6 +2812,60 @@ local function profilePath(name)
 end
 Nova.ProfilePath = profilePath
 
+-- Turns the config into something JSONEncode accepts: plain values only, no NaN / functions / Instances
+local function sanitize(value, depth)
+    local kind = type(value)
+    if kind == "string" or kind == "boolean" then
+        return value
+    elseif kind == "number" then
+        if value ~= value or value == math.huge or value == -math.huge then
+            return nil
+        end
+        return value
+    elseif kind == "table" and depth < 6 then
+        local out = {}
+        for key, inner in pairs(value) do
+            local cleaned = sanitize(inner, depth + 1)
+            if cleaned ~= nil and (type(key) == "string" or type(key) == "number") then
+                out[tostring(key)] = cleaned
+            end
+        end
+        return out
+    end
+    return nil
+end
+
+-- Remembers what is on screen right now (enabled modules, tab, open cards, window position)
+function Nova.CaptureState()
+    local state = { Enabled = {}, Open = {} }
+    for _, mod in ipairs(Nova.ModuleList) do
+        if mod.Enabled or (Nova.Wanted and Nova.Wanted[mod.Name]) then
+            state.Enabled[mod.Name] = true
+        end
+        if mod.IsExpanded and mod.IsExpanded() then
+            state.Open[mod.Name] = true
+        end
+    end
+    if UI.CurrentTab then
+        state.Tab = UI.CurrentTab.Name
+    end
+    local pos = UI.Holder and UI.Holder.Position
+    if pos then
+        state.Window = { xs = pos.X.Scale, xo = pos.X.Offset, ys = pos.Y.Scale, yo = pos.Y.Offset }
+    end
+    Nova.Config.State = state
+    return state
+end
+
+local function encodeConfig()
+    Nova.CaptureState()
+    local snapshot = sanitize(Nova.Config, 0) or {}
+    snapshot.__v = CONFIG_VERSION
+    return HttpService:JSONEncode(snapshot)
+end
+
+local lastSaved = nil
+
 function Nova.SaveConfig(profile)
     if type(writefile) ~= "function" then
         return false, "Your executor has no file access."
@@ -2864,7 +2875,11 @@ function Nova.SaveConfig(profile)
         if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(CONFIG_DIR) then
             makefolder(CONFIG_DIR)
         end
-        writefile(path, HttpService:JSONEncode(Nova.Config))
+        local text = encodeConfig()
+        writefile(path, text)
+        if label == "default" then
+            lastSaved = text
+        end
     end)
     if not ok then
         return false, tostring(err)
@@ -2889,14 +2904,16 @@ function Nova.ListProfiles()
     return names
 end
 
-function Nova.LoadConfig(profile, quiet)
+-- `startup` = true when Nova is starting: also brings back the open tab, window position and
+-- the modules that were on. A manual Load only restores settings and keybinds.
+function Nova.LoadConfig(profile, startup)
     if type(readfile) ~= "function" or type(isfile) ~= "function" then
         return false, "Your executor has no file access."
     end
     local path, label = profilePath(profile)
     local okExists, exists = pcall(isfile, path)
     if not okExists or not exists then
-        return false, (label == "default") and "No saved config yet. Press Save first."
+        return false, (label == "default") and "No saved config yet."
             or ('No profile called "' .. label .. '". Press Save to create it.')
     end
     local ok, data = pcall(function()
@@ -2904,12 +2921,6 @@ function Nova.LoadConfig(profile, quiet)
     end)
     if not ok or type(data) ~= "table" then
         return false, "The saved config couldn't be read."
-    end
-    if data.__v ~= CONFIG_VERSION then
-        return false, "The saved config is from an older version."
-    end
-    if quiet and type(data.UI) == "table" and data.UI.AutoSave == false then
-        return false, "auto load is off"
     end
 
     local function applyTo(host, saved, skip)
@@ -2951,15 +2962,102 @@ function Nova.LoadConfig(profile, quiet)
         UI:UpdateScale(false)
         UI:RefreshHud()
     end
+
+    local state = data.State
+    if startup and type(state) == "table" then
+        if type(state.Open) == "table" then
+            for _, mod in ipairs(Nova.ModuleList) do
+                if state.Open[mod.Name] and mod.SetExpanded then
+                    pcall(mod.SetExpanded, true, true)
+                end
+            end
+        end
+        if type(state.Tab) == "string" then
+            for _, tab in ipairs(UI.TabList) do
+                if tab.Name == state.Tab then
+                    UI:SelectTab(tab)
+                end
+            end
+        end
+        local w = state.Window
+        if type(w) == "table" and type(w.xo) == "number" and type(w.yo) == "number" then
+            UI.Holder.Position = UDim2.new(tonumber(w.xs) or 0.5, w.xo, tonumber(w.ys) or 0.5, w.yo)
+            UI:ClampWindow()
+        end
+        if type(state.Enabled) == "table" and Nova.Config.UI.RestoreModules ~= false then
+            local wanted = {}
+            for _, mod in ipairs(Nova.ModuleList) do
+                if state.Enabled[mod.Name] then
+                    wanted[#wanted + 1] = mod
+                end
+            end
+            -- give the game a moment to load, then try once more for anything that wasn't ready
+            Nova.Wanted = {}
+            for _, mod in ipairs(wanted) do
+                Nova.Wanted[mod.Name] = true
+            end
+            task.spawn(function()
+                task.wait(1.5)
+                for pass = 1, 2 do
+                    local retry = {}
+                    for _, mod in ipairs(wanted) do
+                        if not Nova.Unloaded and not mod.Enabled then
+                            pcall(mod.SetEnabled, mod, true, true)
+                            if not mod.Enabled then
+                                retry[#retry + 1] = mod
+                            end
+                        end
+                    end
+                    wanted = retry
+                    if #wanted == 0 or Nova.Unloaded then
+                        break
+                    end
+                    if pass == 1 then
+                        task.wait(5)
+                    end
+                end
+                -- anything still off stays on the saved list (it may need a match) but loses its error text
+                for _, mod in ipairs(wanted) do
+                    if not mod.Enabled and mod.SetStatus then
+                        pcall(mod.SetStatus, mod, nil)
+                    end
+                end
+                for _, mod in ipairs(Nova.ModuleList) do
+                    if mod.Enabled and Nova.Wanted then
+                        Nova.Wanted[mod.Name] = nil
+                    end
+                end
+                if UI.RefreshCounts then
+                    UI:RefreshCounts()
+                end
+                if UI.RefreshHud then
+                    UI:RefreshHud()
+                end
+            end)
+        end
+    end
     return true, label
 end
 
--- Saves quietly when Auto Save is on (called when the window hides)
+-- Writes the default config when something changed (called on hide, and by the timer below)
 function Nova.AutoSave()
-    if Nova.Unloaded or Nova.Config.UI.AutoSave == false then
+    if Nova.Unloaded then
         return
     end
-    pcall(Nova.SaveConfig, "default")
+    local ok, text = pcall(encodeConfig)
+    if ok and text ~= lastSaved then
+        pcall(Nova.SaveConfig, "default")
+    end
+end
+
+-- Keeps the saved file current while you play, so nothing is lost if the game closes
+function Nova.StartAutoSave()
+    Nova.Maid:Give(task.spawn(function()
+        while not Nova.Unloaded do
+            task.wait(3)
+            Nova.AutoSave()
+        end
+    end))
 end
 
 -- Switches every module off (optionally hides the window too)
@@ -2969,9 +3067,11 @@ function Nova.DisableAll(hideWindow, silent)
             pcall(mod.SetEnabled, mod, false, true)
         end
     end
+    Nova.Wanted = {}
     if UI.RefreshCounts then
         UI:RefreshCounts()
     end
+    Nova.AutoSave()
     if hideWindow then
         UI:SetVisible(false)
     end
@@ -3189,8 +3289,8 @@ do
         end,
     })
     Controls.Toggle(host, {
-        Label = "Auto Save", Key = "AutoSave", Default = true,
-        Tip = "Saves your settings whenever you hide the window and loads them when Nova starts.",
+        Label = "Restore Modules", Key = "RestoreModules", Default = true,
+        Tip = "Switch back on the modules that were on last time. Everything else is always saved automatically.",
     })
 
     Controls.Section(host, "Profiles")
@@ -3221,13 +3321,6 @@ do
                 else
                     Nova.Notify("Profiles", tostring(info), 3.5, "error", true)
                 end
-            end,
-        },
-        {
-            Label = "List",
-            Tip = "Show the profiles you have saved.",
-            Callback = function()
-                Nova.Notify("Profiles", table.concat(Nova.ListProfiles(), ", "), 5, "info", true)
             end,
         },
     })
@@ -3452,6 +3545,7 @@ local Tabs = {
     Render  = UI:CreateTab("Render", "See players and NPCs through walls"),
     Blatant = UI:CreateTab("Blatant", "Obvious movement changes"),
     Utility = UI:CreateTab("Utility", "Safety and quality-of-life tools"),
+    Kits    = UI:CreateTab("Kits", "Bedwars kit helpers"),
     World   = UI:CreateTab("World", "Sky, lighting and atmosphere"),
     FPS     = UI:CreateTab("FPS", "Performance and frame rate"),
 }
@@ -4058,6 +4152,10 @@ do
         return node
     end
 
+    local lastExtrasTry = 0
+
+    -- Looks up the optional pieces. Anything that is still missing is retried on the next call
+    -- (at most once a second), so calling this too early never leaves a module stuck.
     function Bedwars.ResolveExtras()
         local ready, reason = Bedwars.Resolve()
         if not ready then
@@ -4066,8 +4164,15 @@ do
         if Bedwars.ExtrasReady then
             return true
         end
+        if os.clock() - lastExtrasTry < 1 then
+            return Bedwars.BlockController ~= nil, "still loading"
+        end
+        lastExtrasTry = os.clock()
 
         local function attempt(name, fn)
+            if Bedwars[name] ~= nil then
+                return
+            end
             local ok, value = pcall(fn)
             if ok and value ~= nil then
                 Bedwars[name] = value
@@ -4096,8 +4201,27 @@ do
             return require(walk(ReplicatedStorage, "TS", "games", "bedwars", "kit", "bedwars-kit-meta")).BedwarsKitMeta
         end)
 
-        Bedwars.ExtrasReady = true
-        return true
+        if Bedwars.BlockController and Bedwars.DamageBlockRemotes and Bedwars.Store then
+            Bedwars.ExtrasReady = true
+            return true
+        end
+        return Bedwars.BlockController ~= nil, "still loading"
+    end
+
+    -- Same as ResolveExtras but waits (up to `timeout` seconds) for the game to finish loading
+    function Bedwars.WaitExtras(timeout)
+        lastExtrasTry = 0
+        local ready, reason = Bedwars.ResolveExtras()
+        local rounds = math.ceil((timeout or 4) / 0.5)
+        for _ = 1, rounds do
+            if Bedwars.ExtrasReady then
+                break
+            end
+            task.wait(0.5)
+            lastExtrasTry = 0
+            ready, reason = Bedwars.ResolveExtras()
+        end
+        return Bedwars.ExtrasReady == true, reason
     end
 
     -- Your own inventory as the game's UI store sees it: { inventory = { items, hand }, hotbar, hotbarSlot }
@@ -6801,11 +6925,11 @@ do
         Name = "Nuker",
         Description = "Digs through defences and breaks beds near you (Bedwars).",
         OnEnable = function(mod)
-            local ready, reason = Bedwars.ResolveExtras()
-            assert(ready, reason)
+            Bedwars.WaitExtras(4)
+            local loaded, why = Bedwars.Resolve()
+            assert(loaded, why or "Bedwars isn't loaded yet - join a match first")
             assert(Bedwars.BlockController, "block engine not found (Bedwars update?)")
             assert(Bedwars.DamageBlockRemotes, "DamageBlock remote not found (Bedwars update?)")
-            assert(Bedwars.Store, "inventory store not found (Bedwars update?)")
 
             local cfg = mod.Config
             pathCache, toolDamage = {}, {}
@@ -7035,6 +7159,8 @@ do
                     pcall(other.SetEnabled, other, false, true)
                 end
             end
+            Nova.Wanted = {}
+            pcall(Nova.AutoSave)
             Nova.Notify("Staff Detector", "Everything else was switched off.", 6, "warn", true)
         elseif mode == "Unload" then
             pcall(function()
@@ -7045,6 +7171,14 @@ do
                 })
             end)
             task.spawn(function()
+                -- switch everything off and save that, so nothing comes back on by itself next time
+                for _, other in ipairs(Nova.ModuleList) do
+                    if other.Enabled then
+                        pcall(other.SetEnabled, other, false, true)
+                    end
+                end
+                Nova.Wanted = {}
+                pcall(Nova.AutoSave)
                 pcall(Nova.Unload, false)
             end)
         end
@@ -7222,6 +7356,943 @@ do
         end,
     })
     detector:AddNote("Works in any game for the lists and group rank. The spectator and clan checks are meant for Bedwars.")
+end
+
+-- ====================== MODULE: AUTO KIT ======================
+-- Uses the kit you picked for you: picks up kit items, fires kit abilities and so on.
+-- Every kit runs in its own loop and only while it is the kit you are playing.
+do
+    local CollectionService = service("CollectionService")
+    local ReplicatedStorage = service("ReplicatedStorage")
+
+    local autokit
+
+    -- Small helpers ---------------------------------------------------------------------------
+    local function legit()
+        return autokit and autokit.Config.Legit ~= false
+    end
+
+    local function R(legitRange, wideRange)
+        return legit() and legitRange or wideRange
+    end
+
+    local function partOf(inst)
+        if typeof(inst) ~= "Instance" then
+            return nil
+        end
+        if inst:IsA("BasePart") then
+            return inst
+        end
+        local found
+        pcall(function()
+            found = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+        end)
+        return found
+    end
+
+    local function myRoot()
+        local _, _, root = Util.GetCharacter(LocalPlayer)
+        return root
+    end
+
+    local function isEnemyPlayer(plr)
+        if plr == LocalPlayer then
+            return false
+        end
+        local mine, theirs = LocalPlayer:GetAttribute("Team"), plr:GetAttribute("Team")
+        if mine ~= nil and theirs ~= nil then
+            return mine ~= theirs
+        end
+        return not Util.IsTeammate(plr)
+    end
+
+    -- Nearest living enemy player within `distance` of `origin` (default: you)
+    local function nearestEnemy(distance, origin)
+        origin = origin or (myRoot() and myRoot().Position)
+        if not origin then
+            return nil
+        end
+        local best, bestDistance
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if isEnemyPlayer(plr) then
+                local char, hum, root = Util.GetCharacter(plr)
+                if char and hum.Health > 0 then
+                    local d = (root.Position - origin).Magnitude
+                    if d <= distance and (not bestDistance or d < bestDistance) then
+                        best, bestDistance = { Player = plr, Character = char, Root = root, Distance = d }, d
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function holding(keywords)
+        return Util.MatchesHeld(keywords)
+    end
+
+    local function hasItem(itemType)
+        local inventory = Bedwars.GetInventory()
+        if not inventory then
+            return false
+        end
+        for _, slot in pairs(inventory.inventory.items or {}) do
+            if type(slot) == "table" and slot.itemType == itemType then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Sessions: one per kit, so switching kit or turning a kit off stops only that loop -------
+    local function newSession()
+        local session = { Active = true, Tasks = {} }
+        function session:Clean(task_)
+            self.Tasks[#self.Tasks + 1] = task_
+            return task_
+        end
+        function session:Stop()
+            self.Active = false
+            if self.Thread then
+                pcall(task.cancel, self.Thread)
+            end
+            for index = #self.Tasks, 1, -1 do
+                local item = self.Tasks[index]
+                pcall(function()
+                    if type(item) == "function" then
+                        item()
+                    elseif typeof(item) == "RBXScriptConnection" then
+                        item:Disconnect()
+                    elseif typeof(item) == "Instance" then
+                        item:Destroy()
+                    end
+                end)
+            end
+            self.Tasks = {}
+        end
+        return session
+    end
+
+    -- Remotes ---------------------------------------------------------------------------------
+    -- Some remote names are scrambled and change between updates, so they are read out of the
+    -- game's own controller code. Names that aren't scrambled are looked up directly.
+    local netFolder
+    local function getNetFolder()
+        if netFolder and netFolder.Parent then
+            return netFolder
+        end
+        netFolder = nil
+        pcall(function()
+            netFolder = ReplicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged
+        end)
+        return netFolder
+    end
+
+    local function constantAfterClient(fn)
+        if type(fn) ~= "function" or not (debug and debug.getconstants) then
+            return nil
+        end
+        local ok, constants = pcall(debug.getconstants, fn)
+        if not ok or type(constants) ~= "table" then
+            return nil
+        end
+        for index, value in pairs(constants) do
+            if value == "Client" then
+                local name = constants[index + 1]
+                if type(name) == "string" and name ~= "" then
+                    return name
+                end
+            end
+        end
+        return nil
+    end
+
+    local function proto(fn, index)
+        return debug.getproto(fn, index)
+    end
+
+    -- key -> function(Controllers) returning the function whose code mentions the remote
+    local DUMP = {
+        BeePickup = function(C) return C.BeeNetController.trigger end,
+        ConsumeTreeOrb = function(C) return proto(C.EldertreeController.createTreeOrbInteraction, 1) end,
+        HarvestCrop = function(C) return proto(proto(C.CropController.KnitStart, 4), 1) end,
+        PickupMetal = function(C) return proto(C.HiddenMetalController.onKitLocalActivated, 4) end,
+        DepositPinata = function(C) return proto(proto(C.PiggyBankController.KnitStart, 2), 5) end,
+        ConsumeSoul = function(C) return C.GrimReaperController.consumeSoul end,
+        ConsumeBattery = function(C) return proto(C.BatteryController.onKitLocalActivated, 1) end,
+        SummonerClawAttack = function(C) return C.SummonerClawHandController.attack end,
+        WarlockTarget = function(C) return proto(C.WarlockStaffController.KnitStart, 2) end,
+        DragonBreath = function(C) return proto(C.VoidDragonController.onKitLocalActivated, 5) end,
+        GuitarHeal = function(C) return C.GuitarController.performHeal end,
+    }
+
+    -- key -> remote name when it isn't scrambled (or when reading it out of the code fails)
+    local PLAIN = {
+        BeePickup = "BeePickup",
+        ActivateGravestone = "ActivateGravestone",
+        CollectCollectableEntity = "CollectCollectableEntity",
+        HannahPromptTrigger = "HannahPromptTrigger",
+        DragonBreath = "DragonBreath",
+        LearnElementTome = "LearnElementTome",
+        MimicPickPocket = "MimicBlockPickPocketPlayer",
+        DestroyPetrifiedPlayer = "DestroyPetrifiedPlayer",
+        SoulLink = "AttemptSoulLink",
+        DragonSwordFire = "DragonSwordFire",
+        GunBladeFire = "HandGunFireRequest",
+    }
+
+    local remoteCache, remoteMissAt = {}, {}
+    local function remote(key)
+        local cached = remoteCache[key]
+        if cached and cached.Parent then
+            return cached
+        end
+        if remoteMissAt[key] and os.clock() - remoteMissAt[key] < 5 then
+            return nil
+        end
+        local folder = getNetFolder()
+        if not folder then
+            return nil
+        end
+        local names = {}
+        if DUMP[key] and Bedwars.Knit then
+            local ok, fn = pcall(DUMP[key], Bedwars.Knit.Controllers)
+            local dumped = ok and constantAfterClient(fn)
+            if dumped then
+                names[#names + 1] = dumped
+            end
+        end
+        names[#names + 1] = PLAIN[key] or key
+        for _, name in ipairs(names) do
+            local inst = folder:FindFirstChild(name)
+            if inst then
+                remoteCache[key] = inst
+                return inst
+            end
+        end
+        remoteMissAt[key] = os.clock()
+        return nil
+    end
+
+    -- Fires an event or calls a function remote. Returns the reply for functions.
+    local function send(key, ...)
+        local inst = remote(key)
+        if not inst then
+            return nil
+        end
+        local args = table.pack(...)
+        if inst:IsA("RemoteFunction") then
+            local ok, result = pcall(function()
+                return inst:InvokeServer(table.unpack(args, 1, args.n))
+            end)
+            return ok and result or nil
+        end
+        local ok = pcall(function()
+            inst:FireServer(table.unpack(args, 1, args.n))
+        end)
+        return ok
+    end
+
+    local abilityRemote
+    local abilityAt = {}
+    local function useAbility(name, data, gap)
+        if os.clock() - (abilityAt[name] or 0) < (gap or 0.5) then
+            return false
+        end
+        if not (abilityRemote and abilityRemote.Parent) then
+            abilityRemote = nil
+            pcall(function()
+                abilityRemote = ReplicatedStorage["events-@easy-games/game-core:shared/game-core-networking@getEvents.Events"].useAbility
+            end)
+        end
+        if not abilityRemote then
+            return false
+        end
+        abilityAt[name] = os.clock()
+        pcall(function()
+            if data ~= nil then
+                abilityRemote:FireServer(name, data)
+            else
+                abilityRemote:FireServer(name)
+            end
+        end)
+        return true
+    end
+
+    local function controller(name)
+        local ok, found = pcall(function()
+            return Bedwars.Knit.Controllers[name]
+        end)
+        return ok and found or nil
+    end
+
+    -- Runs `step` every `interval` seconds until the session stops
+    local function loop(session, interval, step)
+        while session.Active do
+            if myRoot() then
+                pcall(step)
+            end
+            task.wait(interval)
+        end
+    end
+
+    -- Runs `callback(instance, part)` for every tagged thing within range()
+    local function eachTagged(session, tag, rangeFn, callback, interval)
+        loop(session, interval or 0.1, function()
+            local here = myRoot().Position
+            for _, inst in ipairs(CollectionService:GetTagged(tag)) do
+                if not session.Active then
+                    break
+                end
+                local part = partOf(inst)
+                if part and part.Parent and (part.Position - here).Magnitude <= rangeFn() then
+                    pcall(callback, inst, part)
+                end
+            end
+        end)
+    end
+
+    local function attr(inst, ...)
+        for _, name in ipairs({ ... }) do
+            local value = inst:GetAttribute(name)
+            if value ~= nil then
+                return value
+            end
+        end
+        return nil
+    end
+
+    -- Kits --------------------------------------------------------------------------------------
+    local KITS = {}
+    local function kit(id, group, tip, run)
+        KITS[#KITS + 1] = { Id = id, Group = group, Tip = tip, Run = run }
+    end
+
+    local PICKUP, ATTACK, SUPPORT = "Pick things up", "Attack and abilities", "Support and utility"
+
+    -- Pick things up
+    kit("beekeeper", PICKUP, "Collects bees near you.", function(s)
+        eachTagged(s, "bee", function() return 18 end, function(bee)
+            send("BeePickup", { beeId = bee:GetAttribute("BeeId") })
+        end)
+    end)
+
+    kit("bigman", PICKUP, "Eats tree orbs near you.", function(s)
+        eachTagged(s, "treeOrb", function() return 12 end, function(orb)
+            if send("ConsumeTreeOrb", { treeOrbSecret = orb:GetAttribute("TreeOrbSecret") }) then
+                orb:Destroy()
+            end
+        end)
+    end)
+
+    kit("farmer_cletus", PICKUP, "Harvests grown crops near you.", function(s)
+        eachTagged(s, "HarvestableCrop", function() return 10 end, function(_, part)
+            if Bedwars.BlockController then
+                send("HarvestCrop", { position = Bedwars.BlockController:getBlockPosition(part.Position) })
+            end
+        end)
+    end)
+
+    kit("metal_detector", PICKUP, "Digs up hidden metal near you.", function(s)
+        eachTagged(s, "hidden-metal", function() return 20 end, function(metal)
+            send("PickupMetal", { id = metal:GetAttribute("Id") })
+        end)
+    end)
+
+    kit("miner", PICKUP, "Frees petrified players near you. Legit: 6 studs, otherwise 10.", function(s)
+        eachTagged(s, "petrified-player", function() return R(6, 10) end, function(rock)
+            local id = attr(rock, "PetrifyId", "petrifyId")
+            if id then
+                send("DestroyPetrifiedPlayer", { petrifyId = id })
+            end
+        end)
+    end)
+
+    kit("pinata", PICKUP, "Hands candy to your pinata when you are next to it.", function(s)
+        eachTagged(s, LocalPlayer.Name .. ":pinata", function() return 6 end, function(pinata)
+            if hasItem("candy") then
+                send("DepositPinata", pinata)
+            end
+        end)
+    end)
+
+    kit("sorcerer", PICKUP, "Collects alchemy crystals near you.", function(s)
+        eachTagged(s, "alchemy_crystal", function() return 10 end, function(crystal)
+            local id = attr(crystal, "Id", "id", "CollectableId") or tonumber(crystal.Name:match("%d+"))
+            if id then
+                send("CollectCollectableEntity", { id = id, collectableName = "AlchemyCrystal" })
+                task.wait(0.1)
+            end
+        end)
+    end)
+
+    kit("ghost_catcher", PICKUP, "Catches ghosts. Legit: only with the vacuum out and within 14 studs.", function(s)
+        eachTagged(s, "ghost", function() return R(14, 30) end, function(ghost)
+            if legit() and not holding("vacuum") then
+                return
+            end
+            local id = attr(ghost, "Id", "id", "CollectableId") or tonumber(ghost.Name:match("%d+"))
+            if id then
+                send("CollectCollectableEntity", { id = id })
+                task.wait(0.1)
+            end
+        end)
+    end)
+
+    kit("necromancer", PICKUP, "Raises gravestones near you. Legit: 12 studs, otherwise 40.", function(s)
+        eachTagged(s, "Gravestone", function() return R(12, 40) end, function(grave)
+            local secret = grave:GetAttribute("GravestoneSecret")
+            if not secret then
+                return
+            end
+            local result = send("ActivateGravestone", {
+                skeletonData = {
+                    armorType = grave:GetAttribute("ArmorType"),
+                    weaponType = grave:GetAttribute("SwordType"),
+                    associatedPlayerUserId = grave:GetAttribute("GravestonePlayerUserId"),
+                },
+                secret = secret,
+                position = grave:GetAttribute("GravestonePosition"),
+            })
+            if type(result) == "table" and result.success then
+                local necro = controller("NecromancerController")
+                if necro then
+                    pcall(function() necro:useGravestone(LocalPlayer, grave) end)
+                end
+            end
+            task.wait(0.1)
+        end)
+    end)
+
+    kit("mage", PICKUP, "Learns element tomes. Legit: 14 studs, otherwise 30.", function(s)
+        eachTagged(s, "ElementTome", function() return R(14, 30) end, function(tome)
+            local secret = tome:GetAttribute("TomeSecret")
+            if not secret then
+                return
+            end
+            local result = send("LearnElementTome", { secret = secret })
+            if type(result) == "table" and result.success then
+                tome:Destroy()
+                task.wait(0.5)
+            end
+        end)
+    end)
+
+    kit("jailor", PICKUP, "Grabs souls near you. Legit: 14 studs, otherwise 40.", function(s)
+        eachTagged(s, "jailor_soul", function() return R(14, 40) end, function(soul)
+            local jailor = controller("JailorController")
+            if jailor then
+                jailor:collectEntity(LocalPlayer, soul, "JailorSoul")
+                task.wait(0.1)
+            end
+        end)
+    end)
+
+    kit("star_collector", PICKUP, "Collects stars near you.", function(s)
+        eachTagged(s, "stars", function() return 20 end, function(star)
+            local collector = controller("StarCollectorController")
+            if collector then
+                collector:collectEntity(LocalPlayer, star, star.Name)
+            end
+        end)
+    end)
+
+    kit("spirit_assassin", PICKUP, "Uses spirits. Legit: 14 studs, otherwise 150.", function(s)
+        eachTagged(s, "EvelynnSoul", function() return R(14, 150) end, function(spirit)
+            local assassin = controller("SpiritAssassinController")
+            if assassin then
+                assassin:useSpirit(LocalPlayer, spirit)
+                task.wait(0.1)
+            end
+        end)
+    end)
+
+    kit("hannah", PICKUP, "Executes low-health players. Legit: 14 studs, otherwise 16.", function(s)
+        eachTagged(s, "HannahExecuteInteraction", function() return R(14, 16) end, function(victim)
+            if send("HannahPromptTrigger", { user = LocalPlayer, victimEntity = victim }) then
+                local icon = victim:FindFirstChild("Hannah Execution Icon")
+                if icon then
+                    icon:Destroy()
+                end
+            end
+            task.wait(0.05)
+        end)
+    end)
+
+    kit("grim_reaper", PICKUP, "Eats souls when your health is low. Legit: 14 studs, otherwise 150.", function(s)
+        loop(s, 0.1, function()
+            local reaper = controller("GrimReaperController")
+            local char = LocalPlayer.Character
+            local health, maxHealth = char and char:GetAttribute("Health"), char and char:GetAttribute("MaxHealth")
+            if not (reaper and reaper.soulsByPosition and health and maxHealth)
+                or health > maxHealth / 4 or char:GetAttribute("GrimReaperChannel") then
+                return
+            end
+            local here = myRoot().Position
+            for _, soul in pairs(reaper.soulsByPosition) do
+                if not s.Active then
+                    break
+                end
+                local part = partOf(soul)
+                local secret = part and soul:GetAttribute("GrimReaperSoulSecret")
+                if secret and (part.Position - here).Magnitude <= R(14, 150) then
+                    send("ConsumeSoul", { secret = secret })
+                    task.wait(0.1)
+                end
+            end
+        end)
+    end)
+
+    kit("battery", PICKUP, "Takes charge from batteries within 10 studs.", function(s)
+        loop(s, 0.1, function()
+            local batteries = controller("BatteryEffectsController")
+            if not (batteries and batteries.liveBatteries) then
+                return
+            end
+            local here = myRoot().Position
+            for id, battery in pairs(batteries.liveBatteries) do
+                if (battery.position - here).Magnitude <= 10 then
+                    local info = batteries:getBatteryInfo(id)
+                    local now = Workspace:GetServerTimeNow()
+                    if info and info.activateTime < now and info.consumeTime + 0.1 < now then
+                        info.consumeTime = now
+                        send("ConsumeBattery", { batteryId = id })
+                    end
+                end
+            end
+        end)
+    end)
+
+    -- Attack and abilities
+    kit("warrior", ATTACK, "Strikes once your grit is full and an enemy is close. Legit: 14 studs, otherwise 40.", function(s)
+        loop(s, 0.1, function()
+            if (LocalPlayer:GetAttribute("Grit") or 0) >= 100 and nearestEnemy(R(14, 40)) then
+                useAbility("warrior_strike")
+            end
+        end)
+    end)
+
+    kit("cactus", ATTACK, "Shoots when an enemy is close. Legit: 14 studs, otherwise 40.", function(s)
+        loop(s, 0.1, function()
+            if nearestEnemy(R(14, 40)) then
+                useAbility("cactus_fire", nil, 1)
+            end
+        end)
+    end)
+
+    kit("card", ATTACK, "Throws a card at the nearest enemy within 12 studs.", function(s)
+        loop(s, 0.1, function()
+            local enemy = nearestEnemy(12)
+            if enemy then
+                useAbility("CARD_THROW", { targetEntityInstance = enemy.Character }, 0.5)
+            end
+        end)
+    end)
+
+    kit("midnight", ATTACK, "Uses Nyx when an enemy is close. Legit: 14 studs, otherwise 40.", function(s)
+        loop(s, 0.1, function()
+            if nearestEnemy(R(14, 40)) then
+                useAbility("midnight", nil, 1)
+            end
+        end)
+    end)
+
+    kit("ice_queen", ATTACK, "Freezes enemies who have four stacks. Legit: 14 studs, otherwise 60.", function(s)
+        loop(s, 0.1, function()
+            local here = myRoot().Position
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if isEnemyPlayer(plr) then
+                    local char, hum, root = Util.GetCharacter(plr)
+                    if char and hum.Health > 0 and (root.Position - here).Magnitude <= R(14, 60)
+                        and (char:GetAttribute("IceQueenStacks") or 0) >= 4 then
+                        useAbility("ice_queen", nil, 0.5)
+                        break
+                    end
+                end
+            end
+        end)
+    end)
+
+    kit("jellyfish", ATTACK, "Shocks enemies near your jellyfish. Legit: 14 studs, otherwise 18.", function(s)
+        loop(s, 0.1, function()
+            for _, jelly in ipairs(CollectionService:GetTagged("jellyfish")) do
+                local part = partOf(jelly)
+                if part and jelly:GetAttribute("PlacedByUserId") == LocalPlayer.UserId
+                    and nearestEnemy(R(14, 18), part.Position) then
+                    useAbility("electrify_jellyfish", nil, 1)
+                    break
+                end
+            end
+        end)
+    end)
+
+    kit("dragon_sword", ATTACK, "Fires at enemies. Legit: 14 studs, otherwise 18.", function(s)
+        loop(s, 0.1, function()
+            local enemy = nearestEnemy(R(14, 18))
+            if enemy and send("DragonSwordFire", { target = enemy.Character }) ~= nil then
+                task.wait(0.5)
+            end
+        end)
+    end)
+
+    kit("gun_blade", ATTACK, "Shoots enemies. Legit: 10 studs, otherwise 40.", function(s)
+        loop(s, 0.1, function()
+            local enemy = nearestEnemy(R(10, 40))
+            if enemy then
+                local direction = (enemy.Root.Position - myRoot().Position).Unit
+                send("GunBladeFire", { lookVector = direction })
+                useAbility("hand_gun", nil, 0.2)
+            end
+        end)
+    end)
+
+    kit("soul_broker", ATTACK, "Links souls with nearby enemies. Legit: 14 studs, otherwise 60.", function(s)
+        local linked, count = {}, 0
+        loop(s, 0.3, function()
+            local enemy = nearestEnemy(R(14, 60))
+            if enemy and count < 8 and not linked[enemy.Character] then
+                useAbility("soul_link", nil, 0.2)
+                task.wait(0.1)
+                local result = send("SoulLink", enemy.Character)
+                if type(result) == "table" and result.result then
+                    linked[enemy.Character] = true
+                    count = count + 1
+                    s:Clean(enemy.Character.AncestryChanged:Connect(function()
+                        if not enemy.Character.Parent and linked[enemy.Character] then
+                            linked[enemy.Character] = nil
+                            count = count - 1
+                        end
+                    end))
+                end
+            end
+        end)
+    end)
+
+    kit("warlock", ATTACK, "Links the staff to an enemy while you hold it. Legit: 10 studs, otherwise 20.", function(s)
+        local last
+        loop(s, 0.3, function()
+            if not holding("warlock_staff") then
+                last = nil
+                return
+            end
+            local reach = R(10, 20)
+            if last then
+                local hum = last:FindFirstChildOfClass("Humanoid")
+                local root = last:FindFirstChild("HumanoidRootPart")
+                if not last.Parent or not hum or hum.Health <= 0 or not root
+                    or (root.Position - myRoot().Position).Magnitude > reach then
+                    last = nil
+                end
+            end
+            if not last then
+                local enemy = nearestEnemy(reach)
+                if enemy then
+                    last = enemy.Character
+                    useAbility("WARLOCK_LINK", nil, 0.2)
+                    task.wait(0.1)
+                    send("WarlockTarget", { target = last })
+                end
+            end
+        end)
+    end)
+
+    kit("summoner", ATTACK, "Sends the claw at the nearest enemy within 31 studs.", function(s)
+        loop(s, 0.1, function()
+            local enemy = nearestEnemy(31)
+            if enemy then
+                local here = myRoot().Position
+                local direction = (enemy.Root.Position - here).Unit
+                here = here + direction * math.max((here - enemy.Root.Position).Magnitude - 16, 0)
+                send("SummonerClawAttack", {
+                    position = here,
+                    direction = direction,
+                    clientTime = Workspace:GetServerTimeNow(),
+                })
+            end
+        end)
+    end)
+
+    kit("void_dragon", ATTACK, "Breathes on enemies while you are in dragon form. Legit: 14 studs, otherwise 60.", function(s)
+        loop(s, 0.1, function()
+            local dragon = controller("VoidDragonController")
+            if dragon and dragon.inDragonForm then
+                local enemy = nearestEnemy(R(14, 60))
+                if enemy then
+                    send("DragonBreath", { player = LocalPlayer, targetPoint = enemy.Root.Position })
+                    task.wait(1)
+                end
+            end
+        end)
+    end)
+
+    kit("mimic", ATTACK, "Pickpockets marked players. Legit: 14 studs, otherwise 18.", function(s)
+        loop(s, 0.1, function()
+            local here = myRoot().Position
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if isEnemyPlayer(plr) then
+                    local char, hum, root = Util.GetCharacter(plr)
+                    if char and hum.Health > 0 and (root.Position - here).Magnitude <= R(14, 18)
+                        and CollectionService:HasTag(char, "MimicBLockPickPocketPlayer") then
+                        send("MimicPickPocket", plr)
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end)
+    end)
+
+    kit("trapper", ATTACK, "Sets off your explosive traps when an enemy walks into them.", function(s)
+        local traps = setmetatable({}, { __mode = "k" })
+        local nextBoom = 0
+        local function isExplosive(trap)
+            local kind = tostring(attr(trap, "trapType", "TrapType", "Type") or ""):lower()
+            return kind:find("explosive", 1, true) or trap.Name:lower():find("explosive", 1, true)
+                or trap:FindFirstChild("explosive_trap", true)
+        end
+        local function isMine(trap)
+            local owner = tonumber(attr(trap, "PlacedByUserId", "OwnerUserId", "PlayerUserId", "ownerId"))
+            if owner then
+                return owner == LocalPlayer.UserId
+            end
+            local team = attr(trap, "TrapperTeamId", "TeamId")
+            return team ~= nil and tostring(team) == tostring(LocalPlayer:GetAttribute("Team"))
+        end
+        local function radiusOf(trap)
+            for _, name in ipairs({ "TriggerRadius", "DetonationRadius", "ExplosionRadius", "ActivationRadius", "Radius" }) do
+                local value = tonumber(trap:GetAttribute(name))
+                if value and value > 0 then
+                    return value
+                end
+            end
+            return 8
+        end
+        local function track(trap)
+            task.wait()
+            if trap.Parent and isExplosive(trap) and isMine(trap) then
+                traps[trap] = true
+            end
+        end
+        s:Clean(CollectionService:GetInstanceAddedSignal("trapper_trap"):Connect(track))
+        s:Clean(CollectionService:GetInstanceRemovedSignal("trapper_trap"):Connect(function(trap)
+            traps[trap] = nil
+        end))
+        for _, trap in ipairs(CollectionService:GetTagged("trapper_trap")) do
+            task.spawn(track, trap)
+        end
+        loop(s, 0.05, function()
+            if os.clock() < nextBoom then
+                return
+            end
+            for trap in pairs(traps) do
+                local part = trap.Parent and partOf(trap)
+                if not part then
+                    traps[trap] = nil
+                elseif nearestEnemy(radiusOf(trap), part.Position) then
+                    nextBoom = os.clock() + 0.25
+                    useAbility("trapper_detonate", nil, 0.2)
+                    break
+                end
+            end
+        end)
+    end)
+
+    -- Support and utility
+    kit("melody", SUPPORT, "Heals the hurt teammate nearest to you (within 30 studs) while the guitar is out.", function(s)
+        loop(s, 0.1, function()
+            if not holding("guitar") then
+                return
+            end
+            local here = myRoot().Position
+            local best, bestHealth, bestDistance = nil, math.huge, 30
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and not isEnemyPlayer(plr) then
+                    local char, hum, root = Util.GetCharacter(plr)
+                    if char and hum.Health > 0 and hum.Health < hum.MaxHealth then
+                        local d = (root.Position - here).Magnitude
+                        if d <= bestDistance and hum.Health < bestHealth then
+                            best, bestHealth, bestDistance = char, hum.Health, d
+                        end
+                    end
+                end
+            end
+            if best then
+                send("GuitarHeal", { healTarget = best })
+            end
+        end)
+    end)
+
+    kit("rebellion_leader", SUPPORT, "Raises a shield (and switches to the healing aura) below half health.", function(s)
+        loop(s, 0.1, function()
+            local _, hum = Util.GetCharacter(LocalPlayer)
+            if hum and hum.MaxHealth > 0 and hum.Health / hum.MaxHealth <= 0.5 then
+                useAbility("rebellion_shield", nil, 1)
+                if LocalPlayer:GetAttribute("LeaderAuraType") ~= "healing" then
+                    useAbility("rebellion_aura_swap", nil, 1)
+                end
+            end
+        end)
+    end)
+
+    kit("block_kicker", SUPPORT, "Stomps for more blocks whenever you run out.", function(s)
+        loop(s, 0.1, function()
+            local char = LocalPlayer.Character
+            local blocks = (char and char:GetAttribute("BlockKickerKit_BlockCount"))
+                or LocalPlayer:GetAttribute("BlockKickerKit_BlockCount") or 0
+            if blocks <= 0 then
+                useAbility("BLOCK_STOMP", nil, 0.8)
+            end
+        end)
+    end)
+
+    kit("spirit_gardener", SUPPORT, "Waters your flowers while you are close. Legit: 14 studs, otherwise 20.", function(s)
+        loop(s, 0.5, function()
+            local here = myRoot().Position
+            for _, flower in ipairs(CollectionService:GetTagged("SpiritGardenerFlower")) do
+                local part = partOf(flower)
+                if part and flower:GetAttribute("PlacedByUserId") == LocalPlayer.UserId
+                    and not flower:GetAttribute("HasFullyGrown")
+                    and (part.Position - here).Magnitude <= R(14, 20) then
+                    useAbility("spirit_gardener_water", nil, 0.6)
+                    break
+                end
+            end
+        end)
+    end)
+
+    kit("hatter", SUPPORT, "Teleports as soon as the game offers it.", function(s)
+        local gui = LocalPlayer:FindFirstChild("PlayerGui")
+        local app = gui and gui:WaitForChild("NotificationApp", 10)
+        if not app or not s.Active then
+            return
+        end
+        s:Clean(app.DescendantAdded:Connect(function(obj)
+            if obj:IsA("TextLabel") and obj.Text:lower():find("teleport", 1, true) then
+                task.delay(0.05, function()
+                    if s.Active then
+                        useAbility("HATTER_TELEPORT", nil, 0.2)
+                    end
+                end)
+            end
+        end))
+        while s.Active do
+            task.wait(1)
+        end
+    end)
+
+    -- Module -------------------------------------------------------------------------------------
+    local BY_ID = {}
+    for _, entry in ipairs(KITS) do
+        BY_ID[entry.Id] = entry
+    end
+
+    local function prettyName(id)
+        return (id:gsub("_", " "):gsub("(%a)([%w]*)", function(first, rest)
+            return first:upper() .. rest
+        end))
+    end
+
+    local function equippedKits()
+        local raw = LocalPlayer:GetAttribute("PlayingAsKits")
+        local list = {}
+        if type(raw) == "string" then
+            for id in string.gmatch(raw, "[%w_]+") do
+                if id ~= "none" then
+                    list[#list + 1] = id
+                end
+            end
+        end
+        return list
+    end
+
+    autokit = Tabs.Kits:CreateModule({
+        Name = "AutoKit",
+        Description = "Uses your kit's abilities for you, whichever kit you are playing.",
+        OnEnable = function(mod)
+            local sessions = {}
+            local function stopAll()
+                for id, session in pairs(sessions) do
+                    sessions[id] = nil
+                    session:Stop()
+                end
+            end
+            mod.Maid:Give(stopAll)
+            pcall(Bedwars.ResolveExtras)
+
+            mod.Maid:Give(task.spawn(function()
+                local lastStatus
+                while mod.Enabled do
+                    local ready = Bedwars.Resolve()
+                    local active = {}
+                    local wanted = {}
+                    if ready then
+                        pcall(Bedwars.ResolveExtras)
+                        for _, id in ipairs(equippedKits()) do
+                            if BY_ID[id] and mod.Config["Kit_" .. id] ~= false then
+                                wanted[id] = true
+                            end
+                        end
+                    end
+                    for id, session in pairs(sessions) do
+                        if not wanted[id] then
+                            sessions[id] = nil
+                            session:Stop()
+                        end
+                    end
+                    for id in pairs(wanted) do
+                        if not sessions[id] then
+                            local session = newSession()
+                            sessions[id] = session
+                            session.Thread = task.spawn(function()
+                                pcall(BY_ID[id].Run, session)
+                            end)
+                        end
+                        active[#active + 1] = prettyName(id)
+                    end
+                    table.sort(active)
+
+                    local status
+                    if not ready then
+                        status = "Join a Bedwars match"
+                    elseif #active > 0 then
+                        status = "Running: " .. table.concat(active, ", ")
+                    elseif #equippedKits() > 0 then
+                        status = "Your kit isn't supported or is switched off"
+                    else
+                        status = "Waiting for you to pick a kit"
+                    end
+                    if status ~= lastStatus then
+                        lastStatus = status
+                        mod:SetStatus(status)
+                    end
+                    task.wait(0.5)
+                end
+            end))
+        end,
+    })
+
+    autokit:AddToggle({
+        Label = "Legit Range", Key = "Legit", Default = true,
+        Tip = "On: every kit works at a normal distance. Off: longer reach and the extra tricks.",
+    })
+
+    for _, group in ipairs({ PICKUP, ATTACK, SUPPORT }) do
+        autokit:AddSection(group)
+        local names = {}
+        for _, entry in ipairs(KITS) do
+            if entry.Group == group then
+                names[#names + 1] = entry
+            end
+        end
+        table.sort(names, function(a, b)
+            return prettyName(a.Id) < prettyName(b.Id)
+        end)
+        for _, entry in ipairs(names) do
+            autokit:AddToggle({
+                Label = prettyName(entry.Id), Key = "Kit_" .. entry.Id, Default = true, Tip = entry.Tip,
+            })
+        end
+    end
+    autokit:AddNote("Only the kit you are playing runs. Kits need a Bedwars match; switch any kit off here if it misbehaves.")
 end
 
 -- ====================== MODULE: WORLD (SKY) ======================
@@ -7597,6 +8668,7 @@ do
 end
 
 -- ====================== BOOT ======================
+UI:SelectTab(UI.TabList[1])
 pcall(Nova.LoadConfig, nil, true)
 do
     local savedAccent = Nova.Config.UI.Accent
@@ -7608,8 +8680,8 @@ UI:FitScale()
 UI:ApplySearch("")
 UI:RefreshCounts()
 UI:RefreshHud()
-UI:SelectTab(UI.TabList[1])
 UI:SetVisible(true)
+Nova.StartAutoSave()
 Nova.Notify("Nova", "Loaded. Press RightShift to toggle the UI.", 4, "success")
 
 end -- NovaMain
