@@ -330,6 +330,42 @@ function RayFilter.Refresh()
 end
 
 -- Skips hits right next to the origin (your own head / viewmodel in first person) and see-through parts
+-- Strict version used by Kill Aura: five rays must all be clear, so grazing the corner of a block
+-- (or peeking past it) doesn't count as seeing the target. Nothing near you is ignored either.
+function Util.HasStrictSight(origin, targetPosition)
+    RayFilter.Refresh()
+    local toward = targetPosition - origin
+    if toward.Magnitude < 1 then
+        return true
+    end
+    local flat = Vector3.new(toward.X, 0, toward.Z)
+    local side = flat.Magnitude > 0.01 and flat.Unit:Cross(Vector3.new(0, 1, 0)) or Vector3.new(1, 0, 0)
+    local function clear(from, to)
+        local current = from
+        for _ = 1, 4 do
+            local direction = to - current
+            if direction.Magnitude < 0.3 then
+                return true
+            end
+            local hit = Workspace:Raycast(current, direction, RayFilter.Params)
+            if not hit then
+                return true
+            end
+            if hit.Instance.Transparency >= 0.95 then
+                current = hit.Position + direction.Unit * 0.15
+            else
+                return false
+            end
+        end
+        return false
+    end
+    return clear(origin, targetPosition)
+        and clear(origin, targetPosition + side * 0.7)
+        and clear(origin, targetPosition - side * 0.7)
+        and clear(origin + side * 0.5, targetPosition)
+        and clear(origin - side * 0.5, targetPosition)
+end
+
 function Util.HasLineOfSight(origin, targetPosition)
     RayFilter.Refresh()
     local current = origin
@@ -964,6 +1000,8 @@ function Controls.Slider(host, o)
         BorderSizePixel = 0,
         Parent = track,
     }, { Round(3) })
+    local fillGradient = New("UIGradient", { Parent = fill })
+    local knobRing = Stroke(Theme.Accent, 2)
     local knob = New("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0, 0.5),
@@ -971,7 +1009,7 @@ function Controls.Slider(host, o)
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         Parent = track,
-    }, { Round(7) })
+    }, { Round(7), knobRing })
     local hit = New("TextButton", {
         Position = UDim2.new(0, 0, 0, 26),
         Size = UDim2.new(1, 0, 0, 24),
@@ -980,7 +1018,9 @@ function Controls.Slider(host, o)
         Parent = row,
     })
     onTheme(function()
-        fill.BackgroundColor3 = Theme.Accent
+        fill.BackgroundColor3 = Color3.new(1, 1, 1)
+        fillGradient.Color = ColorSequence.new(Theme.AccentDark, Theme.AccentLight)
+        knobRing.Color = Theme.Accent
         valueBox.TextColor3 = Theme.AccentLight
     end)
 
@@ -1354,6 +1394,32 @@ UI.Main = New("Frame", {
 
 UI.Scale = New("UIScale", { Scale = 1, Parent = UI.Main })
 
+-- A little depth: the window fades slightly darker toward the bottom, and a thin accent line runs along the top
+local mainGradient = New("UIGradient", { Rotation = 90, Parent = UI.Main })
+local topLine = New("Frame", {
+    Position = UDim2.fromOffset(18, 0),
+    Size = UDim2.new(1, -36, 0, 2),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    ZIndex = 5,
+    Parent = UI.Main,
+}, { Round(1) })
+local topLineGradient = New("UIGradient", { Parent = topLine })
+onTheme(function()
+    mainGradient.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(205, 205, 215))
+    topLineGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.AccentDark),
+        ColorSequenceKeypoint.new(0.5, Theme.AccentLight),
+        ColorSequenceKeypoint.new(1, Theme.AccentDark),
+    })
+    topLineGradient.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.25, 0.35),
+        NumberSequenceKeypoint.new(0.75, 0.35),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+end)
+
 -- Modal button lets the cursor free itself in shift-lock / first person games
 UI.ModalButton = New("TextButton", {
     Size = UDim2.fromOffset(0, 0),
@@ -1703,13 +1769,14 @@ function UI:CreateTab(name, subtitle)
         local bgAlpha = 1
         local bgColor = Theme.Accent
         if active then
-            bgAlpha = 0.86
+            bgAlpha = 0.8
         elseif tab.Hovered then
             bgAlpha, bgColor = 0.3, Theme.Card
         end
         Animate(tab.Button, { BackgroundTransparency = bgAlpha, BackgroundColor3 = bgColor }, instant, 0.15)
         Animate(tab.Indicator, { BackgroundTransparency = active and 0 or 1, BackgroundColor3 = Theme.Accent }, instant, 0.15)
         Animate(tab.Label, { TextColor3 = (active or tab.Hovered) and Theme.Text or Theme.TextDim }, instant, 0.15)
+        tab.Label.Font = active and FONT.Bold or FONT.Medium
     end
     onTheme(function()
         tab.Paint(true)
@@ -2012,7 +2079,8 @@ function UI:CreateTab(name, subtitle)
         end
 
         local function paintCard(instant)
-            local bg = hovered and Theme.Card:Lerp(Theme.Text, 0.035) or Theme.Card
+            local base = mod.Enabled and Theme.Card:Lerp(Theme.Accent, 0.09) or Theme.Card
+            local bg = hovered and base:Lerp(Theme.Text, 0.035) or base
             Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
             if mod.Enabled then
                 Animate(cardStroke, { Color = Theme.Accent, Transparency = hovered and 0.25 or 0.5 }, instant, 0.15)
@@ -3546,7 +3614,7 @@ local Tabs = {
     Blatant = UI:CreateTab("Blatant", "Obvious movement changes"),
     Utility = UI:CreateTab("Utility", "Safety and quality-of-life tools"),
     Kits    = UI:CreateTab("Kits", "Bedwars kit helpers"),
-    World   = UI:CreateTab("World", "Sky, lighting and atmosphere"),
+    World   = UI:CreateTab("World", "Camera, sky and lighting"),
     FPS     = UI:CreateTab("FPS", "Performance and frame rate"),
 }
 
@@ -4333,8 +4401,7 @@ do
                     end
                 end
                 if cfg.WallCheck then
-                    local seen = Util.HasLineOfSight(head.Position, entry.Root.Position)
-                        or Util.HasLineOfSight(root.Position, entry.Root.Position)
+                    local seen = Util.HasStrictSight(head.Position, entry.Root.Position)
                     if not seen then
                         return "is behind a wall"
                     end
@@ -6414,22 +6481,64 @@ do
     local stats = { Tracked = 0, InRange = 0, Rejected = 0, Nearest = nil, Sent = 0, Reply = "none yet", Beds = {} }
 
     -- Blocks ---------------------------------------------------------------------------
-    local function blockAt(worldPosition)
+    -- The game's block engine is used when it can be found. If it can't, blocks are looked up
+    -- straight from the map (placed blocks carry the "block" tag), so digging still works.
+    local function cellOf(position)
         local controller = Bedwars.BlockController
-        local cell = controller:getBlockPosition(worldPosition)
-        return controller:getStore():getBlockAt(cell), cell
+        if controller then
+            local ok, cell = pcall(controller.getBlockPosition, controller, position)
+            if ok and cell then
+                return cell
+            end
+        end
+        return Vector3.new(math.floor(position.X / 3 + 0.5), math.floor(position.Y / 3 + 0.5), math.floor(position.Z / 3 + 0.5))
+    end
+
+    local overlap
+    local function mapBlockAt(cell)
+        if not overlap then
+            overlap = OverlapParams.new()
+        end
+        local ok, parts = pcall(function()
+            return Workspace:GetPartBoundsInBox(CFrame.new(cell * 3), Vector3.new(2.2, 2.2, 2.2), overlap)
+        end)
+        if ok and type(parts) == "table" then
+            for _, part in ipairs(parts) do
+                if CollectionService:HasTag(part, "block") or CollectionService:HasTag(part, "bed") then
+                    return part
+                end
+            end
+        end
+        return nil
+    end
+
+    local function blockAt(worldPosition)
+        local cell = cellOf(worldPosition)
+        local controller = Bedwars.BlockController
+        if controller then
+            local ok, block = pcall(function()
+                return controller:getStore():getBlockAt(cell)
+            end)
+            if ok then
+                return block, cell
+            end
+        end
+        return mapBlockAt(cell), cell
     end
 
     local function breakTypeOf(block)
         if block.Name == "gumdrop_bounce_pad" then
             return "stone"
         end
-        local meta = Bedwars.ItemMeta[block.Name]
+        local meta = Bedwars.ItemMeta and Bedwars.ItemMeta[block.Name]
         return meta and meta.block and meta.block.breakType
     end
 
     local function healthOf(block, cell)
-        local data = Bedwars.BlockController:getStore():getBlockData(cell)
+        local data
+        pcall(function()
+            data = Bedwars.BlockController:getStore():getBlockData(cell)
+        end)
         local health = data and (data:GetAttribute("1") or data:GetAttribute("Health"))
         if health == nil then
             health = block:GetAttribute("Health")
@@ -6437,7 +6546,7 @@ do
         if health ~= nil then
             return health
         end
-        local meta = Bedwars.ItemMeta[block.Name]
+        local meta = Bedwars.ItemMeta and Bedwars.ItemMeta[block.Name]
         return (meta and meta.block and meta.block.health) or 10
     end
 
@@ -6470,7 +6579,7 @@ do
                 damage = best
             end
         end
-        local cell = Bedwars.BlockController:getBlockPosition(worldPosition)
+        local cell = cellOf(worldPosition)
         return healthOf(block, cell) / damage
     end
 
@@ -6659,11 +6768,15 @@ do
         if cached and now - cached.Time < BREAK_CACHE_TTL then
             return cached.Value
         end
-        local ok, result = pcall(function()
-            local cell = Bedwars.BlockController:getBlockPosition(block.Position)
-            return Bedwars.BlockController:isBlockBreakable({ blockPosition = cell }, LocalPlayer)
-        end)
-        local value = ok and result or false
+        local value
+        if Bedwars.BlockController then
+            local ok, result = pcall(function()
+                return Bedwars.BlockController:isBlockBreakable({ blockPosition = cellOf(block.Position) }, LocalPlayer)
+            end)
+            value = ok and result or false
+        else
+            value = not block:GetAttribute("NoBreak")
+        end
         breakableCache[block] = { Value = value, Time = now }
         return value
     end
@@ -6753,10 +6866,9 @@ do
     -- Returns (true, description) when it sent a hit, (false, reason) otherwise
     local function breakTarget(target, anchor)
         local cfg = nuker.Config
-        local controller = Bedwars.BlockController
         local handler
         pcall(function()
-            handler = controller:getHandlerRegistry():getHandler(target.Name)
+            handler = Bedwars.BlockController:getHandlerRegistry():getHandler(target.Name)
         end)
         local positions = {}
         local ok, contained = pcall(function()
@@ -6767,7 +6879,7 @@ do
                 positions[#positions + 1] = cell * 3
             end
         else
-            positions[1] = controller:getBlockPosition(target.Position) * 3
+            positions[1] = cellOf(target.Position) * 3
         end
 
         local bestExit, bestCost, bestStart = nil, math.huge, nil
@@ -6787,7 +6899,7 @@ do
         end
         local block, cell = blockAt(bestExit)
         if not block then
-            block, cell = target, controller:getBlockPosition(target.Position)
+            block, cell = target, cellOf(target.Position)
         end
         if not cell or block:GetAttribute("NoBreak") then
             return false, "entry block can't be broken"
@@ -6870,25 +6982,25 @@ do
         return list, add, remove
     end
 
-    -- One-click self check: prints what Nova can and can't see, step by step
+    -- One-click self check: shows what Nova can and can't see, and copies the report to the clipboard
     local function runDiagnostics()
         local lines = {}
         local function add(label, ok, detail)
-            lines[#lines + 1] = (ok and "OK  " or "FAIL") .. "  " .. label .. (detail and (" - " .. tostring(detail)) or "")
+            lines[#lines + 1] = (ok and "OK    " or "FAIL  ") .. label .. (detail ~= nil and (" - " .. tostring(detail)) or "")
         end
         local ready, reason = Bedwars.ResolveExtras()
-        add("Bedwars found", ready, ready and nil or reason)
-        if ready then
-            add("Block engine", Bedwars.BlockController ~= nil)
-            add("Hit remote", Bedwars.DamageBlockRemotes ~= nil)
-            add("Raw hit remote", getRawRemote() ~= nil, "backup, optional")
-            add("Inventory store", Bedwars.Store ~= nil)
-            add("Item data", Bedwars.ItemMeta ~= nil)
-        end
+        add("Bedwars found", Bedwars.Ready == true, reason)
+        add("Block engine", Bedwars.BlockController ~= nil, Bedwars.BlockController and nil or "using map lookup instead")
+        add("Hit remote (game)", Bedwars.DamageBlockRemotes ~= nil)
+        add("Hit remote (direct)", getRawRemote() ~= nil)
+        add("Item data", Bedwars.ItemMeta ~= nil)
+        add("Inventory", Bedwars.GetInventory() ~= nil, Bedwars.Store and nil or "store not found")
         local tagged = #CollectionService:GetTagged("bed")
         add("Beds tagged in game", tagged > 0, tagged)
+        add("Blocks tagged in game", #CollectionService:GetTagged("block") > 0, #CollectionService:GetTagged("block"))
         local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if ready and Bedwars.BlockController and root then
+        add("Your character", root ~= nil)
+        if root then
             local nearest, nearestDistance
             for _, inst in ipairs(CollectionService:GetTagged("bed")) do
                 local part = asPart(inst)
@@ -6900,25 +7012,24 @@ do
                 end
             end
             if nearest then
-                add("Nearest bed", true, string.format("%.0f studs", nearestDistance))
-                local ok, breakable = pcall(function()
-                    return Bedwars.BlockController:isBlockBreakable(
-                        { blockPosition = Bedwars.BlockController:getBlockPosition(nearest.Position) }, LocalPlayer)
-                end)
-                add("Game says it is breakable", ok and breakable, ok and nil or breakable)
-                if nuker then
-                    add("Passes team / shield checks", passesChecks(nearest))
-                end
+                add("Nearest bed", true, string.format("%.0f studs, team %s", nearestDistance, tostring(nearest:GetAttribute("Team"))))
+                local atBed, bedCell = blockAt(nearest.Position)
+                add("Bed found as a block", atBed ~= nil, bedCell and tostring(bedCell) or nil)
+                add("Not blocked (shield / own team)", passesChecks(nearest))
+                add("Game says it is breakable", isBreakable(nearest))
                 local ok2, exit = pcall(function()
-                    local start = Bedwars.BlockController:getBlockPosition(nearest.Position) * 3
-                    return findPath(nearest, start, 360, nil)
+                    return findPath(nearest, cellOf(nearest.Position) * 3, 360, nil)
                 end)
-                add("Path to the bed found", ok2 and exit ~= nil, ok2 and nil or exit)
+                add("Way in found", ok2 and exit ~= nil, ok2 and (exit == nil and "blocked or too far" or nil) or exit)
             end
         end
-        add("Hits sent this session", true, tostring(stats.Sent) .. ", last reply: " .. stats.Reply)
+        add("Hits sent", stats.Sent > 0, tostring(stats.Sent) .. ", last reply: " .. stats.Reply)
         local text = table.concat(lines, "\n")
-        Nova.Notify("Nuker check", text, 12, "info", true)
+        local copied = false
+        if type(setclipboard) == "function" then
+            copied = pcall(setclipboard, "Nuker check\n" .. text)
+        end
+        Nova.Notify("Nuker check" .. (copied and " (copied)" or ""), text, 14, "info", true)
     end
 
     nuker = Tabs.Blatant:CreateModule({
@@ -6928,8 +7039,7 @@ do
             Bedwars.WaitExtras(4)
             local loaded, why = Bedwars.Resolve()
             assert(loaded, why or "Bedwars isn't loaded yet - join a match first")
-            assert(Bedwars.BlockController, "block engine not found (Bedwars update?)")
-            assert(Bedwars.DamageBlockRemotes, "DamageBlock remote not found (Bedwars update?)")
+            assert(Bedwars.DamageBlockRemotes or getRawRemote(), "DamageBlock remote not found (Bedwars update?)")
 
             local cfg = mod.Config
             pathCache, toolDamage = {}, {}
@@ -6992,7 +7102,7 @@ do
                             and passesChecks(block) and isBreakable(block) then
                             local value
                             if cfg.TargetMode == "Health" then
-                                local cell = Bedwars.BlockController:getBlockPosition(block.Position)
+                                local cell = cellOf(block.Position)
                                 value = healthOf(block, cell)
                             else
                                 value = (block.Position - position).Magnitude
@@ -8293,6 +8403,486 @@ do
         end
     end
     autokit:AddNote("Only the kit you are playing runs. Kits need a Bedwars match; switch any kit off here if it misbehaves.")
+end
+
+-- ====================== MODULES: VELOCITY, BED ALARM, ANTI AFK, CAMERA TOOLS ======================
+-- Everything in this block only changes what happens on your own screen / your own client.
+
+-- Velocity -----------------------------------------------------------------------------------
+do
+    local ReplicatedStorage = service("ReplicatedStorage")
+    local rng = Random.new()
+    local velocity
+
+    local function knockbackUtil()
+        if Bedwars.KnockbackUtil then
+            return Bedwars.KnockbackUtil
+        end
+        local ok, util = pcall(function()
+            return require(ReplicatedStorage.TS.damage["knockback-util"]).KnockbackUtil
+        end)
+        if ok and type(util) == "table" and type(util.applyKnockback) == "function" then
+            Bedwars.KnockbackUtil = util
+            return util
+        end
+        return nil
+    end
+
+    local function enemyNear(distance)
+        local _, _, root = Util.GetCharacter(LocalPlayer)
+        if not root then
+            return false
+        end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and not Util.IsTeammate(plr) then
+                local _, hum, theirRoot = Util.GetCharacter(plr)
+                if hum and hum.Health > 0 and (theirRoot.Position - root.Position).Magnitude <= distance then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    velocity = Tabs.Combat:CreateModule({
+        Name = "Velocity",
+        Description = "Take less knockback, or take it a moment late.",
+        OnEnable = function(mod)
+            local loaded, why = Bedwars.Resolve()
+            assert(loaded, why or "Bedwars isn't loaded yet")
+            local util = knockbackUtil()
+            assert(util, "knockback code not found (Bedwars update?)")
+
+            local original = util.applyKnockback
+            local hooked
+            hooked = function(root, mass, direction, knockback, ...)
+                local cfg = mod.Config
+                local _, _, myRoot = Util.GetCharacter(LocalPlayer)
+                -- only your own character, and only when the roll and the "targeting" check allow it
+                if not mod.Enabled or root ~= myRoot or rng:NextNumber(0, 100) >= cfg.Chance
+                    or (cfg.OnlyTargeting and not enemyNear(50)) then
+                    return original(root, mass, direction, knockback, ...)
+                end
+                if cfg.Mode == "Delay" then
+                    local _, hum = Util.GetCharacter(LocalPlayer)
+                    local inAir = hum and hum.FloorMaterial == Enum.Material.Air
+                    local seconds = (inAir and cfg.DelayAir or cfg.DelayGround) / 1000
+                    local args = table.pack(...)
+                    task.delay(seconds, function()
+                        if mod.Enabled and root.Parent then
+                            pcall(original, root, mass, direction, knockback, table.unpack(args, 1, args.n))
+                        end
+                    end)
+                    return
+                end
+                if cfg.Horizontal <= 0 and cfg.Vertical <= 0 then
+                    return
+                end
+                local changed = table.clone(knockback or {})
+                changed.horizontal = ((knockback and knockback.horizontal) or 1) * (cfg.Horizontal / 100)
+                changed.vertical = ((knockback and knockback.vertical) or 1) * (cfg.Vertical / 100)
+                return original(root, mass, direction, changed, ...)
+            end
+            util.applyKnockback = hooked
+            mod.Maid:Give(function()
+                if util.applyKnockback == hooked then
+                    util.applyKnockback = original
+                end
+            end)
+        end,
+    })
+    velocity:AddOption({
+        Label = "Mode", Key = "Mode", Options = { "Reduce", "Delay" }, Default = "Reduce",
+        Tip = "Reduce shrinks the knockback. Delay applies it a moment late instead.",
+    })
+    velocity:AddSlider({
+        Label = "Horizontal", Key = "Horizontal", Min = 0, Max = 100, Default = 70, Step = 1, Suffix = "%",
+        Tip = "How much sideways knockback you keep.",
+        ShowIf = function(c) return c.Mode == "Reduce" end,
+    })
+    velocity:AddSlider({
+        Label = "Vertical", Key = "Vertical", Min = 0, Max = 100, Default = 100, Step = 1, Suffix = "%",
+        Tip = "How much upward knockback you keep.",
+        ShowIf = function(c) return c.Mode == "Reduce" end,
+    })
+    velocity:AddSlider({
+        Label = "Delay on Ground", Key = "DelayGround", Min = 0, Max = 3000, Default = 300, Step = 10, Suffix = " ms",
+        ShowIf = function(c) return c.Mode == "Delay" end,
+    })
+    velocity:AddSlider({
+        Label = "Delay in Air", Key = "DelayAir", Min = 0, Max = 3000, Default = 300, Step = 10, Suffix = " ms",
+        ShowIf = function(c) return c.Mode == "Delay" end,
+    })
+    velocity:AddSlider({
+        Label = "Chance", Key = "Chance", Min = 0, Max = 100, Default = 100, Step = 1, Suffix = "%",
+        Tip = "How often it changes your knockback. 100 means every hit.",
+    })
+    velocity:AddToggle({
+        Label = "Only When an Enemy Is Close", Key = "OnlyTargeting", Default = false,
+        Tip = "Leaves knockback alone unless an enemy is within 50 studs.",
+    })
+end
+
+-- Bed Alarm ----------------------------------------------------------------------------------
+do
+    local CollectionService = service("CollectionService")
+    local alarm
+
+    local function ownBed()
+        local team = LocalPlayer:GetAttribute("Team")
+        if team == nil then
+            return nil
+        end
+        for _, bed in ipairs(CollectionService:GetTagged("bed")) do
+            if bed.Parent and bed:GetAttribute("Team" .. tostring(team) .. "NoBreak") then
+                return bed
+            end
+        end
+        return nil
+    end
+
+    local function positionOf(inst)
+        local ok, pivot = pcall(function()
+            return inst:GetPivot().Position
+        end)
+        if ok then
+            return pivot
+        end
+        return inst:IsA("BasePart") and inst.Position or nil
+    end
+
+    alarm = Tabs.Utility:CreateModule({
+        Name = "Bed Alarm",
+        Description = "Warns you when an enemy gets close to your bed.",
+        OnEnable = function(mod)
+            local highlights = {}
+            local sound = Instance.new("Sound")
+            sound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+            mod.Maid:Give(sound)
+            sound.Parent = Workspace.CurrentCamera or Workspace
+            mod.Maid:Give(function()
+                for _, highlight in pairs(highlights) do
+                    pcall(function() highlight:Destroy() end)
+                end
+                highlights = {}
+            end)
+
+            local lastAlert, lastPing = 0, 0
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    task.wait(0.2)
+                    local cfg = mod.Config
+                    local bed = ownBed()
+                    local bedPosition = bed and positionOf(bed)
+                    local nearest, nearestDistance
+                    if bedPosition then
+                        for _, plr in ipairs(Players:GetPlayers()) do
+                            if plr ~= LocalPlayer and not Util.IsTeammate(plr)
+                                and plr:GetAttribute("Team") ~= LocalPlayer:GetAttribute("Team") then
+                                local char, hum, root = Util.GetCharacter(plr)
+                                if char and hum.Health > 0 then
+                                    local d = (root.Position - bedPosition).Magnitude
+                                    if d <= cfg.Distance and (not nearestDistance or d < nearestDistance) then
+                                        nearest, nearestDistance = plr, d
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    -- outline whoever is close, remove it when they leave
+                    local near = {}
+                    if bedPosition and cfg.Highlight then
+                        for _, plr in ipairs(Players:GetPlayers()) do
+                            if plr ~= LocalPlayer and plr:GetAttribute("Team") ~= LocalPlayer:GetAttribute("Team") then
+                                local char, hum, root = Util.GetCharacter(plr)
+                                if char and hum.Health > 0 and (root.Position - bedPosition).Magnitude <= cfg.Distance then
+                                    near[plr] = char
+                                end
+                            end
+                        end
+                    end
+                    for plr, highlight in pairs(highlights) do
+                        if not near[plr] or not highlight.Parent then
+                            pcall(function() highlight:Destroy() end)
+                            highlights[plr] = nil
+                        end
+                    end
+                    for plr, char in pairs(near) do
+                        if not highlights[plr] then
+                            local highlight = Instance.new("Highlight")
+                            highlight.Name = "NovaBedAlarm"
+                            highlight.FillColor = Theme.Bad
+                            highlight.OutlineColor = Theme.Bad
+                            highlight.FillTransparency = 0.65
+                            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            highlight.Adornee = char
+                            highlight.Parent = char
+                            highlights[plr] = highlight
+                        end
+                    end
+
+                    if not bed then
+                        mod:SetStatus(LocalPlayer:GetAttribute("Team") == nil and "Waiting for a match" or "Your bed is gone", "warn")
+                    elseif nearest then
+                        mod:SetStatus(string.format("%s is %d studs from your bed", nearest.DisplayName, nearestDistance), "error")
+                        if os.clock() - lastAlert >= cfg.Interval then
+                            lastAlert = os.clock()
+                            Nova.Notify("Bed Alarm", string.format("%s is %d studs from your bed!", nearest.DisplayName, nearestDistance),
+                                math.max(cfg.Interval, 2), "warn", true)
+                        end
+                        if cfg.Sound and os.clock() - lastPing >= 1.2 then
+                            lastPing = os.clock()
+                            sound.Volume = cfg.Volume
+                            pcall(function() sound:Play() end)
+                        end
+                    else
+                        mod:SetStatus("Watching your bed")
+                    end
+                end
+            end))
+        end,
+    })
+    alarm:AddSlider({ Label = "Distance", Key = "Distance", Min = 10, Max = 100, Default = 40, Step = 1, Suffix = " studs", Tip = "How close an enemy must get to your bed." })
+    alarm:AddSlider({ Label = "Alert Every", Key = "Interval", Min = 1, Max = 10, Default = 3, Step = 0.5, Suffix = "s", Tip = "Time between pop-up warnings." })
+    alarm:AddToggle({ Label = "Outline Enemies", Key = "Highlight", Default = true, Tip = "Shows enemies near your bed through walls." })
+    alarm:AddToggle({ Label = "Play Sound", Key = "Sound", Default = true })
+    alarm:AddSlider({ Label = "Volume", Key = "Volume", Min = 0.1, Max = 3, Default = 1.5, Step = 0.1, ShowIf = function(c) return c.Sound end })
+end
+
+-- Anti AFK -----------------------------------------------------------------------------------
+do
+    local afk
+    afk = Tabs.Utility:CreateModule({
+        Name = "Anti AFK",
+        Description = "Stops Roblox from kicking you for being idle.",
+        OnEnable = function(mod)
+            local VirtualUser = service("VirtualUser")
+            mod.Maid:Give(LocalPlayer.Idled:Connect(function()
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new(0, 0))
+                end)
+            end))
+        end,
+    })
+end
+
+-- Camera tools -------------------------------------------------------------------------------
+do
+    -- Field of View
+    local fov
+    fov = Tabs.World:CreateModule({
+        Name = "Field of View",
+        Description = "Set how wide your camera sees.",
+        OnEnable = function(mod)
+            local camera = Workspace.CurrentCamera
+            local original = camera and camera.FieldOfView
+            mod.Maid:Give(RunService.RenderStepped:Connect(function()
+                local cam = Workspace.CurrentCamera
+                if cam then
+                    cam.FieldOfView = mod.Config.FOV
+                end
+            end))
+            mod.Maid:Give(function()
+                local cam = Workspace.CurrentCamera
+                if cam and original then
+                    cam.FieldOfView = original
+                end
+            end)
+        end,
+    })
+    fov:AddSlider({ Label = "Field of View", Key = "FOV", Min = 30, Max = 120, Default = 100, Step = 1, Suffix = "°" })
+
+    -- Infinite Zoom
+    local zoom
+    zoom = Tabs.World:CreateModule({
+        Name = "Infinite Zoom",
+        Description = "Zoom the camera out much further than normal.",
+        OnEnable = function(mod)
+            local original = LocalPlayer.CameraMaxZoomDistance
+            local function apply()
+                LocalPlayer.CameraMaxZoomDistance = mod.Config.MaxZoom
+            end
+            apply()
+            mod.Maid:Give(LocalPlayer:GetPropertyChangedSignal("CameraMaxZoomDistance"):Connect(function()
+                if LocalPlayer.CameraMaxZoomDistance ~= mod.Config.MaxZoom then
+                    apply()
+                end
+            end))
+            mod.Maid:Give(function()
+                LocalPlayer.CameraMaxZoomDistance = original
+            end)
+        end,
+    })
+    zoom:AddSlider({
+        Label = "Max Distance", Key = "MaxZoom", Min = 40, Max = 1000, Default = 400, Step = 10, Suffix = " studs",
+        Callback = function(value)
+            if zoom.Enabled then
+                LocalPlayer.CameraMaxZoomDistance = value
+            end
+        end,
+    })
+
+    -- Freecam
+    local freecam
+    freecam = Tabs.World:CreateModule({
+        Name = "Freecam",
+        Description = "Fly the camera around while your character stays put.",
+        OnEnable = function(mod)
+            local camera = Workspace.CurrentCamera
+            assert(camera, "no camera")
+            local start = camera.CFrame
+            local yaw, pitch = 0, 0
+            do
+                local x, y = start:ToOrientation()
+                pitch, yaw = x, y
+            end
+            local position = start.Position
+            local looking = false
+
+            -- stop the character from walking around while the camera moves
+            local controls
+            pcall(function()
+                controls = require(LocalPlayer.PlayerScripts:WaitForChild("PlayerModule", 2)):GetControls()
+                controls:Disable()
+            end)
+
+            mod.Maid:Give(UserInputService.InputBegan:Connect(function(input, processed)
+                if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    looking = true
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+                end
+            end))
+            mod.Maid:Give(UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    looking = false
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+                end
+            end))
+            mod.Maid:Give(UserInputService.InputChanged:Connect(function(input)
+                if looking and input.UserInputType == Enum.UserInputType.MouseMovement then
+                    yaw = yaw - input.Delta.X * 0.004
+                    pitch = math.clamp(pitch - input.Delta.Y * 0.004, -1.5, 1.5)
+                end
+            end))
+
+            mod.Maid:Give(RunService.RenderStepped:Connect(function(dt)
+                local cam = Workspace.CurrentCamera
+                if not cam then
+                    return
+                end
+                cam.CameraType = Enum.CameraType.Scriptable
+                local rotation = CFrame.fromOrientation(pitch, yaw, 0)
+                local move = Vector3.new(0, 0, 0)
+                if not UserInputService:GetFocusedTextBox() then
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + rotation.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - rotation.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + rotation.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - rotation.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.E) or UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                        move = move + Vector3.new(0, 1, 0)
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Q) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                        move = move - Vector3.new(0, 1, 0)
+                    end
+                end
+                local speed = mod.Config.Speed
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                    speed = speed * 3
+                end
+                if move.Magnitude > 0 then
+                    position = position + move.Unit * speed * dt
+                end
+                cam.CFrame = CFrame.new(position) * rotation
+            end))
+
+            mod.Maid:Give(function()
+                looking = false
+                pcall(function()
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+                end)
+                if controls then
+                    pcall(function() controls:Enable() end)
+                end
+                local cam = Workspace.CurrentCamera
+                if cam then
+                    cam.CameraType = Enum.CameraType.Custom
+                    local _, hum = Util.GetCharacter(LocalPlayer)
+                    if hum then
+                        cam.CameraSubject = hum
+                    end
+                end
+            end)
+        end,
+    })
+    freecam:AddSlider({ Label = "Speed", Key = "Speed", Min = 5, Max = 150, Default = 40, Step = 1, Suffix = " studs/s", Tip = "Hold Shift for three times this speed." })
+    freecam:AddNote("W A S D to move, Space / E up, Ctrl / Q down. Hold the right mouse button to look around.")
+
+    -- Xray
+    local xray
+    local touched = setmetatable({}, { __mode = "k" })
+    xray = Tabs.World:CreateModule({
+        Name = "Xray",
+        Description = "See through walls and the map by making them see-through.",
+        OnEnable = function(mod)
+            local function eligible(inst)
+                if not inst:IsA("BasePart") or inst.Transparency >= 0.95 or not inst.CanCollide then
+                    return false
+                end
+                -- leave players and NPCs alone
+                local model = inst:FindFirstAncestorOfClass("Model")
+                if model and (Players:GetPlayerFromCharacter(model) or model:FindFirstChildOfClass("Humanoid")) then
+                    return false
+                end
+                return true
+            end
+            local function apply(inst)
+                if eligible(inst) then
+                    touched[inst] = true
+                    inst.LocalTransparencyModifier = mod.Config.Opacity
+                end
+            end
+            mod.Maid:Give(task.spawn(function()
+                local count = 0
+                for _, inst in ipairs(Workspace:GetDescendants()) do
+                    if not mod.Enabled then
+                        return
+                    end
+                    apply(inst)
+                    count = count + 1
+                    if count % 1500 == 0 then
+                        task.wait()
+                    end
+                end
+            end))
+            mod.Maid:Give(Workspace.DescendantAdded:Connect(function(inst)
+                task.defer(apply, inst)
+            end))
+            mod.Maid:Give(function()
+                for inst in pairs(touched) do
+                    pcall(function()
+                        inst.LocalTransparencyModifier = 0
+                    end)
+                end
+                touched = setmetatable({}, { __mode = "k" })
+            end)
+        end,
+    })
+    xray:AddSlider({
+        Label = "See-Through", Key = "Opacity", Min = 0.1, Max = 0.95, Default = 0.7, Step = 0.05,
+        Tip = "Higher is more see-through.",
+        Callback = function(value)
+            if xray.Enabled then
+                for inst in pairs(touched) do
+                    pcall(function()
+                        inst.LocalTransparencyModifier = value
+                    end)
+                end
+            end
+        end,
+    })
+    xray:AddNote("On big maps this can lower your frame rate.")
 end
 
 -- ====================== MODULE: WORLD (SKY) ======================
