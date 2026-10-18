@@ -6143,6 +6143,8 @@ do
         soul_broker = "rbxassetid://130409166262430",
     }
 
+    local MAX_GAMES = 8
+
     local kitRender
     local lastKitCache, lastKitPending, lastKitRetry = {}, {}, {}
     local partyCache, partyNumbers = {}, {}
@@ -6257,10 +6259,10 @@ do
                 local outcome = entry.generic and string.lower(tostring(entry.generic.matchOutcome or "")) or ""
                 if FINISHED[outcome] then
                     kits[#kits + 1] = kit
-                    if #kits >= 3 then
+                    if #kits >= MAX_GAMES then
                         break
                     end
-                elseif #loose < 3 then
+                elseif #loose < MAX_GAMES then
                     loose[#loose + 1] = kit
                 end
             end
@@ -6503,9 +6505,9 @@ do
                 SizeConstraint = Enum.SizeConstraint.RelativeYY,
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
-                ImageTransparency = 0.4,
+                ImageTransparency = 0.3,
                 ScaleType = Enum.ScaleType.Crop,
-                ZIndex = 5,
+                ZIndex = 0,
                 Parent = host,
             }, {
                 New("UIAspectRatioConstraint", {
@@ -6552,12 +6554,14 @@ do
         end
     end
 
+    -- One small kit icon per past game, laid out in a row along the top of the card
     local function createLastBadge(host, plr, slot)
         local badge = New("Frame", {
             Name = "NovaLastKit",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.41, (slot - 1) * 58, 0.5, 0),
-            Size = UDim2.fromOffset(54, 56),
+            AnchorPoint = Vector2.new(0, 0),
+            Position = UDim2.new(0.045 + (slot - 1) * 0.113, 0, 0, 4),
+            Size = UDim2.new(0.105, 0, 0.105, 0),
+            SizeConstraint = Enum.SizeConstraint.RelativeXX,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             ClipsDescendants = false,
@@ -6566,31 +6570,29 @@ do
             Parent = host,
         })
         badge:SetAttribute("Slot", slot)
-        New("TextLabel", {
-            Name = "Tag",
-            AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 0, -1),
-            Size = UDim2.new(1.1, 0, 0, 14),
-            BackgroundTransparency = 1,
-            Text = (slot == 1) and "last game" or (tostring(slot) .. " games ago"),
-            TextColor3 = Color3.fromRGB(255, 64, 64),
-            TextSize = 10,
-            Font = Enum.Font.FredokaOne,
-            TextStrokeTransparency = 0.35,
-            TextStrokeColor3 = Color3.new(0, 0, 0),
-            ZIndex = 10002,
-            Parent = badge,
-        })
         New("ImageLabel", {
             Name = "Render",
-            AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.new(0.5, 0, 1, 1),
-            Size = UDim2.fromOffset(44, 41),
+            Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             ImageTransparency = 0.05,
             ScaleType = Enum.ScaleType.Fit,
             ZIndex = 10001,
+            Parent = badge,
+        })
+        New("TextLabel", {
+            Name = "Number",
+            Position = UDim2.fromOffset(0, -1),
+            Size = UDim2.fromOffset(10, 9),
+            BackgroundTransparency = 1,
+            Text = tostring(slot),
+            TextColor3 = Color3.new(1, 1, 1),
+            TextSize = 9,
+            Font = Enum.Font.GothamBold,
+            TextStrokeTransparency = 0.3,
+            TextStrokeColor3 = Color3.new(0, 0, 0),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 10002,
             Parent = badge,
         })
         return badge
@@ -6607,7 +6609,7 @@ do
             return
         end
         unclip(host)
-        local count = cfg.LastMatchCount or 1
+        local count = math.clamp(math.floor(tonumber(cfg.LastGames) or MAX_GAMES), 1, MAX_GAMES)
         local badges = {}
         for _, child in ipairs(host:GetChildren()) do
             if child.Name == "NovaLastKit" then
@@ -6782,8 +6784,8 @@ do
         end,
     })
     kitRender:AddSlider({
-        Label = "Matches Back", Key = "LastMatchCount", Min = 1, Max = 3, Default = 1, Step = 1,
-        Tip = "1 = their last game, 3 = their last three games.",
+        Label = "Last Games", Key = "LastGames", Min = 1, Max = 8, Default = 8, Step = 1,
+        Tip = "How many of their previous games to show (1 is their most recent).",
         ShowIf = function(c) return c.LastMatch end,
         Callback = rescan,
     })
@@ -7748,7 +7750,7 @@ do
         "IllIIIIlIllIlIIIlI", "YoZevStar", "pzlican", "Deevicus", "Blackprincess1", "yhpro1230", "eple_147",
         "whoisdv2_erin", "whoisdv4_erin", "whoisdv3_erin", "VicForLife14", "SleeplessSoulmate", "Jsquire07",
         "DVwastaken", "pxIican", "devzebu", "FunFamilyKids177", "Artan3333", "3MEWMTS5LJCB", "Zengoulen",
-        "GloriousConfigB2", "heywasupsir", "c6chisa",
+        "GloriousConfigB2", "heywasupsir", "c6chisa", "splashbird5372",
     }) do
         KNOWN_NAMES[name:lower()] = true
     end
@@ -8929,6 +8931,263 @@ do
         end
     end
     autokit:AddNote("Only the kit you are playing runs. Kits need a Bedwars match; switch any kit off here if it misbehaves.")
+end
+
+-- ====================== MODULE: AUTO FISHER ======================
+-- Fisherman kit: finishes the fishing minigame for you, tells you what the catch is, and can cast
+-- the rod by itself.
+do
+    local ReplicatedStorage = service("ReplicatedStorage")
+
+    local fisher
+    local FISH_NAMES = {
+        fish_iron = "Iron Fish", fish_diamond = "Diamond Fish", fish_gold = "Gold Fish",
+        fish_special = "Special Fish", fish_emerald = "Emerald Fish",
+    }
+
+    local function walk(root, ...)
+        local node = root
+        for _, name in ipairs({ ... }) do
+            node = node and node:FindFirstChild(name)
+        end
+        return node
+    end
+
+    local animations
+    local function getAnimations()
+        if animations then
+            return animations
+        end
+        local ok, util, kinds = pcall(function()
+            return require(walk(ReplicatedStorage, "TS", "animation", "animation-util")).GameAnimationUtil,
+                require(walk(ReplicatedStorage, "TS", "animation", "animation-type")).AnimationType
+        end)
+        if ok and util and kinds then
+            animations = { Util = util, Type = kinds }
+        end
+        return animations
+    end
+
+    local function describeCatch(model, drops)
+        local name = FISH_NAMES[model] or tostring(model)
+        if type(drops) ~= "table" or #drops == 0 then
+            return "You caught a " .. name .. (model == "fish_special" and " (special item incoming)" or "")
+        end
+        local totals, order = {}, {}
+        for _, drop in ipairs(drops) do
+            local item = tostring(drop.itemType or "unknown")
+            if not totals[item] then
+                totals[item] = 0
+                order[#order + 1] = item
+            end
+            totals[item] = totals[item] + (tonumber(drop.amount) or 0)
+        end
+        if model == "fish_special" then
+            return "You caught a " .. name .. ": " .. table.concat(order, ", ")
+        end
+        local parts = {}
+        for _, item in ipairs(order) do
+            parts[#parts + 1] = math.ceil(totals[item] * 1.4) .. "x " .. item
+        end
+        return "You caught a " .. name .. ": " .. table.concat(parts, ", ")
+    end
+
+    local function skipped(cfg, model)
+        if type(model) ~= "string" or tostring(cfg.SkipFish or "") == "" then
+            return false
+        end
+        for word in string.gmatch(tostring(cfg.SkipFish), "[^,%s]+") do
+            if string.lower(word) == string.lower(model) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function bobber()
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst.Name == "fisherman_bobber" and inst:GetAttribute("ProjectileShooter") == LocalPlayer.UserId then
+                return inst
+            end
+        end
+        return nil
+    end
+
+    fisher = Tabs.Kits:CreateModule({
+        Name = "Auto Fisher",
+        Description = "Fisherman kit: wins the fishing minigame and casts for you.",
+        OnEnable = function(mod)
+            local loaded, why = Bedwars.Resolve()
+            assert(loaded, why or "Bedwars isn't loaded yet - join a match first")
+            pcall(Bedwars.ResolveExtras)
+
+            local controller
+            pcall(function()
+                controller = Bedwars.Knit.Controllers.FishingMinigameController
+            end)
+            assert(controller and type(controller.startMinigame) == "function", "Fishing controller not found (Bedwars update?)")
+
+            local cfg = mod.Config
+            local original = controller.startMinigame
+            local tracks = {}
+            local function stopTracks()
+                for index = #tracks, 1, -1 do
+                    local track = table.remove(tracks, index)
+                    pcall(function()
+                        track:Stop()
+                    end)
+                end
+            end
+            local function play(kind)
+                local anim = getAnimations()
+                if not anim or not cfg.Animations or not anim.Type[kind] then
+                    return
+                end
+                local ok, track = pcall(function()
+                    return anim.Util:playAnimation(LocalPlayer, anim.Type[kind])
+                end)
+                if ok and track then
+                    tracks[#tracks + 1] = track
+                end
+            end
+
+            local hook
+            hook = function(self, dropData, result)
+                local model = dropData and dropData.fishModel
+                if cfg.Notify and model then
+                    Nova.Notify("Fisherman", describeCatch(model, dropData.drops), 6, "info")
+                end
+                if not cfg.AutoComplete then
+                    return original(self, dropData, result)
+                end
+                if skipped(cfg, model) then
+                    -- not worth it: let the game's own minigame run (and jump to fail it quickly)
+                    local _, humanoid = Util.GetCharacter(LocalPlayer)
+                    if humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping then
+                        pcall(function()
+                            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        end)
+                    end
+                    return original(self, dropData, result)
+                end
+
+                local wait
+                if cfg.Randomize then
+                    local low, high = cfg.MinDelay, math.max(cfg.MinDelay, cfg.MaxDelay)
+                    wait = low + (high - low) * math.random()
+                else
+                    wait = cfg.Delay
+                end
+                task.spawn(function()
+                    stopTracks()
+                    if wait > 0 then
+                        play("FISHING_ROD_PULLING")
+                        task.wait(wait)
+                        stopTracks()
+                    end
+                    if not mod.Enabled then
+                        return
+                    end
+                    play("FISHING_ROD_CATCH_SUCCESS")
+                    if type(result) == "function" then
+                        pcall(result, { win = true })
+                    end
+                    task.wait(0.5)
+                    stopTracks()
+                end)
+            end
+            controller.startMinigame = hook
+            mod.Maid:Give(function()
+                if controller.startMinigame == hook then
+                    controller.startMinigame = original
+                end
+                stopTracks()
+            end)
+
+            -- Auto cast
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    task.wait(0.1)
+                    if cfg.AutoCast and VirtualInputManager and Util.MatchesHeld("fishing_rod") then
+                        local _, _, root = Util.GetCharacter(LocalPlayer)
+                        local camera = Workspace.CurrentCamera
+                        if root and camera and not bobber() then
+                            local size = camera.ViewportSize
+                            local ray = camera:ViewportPointToRay(size.X / 2, size.Y / 2)
+                            local head = root.Position + Vector3.new(0, 1.5, 0)
+                            -- only cast when the spot ahead has no ground under it (water)
+                            local hit = Workspace:Raycast(head + ray.Direction * 6, Vector3.new(0, -20, 0))
+                            if not hit then
+                                local low, high = cfg.CastMin, math.max(cfg.CastMin, cfg.CastMax)
+                                task.wait(low + (high - low) * math.random())
+                                if mod.Enabled and not bobber() then
+                                    for _, down in ipairs({ true, false }) do
+                                        pcall(function()
+                                            VirtualInputManager:SendMouseButtonEvent(size.X / 2, size.Y / 2, 0, down, game, 1)
+                                        end)
+                                        task.wait()
+                                    end
+                                    task.wait(0.5)
+                                end
+                            end
+                        end
+                    end
+                end
+            end))
+            mod:SetStatus("Waiting for a bite")
+        end,
+    })
+
+    fisher:AddSection("Minigame")
+    fisher:AddToggle({
+        Label = "Auto Complete", Key = "AutoComplete", Default = true,
+        Tip = "Wins the fishing minigame for you.",
+    })
+    fisher:AddSlider({
+        Label = "Delay", Key = "Delay", Min = 0, Max = 5, Default = 1, Step = 0.1, Suffix = "s",
+        Tip = "How long to wait before the catch lands.",
+        ShowIf = function(c) return c.AutoComplete and not c.Randomize end,
+    })
+    fisher:AddToggle({
+        Label = "Randomize Delay", Key = "Randomize", Default = false,
+        ShowIf = function(c) return c.AutoComplete end,
+    })
+    fisher:AddSlider({
+        Label = "Shortest", Key = "MinDelay", Min = 0.1, Max = 5, Default = 0.5, Step = 0.1, Suffix = "s",
+        ShowIf = function(c) return c.AutoComplete and c.Randomize end,
+    })
+    fisher:AddSlider({
+        Label = "Longest", Key = "MaxDelay", Min = 0.1, Max = 5, Default = 2, Step = 0.1, Suffix = "s",
+        ShowIf = function(c) return c.AutoComplete and c.Randomize end,
+    })
+    fisher:AddToggle({
+        Label = "Animations", Key = "Animations", Default = true,
+        Tip = "Plays the rod's pull and catch animations while it waits.",
+        ShowIf = function(c) return c.AutoComplete end,
+    })
+    fisher:AddTextBox({
+        Label = "Skip Fish", Key = "SkipFish", Default = "", Placeholder = "e.g. fish_iron",
+        Tip = "Fish you don't want auto-completed (separate with commas). Those run the game's normal minigame.",
+        ShowIf = function(c) return c.AutoComplete end,
+    })
+    fisher:AddSection("Extras")
+    fisher:AddToggle({
+        Label = "Catch Notify", Key = "Notify", Default = true,
+        Tip = "Shows what the fish will drop as soon as it bites.",
+    })
+    fisher:AddToggle({
+        Label = "Auto Cast", Key = "AutoCast", Default = false,
+        Tip = "Casts the rod by itself while you hold it and aim at water.",
+    })
+    fisher:AddSlider({
+        Label = "Cast Wait Min", Key = "CastMin", Min = 0, Max = 5, Default = 0.3, Step = 0.1, Suffix = "s",
+        ShowIf = function(c) return c.AutoCast end,
+    })
+    fisher:AddSlider({
+        Label = "Cast Wait Max", Key = "CastMax", Min = 0, Max = 5, Default = 1.2, Step = 0.1, Suffix = "s",
+        ShowIf = function(c) return c.AutoCast end,
+    })
+    fisher:AddNote("Bedwars only. Hold your fishing rod to use Auto Cast.")
 end
 
 -- ====================== MODULES: VELOCITY, BED ALARM, ANTI AFK, CAMERA TOOLS ======================
