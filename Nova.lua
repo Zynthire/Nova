@@ -16,6 +16,9 @@
                       (set this for games that use remotes instead of Tool:Activate())
 ]]
 
+local __nova = [====[
+local NOVA_SOURCE = ...
+
 local function NovaMain()
 
 -- ====================== PRE-FLIGHT ======================
@@ -552,11 +555,11 @@ local FONT = {
 }
 
 local WINDOW_W, WINDOW_H = 780, 520
-local SIDEBAR_W, TOPBAR_H, FOOTER_H = 184, 54, 28
-local PAGE_PAD, BODY_PAD, HEADER_H = 18, 16, 58
+local SIDEBAR_W, TOPBAR_H, FOOTER_H = 176, 60, 0
+local PAGE_PAD, BODY_PAD, HEADER_H = 24, 18, 56
 local CONTENT_W = WINDOW_W - SIDEBAR_W - 1 - PAGE_PAD * 2
 local BODY_INNER_W = CONTENT_W - BODY_PAD * 2
-local ROW_GAP, BODY_TOP, BODY_BOTTOM = 6, 8, 14
+local ROW_GAP, BODY_TOP, BODY_BOTTOM = 8, 6, 16
 
 local function New(className, props, children)
     local inst = Instance.new(className)
@@ -872,23 +875,15 @@ end
 function Controls.Section(host, title)
     local text = string.upper(tostring(title))
     local frame = host:Row(26, nil, true)
-    local width = measure(text, 10, FONT.Bold).X + 2
     New("TextLabel", {
-        Position = UDim2.fromOffset(0, 6),
-        Size = UDim2.fromOffset(width, 16),
+        Position = UDim2.fromOffset(0, 8),
+        Size = UDim2.new(1, 0, 0, 16),
         BackgroundTransparency = 1,
         Text = text,
         Font = FONT.Bold,
         TextSize = 10,
         TextColor3 = Theme.TextFaint,
         TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = frame,
-    })
-    New("Frame", {
-        Position = UDim2.fromOffset(width + 10, 14),
-        Size = UDim2.new(1, -(width + 10), 0, 1),
-        BackgroundColor3 = Theme.Stroke,
-        BorderSizePixel = 0,
         Parent = frame,
     })
 end
@@ -1390,34 +1385,13 @@ UI.Main = New("Frame", {
     BorderSizePixel = 0,
     Visible = false,
     Parent = UI.Holder,
-}, { Round(14), mainStroke })
+}, { Round(16), mainStroke })
 
 UI.Scale = New("UIScale", { Scale = 1, Parent = UI.Main })
 
--- A little depth: the window fades slightly darker toward the bottom, and a thin accent line runs along the top
-local mainGradient = New("UIGradient", { Rotation = 90, Parent = UI.Main })
-local topLine = New("Frame", {
-    Position = UDim2.fromOffset(18, 0),
-    Size = UDim2.new(1, -36, 0, 2),
-    BackgroundColor3 = Color3.new(1, 1, 1),
-    BorderSizePixel = 0,
-    ZIndex = 5,
-    Parent = UI.Main,
-}, { Round(1) })
-local topLineGradient = New("UIGradient", { Parent = topLine })
 onTheme(function()
-    mainGradient.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(205, 205, 215))
-    topLineGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AccentDark),
-        ColorSequenceKeypoint.new(0.5, Theme.AccentLight),
-        ColorSequenceKeypoint.new(1, Theme.AccentDark),
-    })
-    topLineGradient.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.25, 0.35),
-        NumberSequenceKeypoint.new(0.75, 0.35),
-        NumberSequenceKeypoint.new(1, 1),
-    })
+    mainStroke.Color = Theme.Stroke
+    mainStroke.Transparency = 0.25
 end)
 
 -- Modal button lets the cursor free itself in shift-lock / first person games
@@ -1439,20 +1413,13 @@ local Sidebar = New("Frame", {
     BackgroundColor3 = Theme.Panel,
     BorderSizePixel = 0,
     Parent = UI.Main,
-}, { Round(14) })
+}, { Round(16) })
 New("Frame", {
-    Position = UDim2.new(1, -14, 0, 0),
-    Size = UDim2.new(0, 14, 1, 0),
+    Position = UDim2.new(1, -16, 0, 0),
+    Size = UDim2.new(0, 16, 1, 0),
     BackgroundColor3 = Theme.Panel,
     BorderSizePixel = 0,
     Parent = Sidebar,
-})
-New("Frame", {
-    Position = UDim2.fromOffset(SIDEBAR_W, 0),
-    Size = UDim2.new(0, 1, 1, 0),
-    BackgroundColor3 = Theme.Stroke,
-    BorderSizePixel = 0,
-    Parent = UI.Main,
 })
 
 -- Brand
@@ -1480,40 +1447,28 @@ New("TextLabel", {
     Parent = brandTile,
 })
 New("TextLabel", {
-    Position = UDim2.fromOffset(60, 15),
-    Size = UDim2.fromOffset(100, 22),
+    Position = UDim2.fromOffset(58, 17),
+    Size = UDim2.fromOffset(100, 34),
     BackgroundTransparency = 1,
     Text = "Nova",
     Font = FONT.Bold,
-    TextSize = 19,
+    TextSize = 20,
     TextColor3 = Theme.Text,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = BrandArea,
-})
-New("TextLabel", {
-    Position = UDim2.fromOffset(60, 37),
-    Size = UDim2.fromOffset(100, 14),
-    BackgroundTransparency = 1,
-    Text = "v" .. Nova.Version,
-    Font = FONT.Regular,
-    TextSize = 11,
-    TextColor3 = Theme.TextFaint,
     TextXAlignment = Enum.TextXAlignment.Left,
     Parent = BrandArea,
 })
 onTheme(function()
     brandGradient.Color = ColorSequence.new(Theme.AccentLight, Theme.AccentDark)
-    mainStroke.Color = Theme.Stroke
 end)
 
 local TabHolder = New("Frame", {
     Name = "Tabs",
-    Position = UDim2.fromOffset(10, 80),
-    Size = UDim2.new(1, -20, 1, -80 - 12),
+    Position = UDim2.fromOffset(12, 84),
+    Size = UDim2.new(1, -24, 1, -84 - 44),
     BackgroundTransparency = 1,
     Parent = Sidebar,
 }, {
-    New("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
+    New("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }),
 })
 
 -- Top bar --------------------------------------------------------------
@@ -1524,16 +1479,8 @@ local TopBar = New("Frame", {
     BackgroundTransparency = 1,
     Parent = UI.Main,
 })
-New("Frame", {
-    Position = UDim2.fromOffset(RIGHT_X, TOPBAR_H),
-    Size = UDim2.fromOffset(RIGHT_W, 1),
-    BackgroundColor3 = Theme.Stroke,
-    BorderSizePixel = 0,
-    Parent = UI.Main,
-})
-
 UI.TitleLabel = New("TextLabel", {
-    Position = UDim2.fromOffset(PAGE_PAD, 8),
+    Position = UDim2.fromOffset(PAGE_PAD, 11),
     Size = UDim2.fromOffset(230, 22),
     BackgroundTransparency = 1,
     Text = "",
@@ -1544,13 +1491,13 @@ UI.TitleLabel = New("TextLabel", {
     Parent = TopBar,
 })
 UI.SubtitleLabel = New("TextLabel", {
-    Position = UDim2.fromOffset(PAGE_PAD, 30),
+    Position = UDim2.fromOffset(PAGE_PAD, 33),
     Size = UDim2.fromOffset(230, 14),
     BackgroundTransparency = 1,
     Text = "",
     Font = FONT.Regular,
     TextSize = 11,
-    TextColor3 = Theme.TextDim,
+    TextColor3 = Theme.TextFaint,
     TextXAlignment = Enum.TextXAlignment.Left,
     TextTruncate = Enum.TextTruncate.AtEnd,
     Parent = TopBar,
@@ -1568,15 +1515,15 @@ local closeButton = iconButton("×", 20, PAGE_PAD)
 local gearButton = iconButton("⚙", 16, PAGE_PAD + 38)
 
 -- Search
-local searchStroke = Stroke(Theme.Stroke, 1)
+local searchStroke = Stroke(Theme.Stroke, 1, 1)
 local SearchFrame = New("Frame", {
     AnchorPoint = Vector2.new(1, 0.5),
     Position = UDim2.new(1, -(PAGE_PAD + 78), 0, TOPBAR_H / 2),
     Size = UDim2.fromOffset(176, 30),
-    BackgroundColor3 = Theme.Panel,
+    BackgroundColor3 = Theme.Card,
     BorderSizePixel = 0,
     Parent = TopBar,
-}, { Round(8), searchStroke })
+}, { Round(9), searchStroke })
 UI.SearchBox = New("TextBox", {
     Position = UDim2.fromOffset(12, 0),
     Size = UDim2.new(1, -38, 1, 0),
@@ -1607,12 +1554,12 @@ local searchClear = New("TextButton", {
 -- "Active" chip: show only the modules that are switched on
 UI.OnlyActive = false
 do
-    local chipStroke = Stroke(Theme.Stroke, 1)
+    local chipStroke = Stroke(Theme.Stroke, 1, 1)
     local chip = New("TextButton", {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, -(PAGE_PAD + 78 + 176 + 8), 0, TOPBAR_H / 2),
         Size = UDim2.fromOffset(62, 30),
-        BackgroundColor3 = Theme.Panel,
+        BackgroundColor3 = Theme.Card,
         BorderSizePixel = 0,
         AutoButtonColor = false,
         Text = "Active",
@@ -1620,17 +1567,15 @@ do
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = TopBar,
-    }, { Round(8), chipStroke })
+    }, { Round(9), chipStroke })
     local chipHover = false
     local function paintChip(instant)
         if UI.OnlyActive then
             Animate(chip, { BackgroundColor3 = Theme.Accent, BackgroundTransparency = chipHover and 0.68 or 0.82,
                 TextColor3 = Theme.AccentLight }, instant, 0.12)
-            Animate(chipStroke, { Color = Theme.Accent, Transparency = 0.5 }, instant, 0.12)
         else
-            Animate(chip, { BackgroundColor3 = chipHover and Theme.Card or Theme.Panel, BackgroundTransparency = 0,
+            Animate(chip, { BackgroundColor3 = chipHover and Theme.Panel:Lerp(Theme.Text, 0.06) or Theme.Card, BackgroundTransparency = 0,
                 TextColor3 = chipHover and Theme.Text or Theme.TextDim }, instant, 0.12)
-            Animate(chipStroke, { Color = chipHover and Theme.StrokeHover or Theme.Stroke, Transparency = 0 }, instant, 0.12)
         end
     end
     chip.MouseEnter:Connect(function()
@@ -1656,9 +1601,10 @@ end
 
 UI.SearchBox.Focused:Connect(function()
     searchStroke.Color = Theme.Accent
+    searchStroke.Transparency = 0.2
 end)
 UI.SearchBox.FocusLost:Connect(function()
-    searchStroke.Color = Theme.Stroke
+    searchStroke.Transparency = 1
 end)
 UI.SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
     searchClear.Visible = UI.SearchBox.Text ~= ""
@@ -1668,43 +1614,25 @@ searchClear.MouseButton1Click:Connect(function()
     UI.SearchBox.Text = ""
 end)
 
--- Footer ---------------------------------------------------------------
-New("Frame", {
-    Position = UDim2.fromOffset(RIGHT_X, WINDOW_H - FOOTER_H),
-    Size = UDim2.fromOffset(RIGHT_W, 1),
-    BackgroundColor3 = Theme.Stroke,
-    BorderSizePixel = 0,
-    Parent = UI.Main,
-})
-New("TextLabel", {
-    Position = UDim2.fromOffset(RIGHT_X + PAGE_PAD, WINDOW_H - FOOTER_H + 1),
-    Size = UDim2.fromOffset(340, FOOTER_H - 1),
-    BackgroundTransparency = 1,
-    Text = "RightShift to hide",
-    Font = FONT.Regular,
-    TextSize = 11,
-    TextColor3 = Theme.TextFaint,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = UI.Main,
-})
+-- Enabled count (bottom of the sidebar) -------------------------------------
 UI.ActiveLabel = New("TextLabel", {
-    AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.fromOffset(WINDOW_W - PAGE_PAD, WINDOW_H - FOOTER_H + 1),
-    Size = UDim2.fromOffset(160, FOOTER_H - 1),
+    AnchorPoint = Vector2.new(0, 1),
+    Position = UDim2.new(0, 20, 1, -16),
+    Size = UDim2.fromOffset(SIDEBAR_W - 40, 16),
     BackgroundTransparency = 1,
     Text = "",
     Font = FONT.Medium,
     TextSize = 11,
     TextColor3 = Theme.TextDim,
-    TextXAlignment = Enum.TextXAlignment.Right,
-    Parent = UI.Main,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Sidebar,
 })
 
 -- Pages ----------------------------------------------------------------
 local Pages = New("Frame", {
     Name = "Pages",
-    Position = UDim2.fromOffset(RIGHT_X, TOPBAR_H + 1),
-    Size = UDim2.fromOffset(RIGHT_W, WINDOW_H - TOPBAR_H - 1 - FOOTER_H),
+    Position = UDim2.fromOffset(RIGHT_X, TOPBAR_H),
+    Size = UDim2.fromOffset(RIGHT_W, WINDOW_H - TOPBAR_H - FOOTER_H),
     BackgroundTransparency = 1,
     ClipsDescendants = true,
     Parent = UI.Main,
@@ -1733,27 +1661,18 @@ function UI:CreateTab(name, subtitle)
 
     tab.Button = New("TextButton", {
         Name = name,
-        Size = UDim2.new(1, 0, 0, 40),
+        Size = UDim2.new(1, 0, 0, 36),
         BackgroundColor3 = Theme.Accent,
         BackgroundTransparency = 1,
         AutoButtonColor = false,
         Text = "",
         LayoutOrder = #UI.TabList + 1,
         Parent = TabHolder,
-    }, { Round(10) })
-
-    tab.Indicator = New("Frame", {
-        Position = UDim2.new(0, 0, 0.5, -9),
-        Size = UDim2.fromOffset(3, 18),
-        BackgroundColor3 = Theme.Accent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Parent = tab.Button,
-    }, { Round(2) })
+    }, { Round(9) })
 
     tab.Label = New("TextLabel", {
-        Position = UDim2.fromOffset(18, 0),
-        Size = UDim2.new(1, -28, 1, 0),
+        Position = UDim2.fromOffset(14, 0),
+        Size = UDim2.new(1, -24, 1, 0),
         BackgroundTransparency = 1,
         Text = name,
         Font = FONT.Medium,
@@ -1763,50 +1682,18 @@ function UI:CreateTab(name, subtitle)
         Parent = tab.Button,
     })
 
-    -- Small count of switched-on modules, only visible when there is something on
-    tab.BadgeFill = New("Frame", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -10, 0.5, 0),
-        Size = UDim2.fromOffset(22, 18),
-        BackgroundColor3 = Theme.Accent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Parent = tab.Button,
-    }, { Round(9) })
-    tab.BadgeText = New("TextLabel", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "",
-        Font = FONT.Bold,
-        TextSize = 11,
-        TextColor3 = Theme.AccentLight,
-        TextTransparency = 1,
-        Parent = tab.BadgeFill,
-    })
-    onTheme(function()
-        tab.BadgeFill.BackgroundColor3 = Theme.Accent
-        tab.BadgeText.TextColor3 = Theme.AccentLight
-    end)
-    function tab.SetBadge(count)
-        local show = count > 0
-        tab.BadgeText.Text = show and tostring(count) or ""
-        Animate(tab.BadgeFill, { BackgroundTransparency = show and 0.8 or 1 }, false, 0.15)
-        Animate(tab.BadgeText, { TextTransparency = show and 0 or 1 }, false, 0.15)
-    end
-
     tab.Hovered = false
     tab.Paint = function(instant)
         local active = tab.Active
         local bgAlpha = 1
         local bgColor = Theme.Accent
         if active then
-            bgAlpha = 0.8
+            bgAlpha = 0.86
         elseif tab.Hovered then
-            bgAlpha, bgColor = 0.3, Theme.Card
+            bgAlpha, bgColor = 0.55, Theme.Card
         end
         Animate(tab.Button, { BackgroundTransparency = bgAlpha, BackgroundColor3 = bgColor }, instant, 0.15)
-        Animate(tab.Indicator, { BackgroundTransparency = active and 0 or 1, BackgroundColor3 = Theme.Accent }, instant, 0.15)
-        Animate(tab.Label, { TextColor3 = (active or tab.Hovered) and Theme.Text or Theme.TextDim }, instant, 0.15)
+        Animate(tab.Label, { TextColor3 = active and Theme.AccentLight or (tab.Hovered and Theme.Text or Theme.TextDim) }, instant, 0.15)
         tab.Label.Font = active and FONT.Bold or FONT.Medium
     end
     onTheme(function()
@@ -1836,8 +1723,8 @@ function UI:CreateTab(name, subtitle)
         Visible = false,
         Parent = Pages,
     }, {
-        New("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
-        Pad(PAGE_PAD, 14, PAGE_PAD, 16),
+        New("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+        Pad(PAGE_PAD, 6, PAGE_PAD, 20),
     })
     pcall(function()
         tab.Page.ElasticBehavior = Enum.ElasticBehavior.Never
@@ -1904,7 +1791,7 @@ function UI:CreateTab(name, subtitle)
         local expanded, expandable, hovered = false, false, false
         local bodyHeight = 0
 
-        local cardStroke = Stroke(Theme.Stroke, 1)
+        local cardStroke = Stroke(Theme.Stroke, 1, 1)
         local card = New("Frame", {
             Name = def.Name,
             Size = UDim2.new(1, 0, 0, HEADER_H),
@@ -1913,17 +1800,8 @@ function UI:CreateTab(name, subtitle)
             ClipsDescendants = true,
             LayoutOrder = #tab.Modules + 1,
             Parent = tab.Page,
-        }, { Round(12), cardStroke })
+        }, { Round(14), cardStroke })
         mod.Card = card
-
-        local accentBar = New("Frame", {
-            Position = UDim2.fromOffset(0, 16),
-            Size = UDim2.fromOffset(3, HEADER_H - 32),
-            BackgroundColor3 = Theme.Accent,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Parent = card,
-        }, { Round(2) })
 
         local header = New("Frame", {
             Name = "Header",
@@ -1952,7 +1830,7 @@ function UI:CreateTab(name, subtitle)
         local textInset = 44
         local rightReserve = 14 + 42 + 10 + 66 + 14
         New("TextLabel", {
-            Position = UDim2.fromOffset(textInset, 11),
+            Position = UDim2.fromOffset(textInset, 10),
             Size = UDim2.new(1, -(textInset + rightReserve), 0, 18),
             BackgroundTransparency = 1,
             Text = def.Name,
@@ -1964,7 +1842,7 @@ function UI:CreateTab(name, subtitle)
             Parent = headerButton,
         })
         local descLabel = New("TextLabel", {
-            Position = UDim2.fromOffset(textInset, 31),
+            Position = UDim2.fromOffset(textInset, 30),
             Size = UDim2.new(1, -(textInset + rightReserve), 0, 16),
             BackgroundTransparency = 1,
             Text = def.Description or "",
@@ -2110,15 +1988,11 @@ function UI:CreateTab(name, subtitle)
         end
 
         local function paintCard(instant)
-            local base = mod.Enabled and Theme.Card:Lerp(Theme.Accent, 0.09) or Theme.Card
-            local bg = hovered and base:Lerp(Theme.Text, 0.035) or base
+            local base = mod.Enabled and Theme.Card:Lerp(Theme.Accent, 0.1) or Theme.Card
+            local bg = hovered and base:Lerp(Theme.Text, 0.04) or base
             Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
-            if mod.Enabled then
-                Animate(cardStroke, { Color = Theme.Accent, Transparency = hovered and 0.25 or 0.5 }, instant, 0.15)
-            else
-                Animate(cardStroke, { Color = hovered and Theme.StrokeHover or Theme.Stroke, Transparency = 0 }, instant, 0.12)
-            end
-            Animate(accentBar, { BackgroundTransparency = mod.Enabled and 0 or 1, BackgroundColor3 = Theme.Accent }, instant, 0.2)
+            -- an outline only appears while the module is on
+            Animate(cardStroke, { Color = Theme.Accent, Transparency = mod.Enabled and (hovered and 0.5 or 0.72) or 1 }, instant, 0.15)
         end
         onTheme(function()
             paintCard(true)
@@ -2312,6 +2186,7 @@ function UI:CreateTab(name, subtitle)
                     setSwitch(false, true)
                     paintCard(false)
                     cardStroke.Color = Theme.Bad
+                    cardStroke.Transparency = 0.2
                     task.delay(1.4, function()
                         if card.Parent then
                             paintCard(false)
@@ -2368,20 +2243,14 @@ end
 function UI:RefreshCounts()
     local totalOn = 0
     for _, tab in ipairs(UI.TabList) do
-        local tabOn = 0
         for _, mod in ipairs(tab.Modules) do
             if mod.Enabled then
                 totalOn = totalOn + 1
-                tabOn = tabOn + 1
             end
         end
-        if tab.SetBadge and tab.BadgeShown ~= tabOn then
-            tab.BadgeShown = tabOn
-            tab.SetBadge(tabOn)
-        end
     end
-    UI.ActiveLabel.Text = (totalOn == 0) and "Nothing enabled" or (tostring(totalOn) .. " enabled")
-    UI.ActiveLabel.TextColor3 = (totalOn == 0) and Theme.TextFaint or Theme.AccentLight
+    UI.ActiveLabel.Text = (totalOn == 0) and "" or (tostring(totalOn) .. " on")
+    UI.ActiveLabel.TextColor3 = Theme.AccentLight
 end
 onTheme(function()
     if UI.RefreshCounts and #UI.TabList > 0 then
@@ -3437,12 +3306,6 @@ do
         end,
     })
     Controls.Toggle(host, {
-        Label = "Restore Modules", Key = "RestoreModules", Default = true,
-        Tip = "Switch back on the modules that were on last time. Everything else is always saved automatically.",
-    })
-
-    Controls.Section(host, "Auto Inject")
-    Controls.Toggle(host, {
         Label = "Auto Inject", Key = "AutoInject", Default = true,
         Tip = "Load Nova again by itself when you join a new game or a queued match, so you never have to re-execute it.",
         Callback = function(value)
@@ -3454,24 +3317,9 @@ do
             end
         end,
     })
-    Controls.TextBox(host, {
-        Label = "Script Link", Key = "ScriptLink", Default = "", Placeholder = "paste your script link",
-        ShowIf = function(cfg)
-            return cfg.AutoInject ~= false
-        end,
-        Tip = "The link you normally execute (the URL inside your loadstring). Paste it once; Nova remembers it.",
-        Callback = function()
-            if Nova.AutoInject then
-                Nova.AutoInject.Refresh()
-                if not Nova.Quiet then
-                    if Nova.AutoInject.CleanLink() then
-                        Nova.Notify("Auto Inject", "Link saved", 2, "success", true)
-                    else
-                        Nova.Notify("Auto Inject", "That doesn't look like a link", 3, "warn", true)
-                    end
-                end
-            end
-        end,
+    Controls.Toggle(host, {
+        Label = "Restore Modules", Key = "RestoreModules", Default = true,
+        Tip = "Switch back on the modules that were on last time. Everything else is always saved automatically.",
     })
 
     Controls.Section(host, "Profiles")
@@ -3722,14 +3570,15 @@ function Nova.Reinject()
 end
 
 -- ====================== AUTO INJECT ======================
--- Re-runs Nova by itself in the next server you join (new game, queued Bedwars match, rejoin).
--- It works by handing the executor's queue_on_teleport a tiny loader that downloads Nova from the
--- link saved in Settings. A cached copy on disk is the fallback when the download fails.
+-- Brings Nova into the next server you join (new game, queued match, rejoin) without re-executing.
+-- Nova keeps a copy of its own source on disk, and hands the executor's queue_on_teleport a tiny
+-- loader that runs that copy as soon as the new server has loaded. No link or setup is needed.
 do
     local AI_DIR      = CONFIG_DIR
     local AI_FLAG     = AI_DIR .. "/autoinject.flag"
     local AI_CACHE    = AI_DIR .. "/nova_cache.lua"
-    local queueFn     = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    local queueFn     = queue_on_teleport or queueonteleport
+        or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 
     local AutoInject = { Queued = 0, Status = "idle" }
     Nova.AutoInject = AutoInject
@@ -3755,34 +3604,42 @@ do
     end
     AutoInject.WriteFlag = writeFlag
 
-    local function cleanLink()
-        local link = tostring(Nova.Config.UI.ScriptLink or "")
-        link = string.gsub(link, "^%s+", "")
-        link = string.gsub(link, "%s+$", "")
-        -- accept a pasted loadstring line too and pull the URL out of it
-        local inner = string.match(link, "[\"']([^\"']+)[\"']")
-        if inner and string.find(inner, "^https?://") then
-            link = inner
-        end
-        if string.find(link, "^https?://") then
-            return link
-        end
-        return nil
+    local function enabled()
+        return Nova.Config.UI.AutoInject ~= false
     end
-    AutoInject.CleanLink = cleanLink
+
+    -- Saves the copy of Nova that the loader will run. Returns true when it is safely on disk.
+    local cachedOk = false
+    local function saveCopy()
+        if cachedOk then
+            return true
+        end
+        if type(NOVA_SOURCE) ~= "string" or #NOVA_SOURCE < 2000 or not fileOk() then
+            return false
+        end
+        ensureFolder()
+        pcall(function()
+            if isfile(AI_CACHE) and readfile(AI_CACHE) == NOVA_SOURCE then
+                cachedOk = true
+                return
+            end
+            writefile(AI_CACHE, NOVA_SOURCE)
+            cachedOk = isfile(AI_CACHE) and #readfile(AI_CACHE) == #NOVA_SOURCE
+        end)
+        return cachedOk
+    end
 
     -- The loader that runs in the next server. Kept dependency-free on purpose.
-    local function buildPayload(link)
-        local template = [=[
-local url, cache, flag = %s, %s, %s
+    local LOADER = [=[
+local cache, flag = %s, %s
 local env = getgenv()
+local skip = false
 pcall(function()
     if type(isfile) == "function" and isfile(flag) and readfile(flag) == "0" then
-        env.__NovaSkip = true
+        skip = true
     end
 end)
-if env.__NovaSkip then
-    env.__NovaSkip = nil
+if skip then
     return
 end
 if not game:IsLoaded() then
@@ -3792,86 +3649,63 @@ local players = game:GetService("Players")
 while not players.LocalPlayer do
     task.wait()
 end
+-- several queued copies can land together; only the first one carries on
+if env.__NovaBooting == game.JobId and game.JobId ~= "" then
+    return
+end
 if type(env.Nova) == "table" and not env.Nova.Unloaded and env.__NovaJob == game.JobId and game.JobId ~= "" then
     return
 end
+env.__NovaBooting = game.JobId
 task.wait(1)
-local src
-for attempt = 1, 3 do
-    local ok, body = pcall(function()
-        return game:HttpGet(url, true)
-    end)
-    if ok and type(body) == "string" and #body > 2000 then
-        src = body
-        break
-    end
-    task.wait(1.5)
-end
+local src = %s
 if not src and type(isfile) == "function" and isfile(cache) then
     pcall(function()
         src = readfile(cache)
     end)
 end
-if src then
+if type(src) == "string" then
     local fn = loadstring(src)
     if fn then
-        fn()
+        fn(src)
     end
 end
 ]=]
-        return string.format(template, string.format("%q", link), string.format("%q", AI_CACHE), string.format("%q", AI_FLAG))
+
+    local function buildPayload()
+        local embed = "nil"
+        if not saveCopy() and type(NOVA_SOURCE) == "string" then
+            -- no file access: carry the source inside the queued script itself
+            local level = 1
+            while string.find(NOVA_SOURCE, "]" .. string.rep("=", level) .. "]", 1, true) do
+                level = level + 1
+            end
+            embed = "[" .. string.rep("=", level) .. "[\n" .. NOVA_SOURCE .. "]" .. string.rep("=", level) .. "]"
+        end
+        return string.format(LOADER, string.format("%q", AI_CACHE), string.format("%q", AI_FLAG), embed)
     end
     AutoInject.BuildPayload = buildPayload
 
-    local function enabled()
-        return Nova.Config.UI.AutoInject ~= false
-    end
-
-    local queuedLink = nil
     function AutoInject.Queue()
         if Nova.Unloaded or not enabled() then
             return false
         end
-        local link = cleanLink()
         if type(queueFn) ~= "function" then
             AutoInject.Status = "Your executor can't queue scripts."
             return false
         end
-        if not link then
-            AutoInject.Status = "Paste your script link in Settings."
+        if type(NOVA_SOURCE) ~= "string" then
+            AutoInject.Status = "Nova can't find its own source."
             return false
         end
-        local ok = pcall(queueFn, buildPayload(link))
+        local ok = pcall(queueFn, buildPayload())
         if ok then
             AutoInject.Queued = AutoInject.Queued + 1
-            queuedLink = link
             AutoInject.Status = "Ready"
         else
             AutoInject.Status = "Queue failed."
         end
         return ok
-    end
-
-    -- Keeps a copy of the script on disk so a failed download still works next time
-    local cachedFor = nil
-    function AutoInject.Cache()
-        local link = cleanLink()
-        if not link or link == cachedFor or not fileOk() then
-            return
-        end
-        cachedFor = link
-        task.spawn(function()
-            local ok, body = pcall(function()
-                return game:HttpGet(link, true)
-            end)
-            if Nova.Unloaded then
-                return
-            end
-            if ok and type(body) == "string" and #body > 2000 then
-                ensureFolder()
-                pcall(writefile, AI_CACHE, body)
-            end
-        end)
     end
 
     function AutoInject.Refresh()
@@ -3881,8 +3715,9 @@ end
         local on = enabled()
         writeFlag(on)
         env.__NovaJob = game.JobId
+        env.__NovaBooting = game.JobId
         if on then
-            AutoInject.Cache()
+            saveCopy()
             AutoInject.Queue()
         else
             AutoInject.Status = "Off"
@@ -4469,26 +4304,40 @@ end
 
 -- Small status pill shared by the Bedwars modules
 local function makeStatusLabel(mod, prefix, yOffset)
+    local function hex(color)
+        return string.format("#%02X%02X%02X",
+            math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+    end
+    local function escape(text)
+        text = string.gsub(tostring(text), "&", "&amp;")
+        text = string.gsub(text, "<", "&lt;")
+        return (string.gsub(text, ">", "&gt;"))
+    end
+    local lastText = ""
+    local function render(text)
+        return '<font color="' .. hex(Theme.AccentLight) .. '"><b>' .. escape(prefix) .. "</b></font>   "
+            .. '<font color="' .. hex(Theme.TextDim) .. '">' .. escape(text) .. "</font>"
+    end
     local label = mod.Maid:Give(New("TextLabel", {
         AnchorPoint = Vector2.new(0.5, 1),
         Position = UDim2.new(0.5, 0, 1, yOffset),
         Size = UDim2.fromOffset(0, 26),
         AutomaticSize = Enum.AutomaticSize.X,
-        BackgroundColor3 = Theme.Card,
-        BackgroundTransparency = 0.1,
+        BackgroundColor3 = Theme.Background,
+        BackgroundTransparency = 0.18,
         BorderSizePixel = 0,
-        Text = prefix .. ": starting...",
+        Text = render("starting..."),
+        RichText = true,
         Font = Enum.Font.GothamMedium,
         TextSize = 12,
         TextColor3 = Theme.Text,
         Visible = false,
         Parent = UI.Gui,
     }, {
-        Round(8),
-        Stroke(Theme.Stroke, 1),
-        New("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }),
+        Round(13),
+        New("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }),
     }))
-    local lastText, lastAt = "", 0
+    local lastAt = 0
     return function(show, text)
         if not show then
             if label.Visible then
@@ -4500,10 +4349,11 @@ local function makeStatusLabel(mod, prefix, yOffset)
         if text ~= lastText and os.clock() - lastAt > 0.1 then
             lastText = text
             lastAt = os.clock()
-            label.Text = prefix .. ": " .. text
+            label.Text = render(tostring(text))
         end
     end
 end
+
 
 -- ====================== MODULE: BEDWARS EXTRAS ======================
 -- Extra Bedwars pieces for Sprint / Nuker / Kit ESP / Kit Render. Each one is looked up on its own
@@ -7577,6 +7427,15 @@ do
         add("Item data", Bedwars.ItemMeta ~= nil)
         add("Inventory", Bedwars.GetInventory() ~= nil, Bedwars.Store and nil or "store not found")
         local tagged = #CollectionService:GetTagged("bed")
+        local named = 0
+        pcall(function()
+            for _, inst in ipairs(Workspace:GetDescendants()) do
+                if inst.Name == "bed" then
+                    named = named + 1
+                end
+            end
+        end)
+        add("Beds named 'bed' in map", named > 0, named)
         add("Beds tagged in game", tagged > 0, tagged)
         add("Blocks tagged in game", #CollectionService:GetTagged("block") > 0, #CollectionService:GetTagged("block"))
         local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -7665,6 +7524,42 @@ do
             end)
             mod.Maid:Give(Workspace.DescendantAdded:Connect(addNamedBed))
             mod.Maid:Give(Workspace.DescendantRemoving:Connect(removeBed))
+            -- Backup finder: looks at what is physically around you, so a bed is found even when the
+            -- game's tag or its model name isn't what we expect.
+            local scanParams
+            local lastScan = -10
+            local function looksLikeBed(inst)
+                return inst and (inst.Name == "bed" or CollectionService:HasTag(inst, "bed"))
+            end
+            local function scanForBeds(position, force)
+                if not force and os.clock() - lastScan < 1.5 then
+                    return
+                end
+                lastScan = os.clock()
+                scanParams = scanParams or OverlapParams.new()
+                local ok, parts = pcall(function()
+                    return Workspace:GetPartBoundsInRadius(position, math.max(cfg.Range, 20) + 10, scanParams)
+                end)
+                if not ok or type(parts) ~= "table" then
+                    return
+                end
+                for _, part in ipairs(parts) do
+                    local owner
+                    if looksLikeBed(part) then
+                        owner = part
+                    else
+                        local parent = part.Parent
+                        if parent and parent ~= Workspace and looksLikeBed(parent) then
+                            owner = parent
+                        elseif parent and parent.Parent and parent.Parent ~= Workspace and looksLikeBed(parent.Parent) then
+                            owner = parent.Parent
+                        end
+                    end
+                    if owner then
+                        addBed(owner)
+                    end
+                end
+            end
             local luckyBlocks = trackTags(mod, { "LuckyBlock" })
             local ironOre = trackTags(mod, { "iron-ore", "iron_ore_mesh_block" })
             stats.Beds = beds
@@ -7683,9 +7578,14 @@ do
 
                 local best, bestValue = nil, math.huge
                 stats.Tracked, stats.InRange, stats.Rejected, stats.Nearest = 0, 0, 0, nil
+                stats.NearestBed, stats.NearestBedOwn = nil, false
                 for _, list in ipairs(lists) do
                     for _, block in ipairs(list) do
                         local distance = block.Parent and (block.Position - position).Magnitude
+                        if distance and list == beds and (not stats.NearestBed or distance < stats.NearestBed) then
+                            stats.NearestBed = distance
+                            stats.NearestBedOwn = isOwnTeamBlock(block)
+                        end
                         if distance then
                             stats.Tracked = stats.Tracked + 1
                             if not stats.Nearest or distance < stats.Nearest then
@@ -7732,13 +7632,20 @@ do
                         setStatus(true, "hold left click")
                     else
                         local ok, result, info = pcall(function()
+                            if cfg.Beds then
+                                scanForBeds(root.Position)
+                            end
                             local target = pickTarget(root.Position)
                             if not target then
                                 activeLock = nil
                                 if stats.Tracked == 0 then
                                     return false, "no beds/blocks found in this match yet"
                                 elseif stats.InRange == 0 then
-                                    return false, string.format("nothing in range (nearest %.0f studs, range %d)",
+                                    if stats.NearestBed then
+                                        return false, string.format("no bed in range - nearest is %.0f studs away%s (range %d)",
+                                            stats.NearestBed, stats.NearestBedOwn and ", your team's" or "", cfg.Range)
+                                    end
+                                    return false, string.format("no bed found yet, nearest block %.0f studs (range %d)",
                                         stats.Nearest or 0, cfg.Range)
                                 end
                                 return false, string.format("%d in range but not breakable (team/shield/protected)", stats.Rejected)
@@ -11303,12 +11210,15 @@ UI:RefreshHud()
 UI:SetVisible(true)
 Nova.StartAutoSave()
 Nova.Notify("Nova", "Loaded", 3, "success")
-if Nova.Config.UI.AutoInject ~= false and not Nova.AutoInject.CleanLink() then
-    task.delay(1.6, function()
-        Nova.Notify("Auto Inject", "Paste your script link in Settings to finish setup.", 6, "warn")
-    end)
-end
+
 
 end -- NovaMain
 
 NovaMain()
+
+]====]
+local __run = loadstring(__nova, "=Nova")
+if not __run then
+    error("Nova could not be compiled by this executor")
+end
+return __run(__nova)
