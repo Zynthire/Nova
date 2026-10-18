@@ -5767,6 +5767,7 @@ do
         local meta = Bedwars.KitMeta and (Bedwars.KitMeta[kit] or Bedwars.KitMeta.none)
         return (meta and meta.renderImage) or KIT_IMAGES[kit] or KIT_IMAGES.none or ""
     end
+    Bedwars.KitImage = kitImage
 
     local function clearCaches()
         lastKitCache, lastKitPending, lastKitRetry = {}, {}, {}
@@ -8883,6 +8884,767 @@ do
         end,
     })
     xray:AddNote("On big maps this can lower your frame rate.")
+end
+
+-- ====================== MODULE: INVENTORY ESP + NAMETAGS ======================
+-- Inventory ESP: a side panel listing what every enemy is carrying (Bedwars keeps each player's
+-- inventory readable in ReplicatedStorage.Inventories). NameTags: overhead tags with name, health,
+-- distance, kit and the item in hand + armor. Both only read data the game already replicates.
+do
+    local ReplicatedStorage = service("ReplicatedStorage")
+
+    local TEAM_COLORS = {
+        [1] = Color3.fromRGB(80, 140, 255),   -- blue
+        [2] = Color3.fromRGB(255, 150, 60),   -- orange
+        [3] = Color3.fromRGB(255, 110, 180),  -- pink
+        [4] = Color3.fromRGB(255, 225, 80),   -- yellow
+        [5] = Color3.fromRGB(160, 110, 70),   -- brown
+        [6] = Color3.fromRGB(235, 235, 245),  -- white
+        [7] = Color3.fromRGB(70, 215, 230),   -- cyan
+        [8] = Color3.fromRGB(170, 110, 255),  -- purple
+    }
+    local PLACEHOLDER_ICON = "rbxassetid://6031075931"
+
+    local function teamColor(plr)
+        local id = tonumber(plr:GetAttribute("Team"))
+        if id and TEAM_COLORS[id] then
+            return TEAM_COLORS[id]
+        end
+        local ok, color = pcall(function()
+            return plr.Team and plr.TeamColor.Color
+        end)
+        if ok and color then
+            return color
+        end
+        return Theme.AccentLight
+    end
+
+    local function sameTeam(plr)
+        local mine, theirs = LocalPlayer:GetAttribute("Team"), plr:GetAttribute("Team")
+        if mine ~= nil and theirs ~= nil then
+            return mine == theirs
+        end
+        return Util.IsTeammate(plr)
+    end
+
+    local function shortCount(n)
+        n = tonumber(n) or 0
+        if n >= 1000 then
+            return string.format("%.1fk", n / 1000)
+        end
+        return tostring(math.floor(n))
+    end
+
+    local function distanceTo(plr)
+        local _, _, mine = Util.GetCharacter(LocalPlayer)
+        local _, _, theirs = Util.GetCharacter(plr)
+        if mine and theirs then
+            return (mine.Position - theirs.Position).Magnitude
+        end
+        return nil
+    end
+
+    local function kitOf(plr)
+        local raw = plr:GetAttribute("PlayingAsKits")
+        if type(raw) == "string" then
+            local kit = string.match(raw, "[%w_]+")
+            if kit and kit ~= "none" then
+                return kit
+            end
+        end
+        return nil
+    end
+
+    local function kitIcon(kit)
+        if not kit then
+            return ""
+        end
+        if Bedwars.KitImage then
+            local ok, image = pcall(Bedwars.KitImage, kit)
+            if ok and type(image) == "string" and image ~= "" then
+                return image
+            end
+        end
+        local meta = Bedwars.KitMeta and Bedwars.KitMeta[kit]
+        return meta and meta.renderImage or ""
+    end
+
+    local function itemIcon(itemType)
+        local image = Bedwars.GetItemImage and Bedwars.GetItemImage(itemType) or ""
+        if image == "" then
+            return PLACEHOLDER_ICON
+        end
+        return image
+    end
+
+    -- Sorts an item into a group so the panel can filter and order it
+    local function classify(name)
+        local n = string.lower(name)
+        if n:find("chestplate") or n:find("helmet") or n:find("boots") or n:find("leggings") then
+            return "Armor", 3
+        end
+        if n:find("sword") or n:find("bow") or n:find("dagger") or n:find("katana") or n:find("scythe") or n:find("spear") then
+            return "Weapons", 1
+        end
+        if n:find("pickaxe") or n:find("axe") or n:find("shears") or n:find("rod") or n:find("drill") then
+            return "Tools", 2
+        end
+        if n == "iron" or n == "diamond" or n == "emerald" or n == "gold" then
+            return "Resources", 4
+        end
+        local meta = Bedwars.ItemMeta and Bedwars.ItemMeta[name]
+        if (meta and meta.block) or n:find("wool") or n:find("clay") or n:find("plank") or n:find("glass")
+            or n:find("obsidian") or n:find("ceramic") or n:find("stone") then
+            return "Blocks", 5
+        end
+        return "Other", 6
+    end
+
+    local GROUP_KEYS = {
+        Weapons = "ShowWeapons", Armor = "ShowArmor", Tools = "ShowTools",
+        Resources = "ShowResources", Blocks = "ShowBlocks", Other = "ShowOther",
+    }
+
+    -- ====================== INVENTORY ESP ======================
+    local invEsp
+    local panel
+    local rows = {}
+    local COLUMNS = 6
+
+    local function inventoriesFolder()
+        return ReplicatedStorage:FindFirstChild("Inventories")
+    end
+
+    -- Reads one replicated inventory folder into a flat list of { name, amount, group, order }
+    local function readItems(folder, list)
+        if not folder then
+            return
+        end
+        local cfg = invEsp.Config
+        for _, child in ipairs(folder:GetChildren()) do
+            local amount = child:GetAttribute("Amount")
+            if amount == nil and child:IsA("ValueBase") then
+                amount = child.Value
+            end
+            amount = tonumber(amount) or 1
+            if amount > 0 then
+                local group, order = classify(child.Name)
+                if cfg[GROUP_KEYS[group]] ~= false then
+                    list[#list + 1] = { name = child.Name, amount = amount, group = group, order = order }
+                end
+            end
+        end
+    end
+
+    local function collect(plr)
+        local list = {}
+        local folder = inventoriesFolder()
+        if not folder then
+            return list, ""
+        end
+        readItems(folder:FindFirstChild(plr.Name), list)
+        if invEsp.Config.Personal then
+            readItems(folder:FindFirstChild(plr.Name .. "_personal"), list)
+        end
+        table.sort(list, function(a, b)
+            if a.order ~= b.order then
+                return a.order < b.order
+            end
+            return a.name < b.name
+        end)
+        local parts = {}
+        for _, item in ipairs(list) do
+            parts[#parts + 1] = item.name .. ":" .. item.amount
+        end
+        return list, table.concat(parts, ",")
+    end
+
+    local function cellSize()
+        return invEsp.Config.Size or 28
+    end
+
+    local function panelWidth()
+        return COLUMNS * cellSize() + (COLUMNS - 1) * 3 + 16
+    end
+
+    local function placePanel()
+        if not panel then
+            return
+        end
+        local left = invEsp.Config.Side == "Left"
+        panel.AnchorPoint = Vector2.new(left and 0 or 1, 0)
+        panel.Position = left and UDim2.new(0, 12, 0, 90) or UDim2.new(1, -12, 0, 90)
+        panel.Size = UDim2.fromOffset(panelWidth(), 0)
+        for _, row in pairs(rows) do
+            row.frame.Parent = panel
+            row.grid.CellSize = UDim2.fromOffset(cellSize(), cellSize())
+            row.signature = nil
+        end
+    end
+
+    local function buildRow(plr)
+        local frame = New("Frame", {
+            Name = plr.Name,
+            BackgroundColor3 = Theme.Panel,
+            BackgroundTransparency = 0.1,
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(1, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Parent = panel,
+        }, {
+            Round(8),
+            Stroke(Theme.Stroke, 1, 0),
+            Pad(8, 6, 8, 8),
+            New("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }),
+        })
+
+        local header = New("Frame", {
+            Name = "Header",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 22),
+            LayoutOrder = 1,
+            Parent = frame,
+        })
+        local avatar = New("ImageLabel", {
+            Name = "Avatar",
+            BackgroundColor3 = Theme.Card,
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(22, 22),
+            Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(plr.UserId) .. "&w=48&h=48",
+            Parent = header,
+        }, { Round(11) })
+        local avatarStroke = Stroke(Theme.AccentLight, 2, 0)
+        avatarStroke.Parent = avatar
+        local name = New("TextLabel", {
+            Name = "Name",
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(28, 0),
+            Size = UDim2.new(1, -52, 1, 0),
+            Font = FONT.Bold,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextColor3 = Theme.Text,
+            Text = plr.DisplayName,
+            Parent = header,
+        })
+        local kit = New("ImageLabel", {
+            Name = "Kit",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(22, 22),
+            Image = "",
+            Visible = false,
+            Parent = header,
+        })
+        local grid = New("UIGridLayout", {
+            CellSize = UDim2.fromOffset(cellSize(), cellSize()),
+            CellPadding = UDim2.fromOffset(3, 3),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        New("Frame", {
+            Name = "Items",
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            LayoutOrder = 2,
+            Parent = frame,
+        }, { grid })
+
+        return {
+            frame = frame, name = name, avatarStroke = avatarStroke, kit = kit, grid = grid,
+            items = frame.Items, signature = nil,
+        }
+    end
+
+    local function fillItems(row, list)
+        for _, child in ipairs(row.items:GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+        for index, item in ipairs(list) do
+            local cell = New("Frame", {
+                Name = item.name,
+                BackgroundColor3 = Theme.Card,
+                BackgroundTransparency = 0.15,
+                BorderSizePixel = 0,
+                LayoutOrder = index,
+                Parent = row.items,
+            }, { Round(5) })
+            New("ImageLabel", {
+                BackgroundTransparency = 1,
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.5),
+                Size = UDim2.fromScale(0.82, 0.82),
+                Image = itemIcon(item.name),
+                Parent = cell,
+            })
+            if item.amount > 1 then
+                New("TextLabel", {
+                    BackgroundTransparency = 1,
+                    AnchorPoint = Vector2.new(1, 1),
+                    Position = UDim2.new(1, -2, 1, -1),
+                    Size = UDim2.fromOffset(cellSize(), 12),
+                    Font = FONT.Bold,
+                    TextSize = 11,
+                    TextXAlignment = Enum.TextXAlignment.Right,
+                    TextColor3 = Theme.Text,
+                    TextStrokeTransparency = 0.3,
+                    Text = shortCount(item.amount),
+                    ZIndex = 2,
+                    Parent = cell,
+                })
+            end
+        end
+    end
+
+    local function removeRow(plr)
+        local row = rows[plr]
+        if row then
+            row.frame:Destroy()
+            rows[plr] = nil
+        end
+    end
+
+    local function refreshPanel()
+        local cfg = invEsp.Config
+        local wanted = {}
+        local candidates = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and Util.GetCharacter(plr) and not (cfg.TeamCheck and sameTeam(plr)) then
+                local distance = distanceTo(plr) or 0
+                local limit = cfg.MaxDistance or 0
+                if limit <= 0 or distance <= limit then
+                    candidates[#candidates + 1] = { plr = plr, distance = distance }
+                end
+            end
+        end
+        table.sort(candidates, function(a, b)
+            return a.distance < b.distance
+        end)
+
+        for index, entry in ipairs(candidates) do
+            if index > 10 then
+                break
+            end
+            local plr = entry.plr
+            local list, signature = collect(plr)
+            if #list > 0 then
+                wanted[plr] = true
+                local row = rows[plr] or buildRow(plr)
+                rows[plr] = row
+                row.frame.LayoutOrder = index
+                row.frame.Parent = panel
+                local color = teamColor(plr)
+                row.name.TextColor3 = color
+                row.avatarStroke.Color = color
+                row.name.Text = plr.DisplayName
+
+                local kit = cfg.Kits and kitOf(plr)
+                local kitKey = kit or ""
+                if kit then
+                    row.kit.Image = kitIcon(kit)
+                end
+                row.kit.Visible = kit ~= nil and kit ~= false and row.kit.Image ~= ""
+
+                local key = signature .. "|" .. kitKey .. "|" .. tostring(cellSize())
+                if row.signature ~= key then
+                    row.signature = key
+                    fillItems(row, list)
+                end
+            end
+        end
+
+        for plr in pairs(rows) do
+            if not wanted[plr] then
+                removeRow(plr)
+            end
+        end
+    end
+
+    local function clearPanel()
+        for plr in pairs(rows) do
+            removeRow(plr)
+        end
+        if panel then
+            panel:Destroy()
+            panel = nil
+        end
+    end
+
+    invEsp = Tabs.Render:CreateModule({
+        Name = "Inventory ESP",
+        Description = "Side panel showing what every enemy is carrying.",
+        OnEnable = function(mod)
+            pcall(Bedwars.ResolveExtras)
+            assert(inventoriesFolder(), "Inventories not found - join a Bedwars match first")
+
+            panel = New("Frame", {
+                Name = "NovaInventoryEsp",
+                BackgroundTransparency = 1,
+                Size = UDim2.fromOffset(panelWidth(), 0),
+                AutomaticSize = Enum.AutomaticSize.Y,
+                ZIndex = 0,
+                Parent = UI.Gui,
+            }, {
+                New("UIListLayout", {
+                    Padding = UDim.new(0, 6),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                }),
+            })
+            placePanel()
+            mod.Maid:Give(clearPanel)
+
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    pcall(refreshPanel)
+                    task.wait(0.5)
+                end
+            end))
+        end,
+    })
+
+    invEsp:AddSection("Display")
+    invEsp:AddOption({
+        Label = "Side", Key = "Side", Options = { "Right", "Left" }, Default = "Right",
+        Callback = placePanel,
+    })
+    invEsp:AddSlider({
+        Label = "Icon Size", Key = "Size", Min = 20, Max = 44, Default = 28, Step = 2, Suffix = " px",
+        Callback = placePanel,
+    })
+    invEsp:AddToggle({ Label = "Show Kits", Key = "Kits", Default = false, Tip = "Adds the player's kit icon to their row." })
+    invEsp:AddToggle({ Label = "Personal Chest", Key = "Personal", Default = false, Tip = "Also lists what they keep in their personal chest." })
+    invEsp:AddSection("Players")
+    invEsp:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, Tip = "Hide your teammates." })
+    invEsp:AddSlider({
+        Label = "Max Distance", Key = "MaxDistance", Min = 0, Max = 1000, Default = 0, Step = 25, Suffix = " studs",
+        Tip = "0 = show everyone, no matter how far.",
+    })
+    invEsp:AddSection("Items")
+    invEsp:AddToggle({ Label = "Weapons", Key = "ShowWeapons", Default = true })
+    invEsp:AddToggle({ Label = "Armor", Key = "ShowArmor", Default = true })
+    invEsp:AddToggle({ Label = "Tools", Key = "ShowTools", Default = true })
+    invEsp:AddToggle({ Label = "Resources", Key = "ShowResources", Default = true })
+    invEsp:AddToggle({ Label = "Blocks", Key = "ShowBlocks", Default = false })
+    invEsp:AddToggle({ Label = "Other", Key = "ShowOther", Default = true })
+    invEsp:AddNote("Shows at most the 10 nearest players. Needs to be in a Bedwars match.")
+
+    -- ====================== NAMETAGS ======================
+    local nameTags
+    local tagFolder
+    local tags = {}               -- player -> { gui, ... }
+    local hiddenDefaults = {}     -- humanoid -> original DisplayDistanceType, billboard -> original Enabled
+
+    local function healthOf(char, hum)
+        local value = char:GetAttribute("Health")
+        if type(value) ~= "number" then
+            value = hum and hum.Health or 100
+        end
+        local maxValue = char:GetAttribute("MaxHealth")
+        if type(maxValue) ~= "number" or maxValue <= 0 then
+            maxValue = hum and hum.MaxHealth or 100
+        end
+        return math.max(0, value), math.max(1, maxValue)
+    end
+
+    local function hex(color)
+        return string.format("#%02x%02x%02x", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+    end
+
+    local function equipmentOf(char)
+        local list = {}
+        local hand = char:FindFirstChild("HandInvItem")
+        local held = hand and hand.Value
+        if held and held.Name ~= "" then
+            list[#list + 1] = held.Name
+        end
+        for slot = 0, 2 do
+            local armor = char:FindFirstChild("ArmorInvItem_" .. slot)
+            local piece = armor and armor.Value
+            if piece and piece.Name ~= "" then
+                list[#list + 1] = piece.Name
+            end
+        end
+        return list
+    end
+
+    local function tagTextSize()
+        return math.floor(14 * (nameTags.Config.Scale or 1) + 0.5)
+    end
+
+    local function buildTag(plr)
+        local gui = New("BillboardGui", {
+            Name = "NovaTag_" .. plr.Name,
+            Size = UDim2.fromOffset(360, 90),
+            StudsOffsetWorldSpace = Vector3.new(0, 2.4, 0),
+            AlwaysOnTop = true,
+            LightInfluence = 0,
+            ResetOnSpawn = false,
+            MaxDistance = nameTags.Config.MaxDistance or 250,
+            Parent = tagFolder,
+        })
+        local pill = New("Frame", {
+            Name = "Pill",
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.fromScale(0.5, 1),
+            Size = UDim2.fromOffset(0, 0),
+            AutomaticSize = Enum.AutomaticSize.XY,
+            BackgroundColor3 = Color3.new(0, 0, 0),
+            BackgroundTransparency = 0.45,
+            BorderSizePixel = 0,
+            Parent = gui,
+        }, {
+            Round(6),
+            Pad(6, 3, 6, 3),
+            New("UIListLayout", {
+                Padding = UDim.new(0, 2),
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            }),
+        })
+        local line = New("TextLabel", {
+            Name = "Line",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.XY,
+            Size = UDim2.fromOffset(0, 0),
+            Font = FONT.Bold,
+            TextSize = tagTextSize(),
+            RichText = true,
+            TextColor3 = Theme.Text,
+            Text = plr.DisplayName,
+            LayoutOrder = 1,
+            Parent = pill,
+        })
+        local icons = New("Frame", {
+            Name = "Icons",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.XY,
+            Size = UDim2.fromOffset(0, 0),
+            LayoutOrder = 2,
+            Visible = false,
+            Parent = pill,
+        }, {
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                Padding = UDim.new(0, 2),
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            }),
+        })
+        return { gui = gui, line = line, icons = icons, equipKey = nil, kitKey = nil }
+    end
+
+    local function removeTag(plr)
+        local tag = tags[plr]
+        if tag then
+            tag.gui:Destroy()
+            tags[plr] = nil
+        end
+    end
+
+    local function setDefaultTags(char, hidden)
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            if hidden then
+                if hiddenDefaults[hum] == nil then
+                    hiddenDefaults[hum] = hum.DisplayDistanceType
+                end
+                pcall(function()
+                    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                end)
+            elseif hiddenDefaults[hum] ~= nil then
+                pcall(function()
+                    hum.DisplayDistanceType = hiddenDefaults[hum]
+                end)
+                hiddenDefaults[hum] = nil
+            end
+        end
+        local head = char:FindFirstChild("Head")
+        if head then
+            for _, child in ipairs(head:GetChildren()) do
+                if child:IsA("BillboardGui") and child.Name == "Nametag" then
+                    if hidden then
+                        if hiddenDefaults[child] == nil then
+                            hiddenDefaults[child] = child.Enabled
+                        end
+                        child.Enabled = false
+                    elseif hiddenDefaults[child] ~= nil then
+                        child.Enabled = hiddenDefaults[child]
+                        hiddenDefaults[child] = nil
+                    end
+                end
+            end
+        end
+    end
+
+    local function restoreDefaults()
+        for inst, original in pairs(hiddenDefaults) do
+            pcall(function()
+                if inst:IsA("Humanoid") then
+                    inst.DisplayDistanceType = original
+                else
+                    inst.Enabled = original
+                end
+            end)
+        end
+        hiddenDefaults = {}
+    end
+
+    local function updateTag(plr)
+        local cfg = nameTags.Config
+        local char, hum, root = Util.GetCharacter(plr)
+        local head = char and (char:FindFirstChild("Head") or root)
+        if not char or not head or (not cfg.Teammates and sameTeam(plr)) then
+            removeTag(plr)
+            return
+        end
+
+        local tag = tags[plr] or buildTag(plr)
+        tags[plr] = tag
+        tag.gui.Adornee = head
+        tag.gui.MaxDistance = cfg.MaxDistance or 250
+
+        local color = teamColor(plr)
+        local name = (cfg.Name == "Username") and plr.Name or plr.DisplayName
+        local text = string.format('<font color="%s">%s</font>', hex(color), name)
+
+        if cfg.Health then
+            local health, maxHealth = healthOf(char, hum)
+            local ratio = math.clamp(health / maxHealth, 0, 1)
+            local hpColor = Color3.fromRGB(255, 96, 118):Lerp(Color3.fromRGB(110, 224, 150), ratio)
+            text = text .. string.format(' <font color="%s">%d</font>', hex(hpColor), math.ceil(health))
+        end
+        if cfg.Distance then
+            local distance = distanceTo(plr)
+            if distance then
+                text = text .. string.format(' <font color="%s">[%dm]</font>', hex(Theme.TextDim), math.floor(distance))
+            end
+        end
+        tag.line.TextSize = tagTextSize()
+        tag.line.Text = text
+
+        -- kit icon + held item and armor, rebuilt only when they change
+        local kit = cfg.Kits and kitOf(plr) or nil
+        local equipment = cfg.Equipment and equipmentOf(char) or {}
+        local key = (kit or "") .. "|" .. table.concat(equipment, ",") .. "|" .. tostring(tagTextSize())
+        if tag.equipKey ~= key then
+            tag.equipKey = key
+            for _, child in ipairs(tag.icons:GetChildren()) do
+                if child:IsA("GuiObject") then
+                    child:Destroy()
+                end
+            end
+            local size = tagTextSize() + 4
+            local count = 0
+            local function addIcon(image)
+                count = count + 1
+                New("ImageLabel", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromOffset(size, size),
+                    Image = image,
+                    LayoutOrder = count,
+                    Parent = tag.icons,
+                })
+            end
+            if kit then
+                local image = kitIcon(kit)
+                if image ~= "" then
+                    addIcon(image)
+                end
+            end
+            for _, itemType in ipairs(equipment) do
+                addIcon(itemIcon(itemType))
+            end
+            tag.icons.Visible = count > 0
+        end
+
+        if cfg.HideGameTags then
+            setDefaultTags(char, true)
+        end
+    end
+
+    local function refreshTags()
+        local seen = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then
+                seen[plr] = true
+                updateTag(plr)
+            end
+        end
+        for plr in pairs(tags) do
+            if not seen[plr] then
+                removeTag(plr)
+            end
+        end
+    end
+
+    local function resetTags()
+        for plr in pairs(tags) do
+            removeTag(plr)
+        end
+    end
+
+    nameTags = Tabs.Render:CreateModule({
+        Name = "NameTags",
+        Description = "Overhead tags with name, health, distance, kit and gear.",
+        OnEnable = function(mod)
+            pcall(Bedwars.ResolveExtras)
+            tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
+            mod.Maid:Give(function()
+                resetTags()
+                restoreDefaults()
+                if tagFolder then
+                    tagFolder:Destroy()
+                    tagFolder = nil
+                end
+            end)
+
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    pcall(refreshTags)
+                    task.wait(0.15)
+                end
+            end))
+        end,
+    })
+
+    local function rebuildTags()
+        if nameTags.Enabled then
+            resetTags()
+        end
+    end
+
+    local function defaultsChanged()
+        if nameTags.Enabled and not nameTags.Config.HideGameTags then
+            restoreDefaults()
+        end
+    end
+
+    nameTags:AddSection("Tag")
+    nameTags:AddOption({
+        Label = "Name", Key = "Name", Options = { "Display", "Username" }, Default = "Display",
+    })
+    nameTags:AddToggle({ Label = "Health", Key = "Health", Default = true })
+    nameTags:AddToggle({ Label = "Distance", Key = "Distance", Default = true })
+    nameTags:AddToggle({ Label = "Kit", Key = "Kits", Default = false, Tip = "Kit icon next to their gear." })
+    nameTags:AddToggle({ Label = "Held Item And Armor", Key = "Equipment", Default = true })
+    nameTags:AddSlider({
+        Label = "Scale", Key = "Scale", Min = 0.6, Max = 2, Default = 1, Step = 0.1, Suffix = "x",
+        Callback = rebuildTags,
+    })
+    nameTags:AddSection("Players")
+    nameTags:AddToggle({ Label = "Show Teammates", Key = "Teammates", Default = false })
+    nameTags:AddSlider({
+        Label = "Max Distance", Key = "MaxDistance", Min = 50, Max = 1000, Default = 250, Step = 25, Suffix = " studs",
+    })
+    nameTags:AddToggle({
+        Label = "Hide Game Tags", Key = "HideGameTags", Default = true,
+        Tip = "Hides the game's own name tags while this is on.", Callback = defaultsChanged,
+    })
 end
 
 -- ====================== MODULE: WORLD (SKY) ======================
