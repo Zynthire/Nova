@@ -1680,7 +1680,7 @@ New("TextLabel", {
     Position = UDim2.fromOffset(RIGHT_X + PAGE_PAD, WINDOW_H - FOOTER_H + 1),
     Size = UDim2.fromOffset(340, FOOTER_H - 1),
     BackgroundTransparency = 1,
-    Text = "RightShift hides this window",
+    Text = "RightShift to hide",
     Font = FONT.Regular,
     TextSize = 11,
     TextColor3 = Theme.TextFaint,
@@ -1762,6 +1762,37 @@ function UI:CreateTab(name, subtitle)
         TextXAlignment = Enum.TextXAlignment.Left,
         Parent = tab.Button,
     })
+
+    -- Small count of switched-on modules, only visible when there is something on
+    tab.BadgeFill = New("Frame", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.fromOffset(22, 18),
+        BackgroundColor3 = Theme.Accent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Parent = tab.Button,
+    }, { Round(9) })
+    tab.BadgeText = New("TextLabel", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Text = "",
+        Font = FONT.Bold,
+        TextSize = 11,
+        TextColor3 = Theme.AccentLight,
+        TextTransparency = 1,
+        Parent = tab.BadgeFill,
+    })
+    onTheme(function()
+        tab.BadgeFill.BackgroundColor3 = Theme.Accent
+        tab.BadgeText.TextColor3 = Theme.AccentLight
+    end)
+    function tab.SetBadge(count)
+        local show = count > 0
+        tab.BadgeText.Text = show and tostring(count) or ""
+        Animate(tab.BadgeFill, { BackgroundTransparency = show and 0.8 or 1 }, false, 0.15)
+        Animate(tab.BadgeText, { TextTransparency = show and 0 or 1 }, false, 0.15)
+    end
 
     tab.Hovered = false
     tab.Paint = function(instant)
@@ -2309,7 +2340,7 @@ function UI:CreateTab(name, subtitle)
                 UI:RefreshHud()
             end
             if not silent then
-                Nova.Notify(def.Name, self.Enabled and "Enabled" or "Disabled", 2, self.Enabled and "success" or "info")
+                Nova.Notify(def.Name, self.Enabled and "On" or "Off", 1.8, self.Enabled and "success" or "info")
             end
         end
 
@@ -2337,10 +2368,16 @@ end
 function UI:RefreshCounts()
     local totalOn = 0
     for _, tab in ipairs(UI.TabList) do
+        local tabOn = 0
         for _, mod in ipairs(tab.Modules) do
             if mod.Enabled then
                 totalOn = totalOn + 1
+                tabOn = tabOn + 1
             end
+        end
+        if tab.SetBadge and tab.BadgeShown ~= tabOn then
+            tab.BadgeShown = tabOn
+            tab.SetBadge(tabOn)
         end
     end
     UI.ActiveLabel.Text = (totalOn == 0) and "Nothing enabled" or (tostring(totalOn) .. " enabled")
@@ -2624,8 +2661,8 @@ end)
 local NotifHolder = New("Frame", {
     Name = "Notifications",
     AnchorPoint = Vector2.new(1, 1),
-    Position = UDim2.new(1, -20, 1, -20),
-    Size = UDim2.fromOffset(300, 600),
+    Position = UDim2.new(1, -18, 1, -18),
+    Size = UDim2.fromOffset(280, 600),
     BackgroundTransparency = 1,
     Parent = UI.Gui,
 }, {
@@ -2634,15 +2671,29 @@ local NotifHolder = New("Frame", {
         HorizontalAlignment = Enum.HorizontalAlignment.Right,
         VerticalAlignment = Enum.VerticalAlignment.Bottom,
         SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 8),
+        Padding = UDim.new(0, 6),
     }),
 })
 
 local notifCounter = 0
 local activeNotifs = {}
-local NOTIF_W = 290
+local NOTIF_W = 280
+local MAX_NOTIFS = 4
+
+local function richEscape(text)
+    text = string.gsub(text, "&", "&amp;")
+    text = string.gsub(text, "<", "&lt;")
+    text = string.gsub(text, ">", "&gt;")
+    return text
+end
+
+local function hex(color)
+    return string.format("#%02X%02X%02X",
+        math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+end
 
 -- kind: "info" (default) | "success" | "error" | "warn".  `force` ignores the Notifications toggle.
+-- Short messages (module on/off, saved, ...) become a single slim line; longer ones get a second line.
 function Nova.Notify(title, text, duration, kind, force)
     if Nova.Unloaded then
         return
@@ -2653,40 +2704,42 @@ function Nova.Notify(title, text, duration, kind, force)
 
     notifCounter = notifCounter + 1
     duration = duration or 3
-    local accent, glyph = Theme.Accent, "i"
+    local accent = Theme.Accent
     if kind == "success" then
-        accent, glyph = Theme.Good, "+"
+        accent = Theme.Good
     elseif kind == "error" then
-        accent, glyph = Theme.Bad, "!"
+        accent = Theme.Bad
     elseif kind == "warn" then
-        accent, glyph = Theme.Warn, "!"
+        accent = Theme.Warn
     end
 
-    title, text = tostring(title), tostring(text)
+    title, text = tostring(title), tostring(text or "")
 
-    -- The same message again: replace the old card and count the repeats instead of stacking copies
+    -- The same message again: replace the old toast and count the repeats instead of stacking copies
     local noteKey = title .. "\n" .. text
     local repeats = 1
     for index = #activeNotifs, 1, -1 do
         local old = activeNotifs[index]
         if old.Key == noteKey then
             repeats = (old.Repeats or 1) + 1
-            old.Dismiss()
+            old.Dismiss(true)
             break
         end
     end
-    if repeats > 1 then
-        title = title .. "  x" .. repeats
+
+    local inline = text == "" or (#text <= 22 and not string.find(text, "\n"))
+    local textHeight = 0
+    local height = 36
+    if not inline then
+        textHeight = math.ceil(measure(text, 12, FONT.Regular, NOTIF_W - 44).Y)
+        height = 14 + 18 + 3 + textHeight + 10
     end
 
-    local textHeight = math.ceil(measure(text, 12, FONT.Regular, NOTIF_W - 70).Y)
-    local height = math.max(58, 38 + textHeight + 12)
-
     -- Cap the stack: dismiss the oldest when there are too many
-    while #activeNotifs >= 5 do
+    while #activeNotifs >= MAX_NOTIFS do
         local oldest = table.remove(activeNotifs, 1)
         if oldest then
-            oldest.Dismiss()
+            oldest.Dismiss(true)
         end
     end
 
@@ -2698,37 +2751,39 @@ function Nova.Notify(title, text, duration, kind, force)
     })
     local card = New("TextButton", {
         Size = UDim2.fromScale(1, 1),
-        Position = UDim2.new(1, NOTIF_W + 40, 0, 0),
+        Position = UDim2.new(1, NOTIF_W + 30, 0, 0),
         BackgroundColor3 = Theme.Card,
+        BackgroundTransparency = 0.04,
         BorderSizePixel = 0,
         AutoButtonColor = false,
         Text = "",
         ClipsDescendants = true,
         Parent = wrap,
-    }, { Round(12), Stroke(Theme.Stroke, 1) })
+    }, { Round(10), Stroke(Theme.Stroke, 1) })
 
-    local tile = New("Frame", {
-        Position = UDim2.fromOffset(12, 12),
-        Size = UDim2.fromOffset(26, 26),
+    -- Slim status dot instead of a boxed icon
+    New("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 14, 0, inline and height / 2 or 21),
+        Size = UDim2.fromOffset(7, 7),
         BackgroundColor3 = accent,
-        BackgroundTransparency = 0.8,
         BorderSizePixel = 0,
         Parent = card,
-    }, { Round(8) })
+    }, { Round(4) })
+
+    local titleText = richEscape(title)
+    if repeats > 1 then
+        titleText = titleText .. ' <font color="' .. hex(Theme.TextFaint) .. '">x' .. repeats .. "</font>"
+    end
+    if inline and text ~= "" then
+        titleText = titleText .. '   <font color="' .. hex(Theme.TextDim) .. '">' .. richEscape(text) .. "</font>"
+    end
     New("TextLabel", {
-        Size = UDim2.fromScale(1, 1),
+        Position = UDim2.fromOffset(30, inline and 0 or 12),
+        Size = UDim2.new(1, -42, 0, inline and height or 18),
         BackgroundTransparency = 1,
-        Text = glyph,
-        Font = FONT.Bold,
-        TextSize = 14,
-        TextColor3 = accent,
-        Parent = tile,
-    })
-    New("TextLabel", {
-        Position = UDim2.fromOffset(50, 10),
-        Size = UDim2.new(1, -62, 0, 18),
-        BackgroundTransparency = 1,
-        Text = title,
+        Text = titleText,
+        RichText = true,
         Font = FONT.Bold,
         TextSize = 13,
         TextColor3 = Theme.Text,
@@ -2736,31 +2791,33 @@ function Nova.Notify(title, text, duration, kind, force)
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = card,
     })
-    New("TextLabel", {
-        Position = UDim2.fromOffset(50, 29),
-        Size = UDim2.new(1, -62, 0, textHeight),
-        BackgroundTransparency = 1,
-        Text = text,
-        Font = FONT.Regular,
-        TextSize = 12,
-        TextColor3 = Theme.TextDim,
-        TextWrapped = true,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        Parent = card,
-    })
+    if not inline then
+        New("TextLabel", {
+            Position = UDim2.fromOffset(30, 33),
+            Size = UDim2.new(1, -42, 0, textHeight),
+            BackgroundTransparency = 1,
+            Text = text,
+            Font = FONT.Regular,
+            TextSize = 12,
+            TextColor3 = Theme.TextDim,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            Parent = card,
+        })
+    end
     local bar = New("Frame", {
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.new(0, 0, 1, 0),
         Size = UDim2.new(1, 0, 0, 2),
         BackgroundColor3 = accent,
-        BackgroundTransparency = 0.35,
+        BackgroundTransparency = 0.55,
         BorderSizePixel = 0,
         Parent = card,
     })
 
-    local entry = { Dismissed = false, Key = noteKey, Repeats = repeats }
-    function entry.Dismiss()
+    local entry = { Dismissed = false, Key = noteKey, Repeats = repeats, Hovered = false }
+    function entry.Dismiss(fast)
         if entry.Dismissed then
             return
         end
@@ -2771,22 +2828,41 @@ function Nova.Notify(title, text, duration, kind, force)
         end
         task.spawn(function()
             pcall(function()
-                Tween(card, 0.3, { Position = UDim2.new(1, NOTIF_W + 40, 0, 0) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-                task.wait(0.3)
-                Tween(wrap, 0.18, { Size = UDim2.fromOffset(NOTIF_W, 0) })
-                task.wait(0.18)
+                local slide = fast == true and 0.12 or 0.26
+                Tween(card, slide, { Position = UDim2.new(1, NOTIF_W + 30, 0, 0) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+                task.wait(slide)
+                Tween(wrap, 0.14, { Size = UDim2.fromOffset(NOTIF_W, 0) })
+                task.wait(0.14)
                 wrap:Destroy()
             end)
         end)
     end
-    card.MouseButton1Click:Connect(entry.Dismiss)
+    card.MouseButton1Click:Connect(function()
+        entry.Dismiss()
+    end)
+    -- Hovering a toast holds it on screen so it can be read
+    card.MouseEnter:Connect(function()
+        entry.Hovered = true
+    end)
+    card.MouseLeave:Connect(function()
+        entry.Hovered = false
+    end)
     activeNotifs[#activeNotifs + 1] = entry
 
     task.spawn(function()
         pcall(function()
-            Tween(card, 0.45, { Position = UDim2.new(0, 0, 0, 0) }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-            Tween(bar, duration, { Size = UDim2.new(0, 0, 0, 2) }, Enum.EasingStyle.Linear)
-            task.wait(duration)
+            Tween(card, 0.4, { Position = UDim2.new(0, 0, 0, 0) }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+            local elapsed = 0
+            while elapsed < duration and not entry.Dismissed and not Nova.Unloaded do
+                local dt = task.wait(0.05)
+                if type(dt) ~= "number" then
+                    dt = 0.05
+                end
+                if not entry.Hovered then
+                    elapsed = elapsed + dt
+                end
+                bar.Size = UDim2.new(math.max(0, 1 - elapsed / duration), 0, 0, 2)
+            end
             entry.Dismiss()
         end)
     end)
@@ -3026,7 +3102,9 @@ function Nova.LoadConfig(profile, startup)
     end
     if type(data.UI) == "table" and UI.SettingsHost then
         -- the profile box itself is not part of a profile
+        Nova.Quiet = true
         applyTo(UI.SettingsHost, data.UI, { Profile = true })
+        Nova.Quiet = false
         UI:UpdateScale(false)
         UI:RefreshHud()
     end
@@ -3331,9 +3409,11 @@ do
     Controls.Section(host, "Interface")
     Controls.Toggle(host, {
         Label = "Notifications", Key = "Notifications", Default = true,
-        Tip = "Show pop-up messages when modules change.",
+        Tip = "Show small pop-up messages when modules change.",
         Callback = function(value)
-            Nova.Notify("Nova", value and "Notifications on" or "Notifications off", 2, "info", true)
+            if not Nova.Quiet then
+                Nova.Notify("Notifications", value and "On" or "Off", 2, "info", true)
+            end
         end,
     })
     Controls.Option(host, {
@@ -3359,6 +3439,39 @@ do
     Controls.Toggle(host, {
         Label = "Restore Modules", Key = "RestoreModules", Default = true,
         Tip = "Switch back on the modules that were on last time. Everything else is always saved automatically.",
+    })
+
+    Controls.Section(host, "Auto Inject")
+    Controls.Toggle(host, {
+        Label = "Auto Inject", Key = "AutoInject", Default = true,
+        Tip = "Load Nova again by itself when you join a new game or a queued match, so you never have to re-execute it.",
+        Callback = function(value)
+            if Nova.AutoInject then
+                Nova.AutoInject.Refresh()
+            end
+            if not Nova.Quiet then
+                Nova.Notify("Auto Inject", value and "On" or "Off", 2, "info", true)
+            end
+        end,
+    })
+    Controls.TextBox(host, {
+        Label = "Script Link", Key = "ScriptLink", Default = "", Placeholder = "paste your script link",
+        ShowIf = function(cfg)
+            return cfg.AutoInject ~= false
+        end,
+        Tip = "The link you normally execute (the URL inside your loadstring). Paste it once; Nova remembers it.",
+        Callback = function()
+            if Nova.AutoInject then
+                Nova.AutoInject.Refresh()
+                if not Nova.Quiet then
+                    if Nova.AutoInject.CleanLink() then
+                        Nova.Notify("Auto Inject", "Link saved", 2, "success", true)
+                    else
+                        Nova.Notify("Auto Inject", "That doesn't look like a link", 3, "warn", true)
+                    end
+                end
+            end
+        end,
     })
 
     Controls.Section(host, "Profiles")
@@ -3571,6 +3684,7 @@ function Nova.Unload(keepSaved)
         return
     end
     Nova.Unloaded = true
+    Nova.Unloading = keepSaved and "keep" or "remove"
 
     -- Disable every module first so each one restores what it touched
     for _, mod in ipairs(Nova.ModuleList) do
@@ -3603,6 +3717,191 @@ function Nova.Reinject()
         task.wait(0.2)
         if main then
             main()
+        end
+    end)
+end
+
+-- ====================== AUTO INJECT ======================
+-- Re-runs Nova by itself in the next server you join (new game, queued Bedwars match, rejoin).
+-- It works by handing the executor's queue_on_teleport a tiny loader that downloads Nova from the
+-- link saved in Settings. A cached copy on disk is the fallback when the download fails.
+do
+    local AI_DIR      = CONFIG_DIR
+    local AI_FLAG     = AI_DIR .. "/autoinject.flag"
+    local AI_CACHE    = AI_DIR .. "/nova_cache.lua"
+    local queueFn     = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+
+    local AutoInject = { Queued = 0, Status = "idle" }
+    Nova.AutoInject = AutoInject
+
+    local function fileOk()
+        return type(writefile) == "function" and type(isfile) == "function" and type(readfile) == "function"
+    end
+
+    local function ensureFolder()
+        pcall(function()
+            if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(AI_DIR) then
+                makefolder(AI_DIR)
+            end
+        end)
+    end
+
+    local function writeFlag(on)
+        if not fileOk() then
+            return
+        end
+        ensureFolder()
+        pcall(writefile, AI_FLAG, on and "1" or "0")
+    end
+    AutoInject.WriteFlag = writeFlag
+
+    local function cleanLink()
+        local link = tostring(Nova.Config.UI.ScriptLink or "")
+        link = string.gsub(link, "^%s+", "")
+        link = string.gsub(link, "%s+$", "")
+        -- accept a pasted loadstring line too and pull the URL out of it
+        local inner = string.match(link, "[\"']([^\"']+)[\"']")
+        if inner and string.find(inner, "^https?://") then
+            link = inner
+        end
+        if string.find(link, "^https?://") then
+            return link
+        end
+        return nil
+    end
+    AutoInject.CleanLink = cleanLink
+
+    -- The loader that runs in the next server. Kept dependency-free on purpose.
+    local function buildPayload(link)
+        local template = [=[
+local url, cache, flag = %s, %s, %s
+local env = getgenv()
+pcall(function()
+    if type(isfile) == "function" and isfile(flag) and readfile(flag) == "0" then
+        env.__NovaSkip = true
+    end
+end)
+if env.__NovaSkip then
+    env.__NovaSkip = nil
+    return
+end
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+local players = game:GetService("Players")
+while not players.LocalPlayer do
+    task.wait()
+end
+if type(env.Nova) == "table" and not env.Nova.Unloaded and env.__NovaJob == game.JobId and game.JobId ~= "" then
+    return
+end
+task.wait(1)
+local src
+for attempt = 1, 3 do
+    local ok, body = pcall(function()
+        return game:HttpGet(url, true)
+    end)
+    if ok and type(body) == "string" and #body > 2000 then
+        src = body
+        break
+    end
+    task.wait(1.5)
+end
+if not src and type(isfile) == "function" and isfile(cache) then
+    pcall(function()
+        src = readfile(cache)
+    end)
+end
+if src then
+    local fn = loadstring(src)
+    if fn then
+        fn()
+    end
+end
+]=]
+        return string.format(template, string.format("%q", link), string.format("%q", AI_CACHE), string.format("%q", AI_FLAG))
+    end
+    AutoInject.BuildPayload = buildPayload
+
+    local function enabled()
+        return Nova.Config.UI.AutoInject ~= false
+    end
+
+    local queuedLink = nil
+    function AutoInject.Queue()
+        if Nova.Unloaded or not enabled() then
+            return false
+        end
+        local link = cleanLink()
+        if type(queueFn) ~= "function" then
+            AutoInject.Status = "Your executor can't queue scripts."
+            return false
+        end
+        if not link then
+            AutoInject.Status = "Paste your script link in Settings."
+            return false
+        end
+        local ok = pcall(queueFn, buildPayload(link))
+        if ok then
+            AutoInject.Queued = AutoInject.Queued + 1
+            queuedLink = link
+            AutoInject.Status = "Ready"
+        else
+            AutoInject.Status = "Queue failed."
+        end
+        return ok
+    end
+
+    -- Keeps a copy of the script on disk so a failed download still works next time
+    local cachedFor = nil
+    function AutoInject.Cache()
+        local link = cleanLink()
+        if not link or link == cachedFor or not fileOk() then
+            return
+        end
+        cachedFor = link
+        task.spawn(function()
+            local ok, body = pcall(function()
+                return game:HttpGet(link, true)
+            end)
+            if Nova.Unloaded then
+                return
+            end
+            if ok and type(body) == "string" and #body > 2000 then
+                ensureFolder()
+                pcall(writefile, AI_CACHE, body)
+            end
+        end)
+    end
+
+    function AutoInject.Refresh()
+        if Nova.Unloaded then
+            return
+        end
+        local on = enabled()
+        writeFlag(on)
+        env.__NovaJob = game.JobId
+        if on then
+            AutoInject.Cache()
+            AutoInject.Queue()
+        else
+            AutoInject.Status = "Off"
+        end
+    end
+
+    -- queue_on_teleport only lasts for one teleport, so queue again right before each one
+    pcall(function()
+        Nova.Maid:Give(LocalPlayer.OnTeleport:Connect(function(state)
+            if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
+                AutoInject.Queue()
+            end
+        end))
+    end)
+
+    -- A full Uninject must stop the queued loader from bringing Nova back
+    Nova.Maid:Give(function()
+        if Nova.Unloading == "remove" then
+            writeFlag(false)
         end
     end)
 end
@@ -4265,6 +4564,9 @@ do
         attempt("Store", function()
             return require(walk(LocalPlayer, "PlayerScripts", "TS", "ui", "store")).ClientStore
         end)
+        attempt("RankMeta", function()
+            return require(walk(ReplicatedStorage, "TS", "rank", "rank-meta")).RankMeta
+        end)
         attempt("KitMeta", function()
             return require(walk(ReplicatedStorage, "TS", "games", "bedwars", "kit", "bedwars-kit-meta")).BedwarsKitMeta
         end)
@@ -4646,6 +4948,11 @@ end
 -- ====================== MODULE: BEDWARS PROJECTILE AIM ======================
 do
     local DEFAULT_GRAVITY = 196.2
+    local CollectionService = service("CollectionService")
+    local StatsService = service("Stats")
+    local JUMP_SPEED = 42.6          -- upward speed of a Bedwars jump
+    local FLOATY_MARKER = "rbxassetid://8200754399"
+    local BODY_PARTS = { "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "Torso" }
 
     local function parseList(text)
         local set = {}
@@ -4715,6 +5022,69 @@ do
         return true
     end
 
+    -- Half the round trip to the server (seconds): what the target has already done by the time a
+    -- shot lands, on top of the flight time.
+    local function pingLead()
+        local ok, ping = pcall(function()
+            return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()
+        end)
+        if ok and type(ping) == "number" then
+            return math.clamp(ping / 1000 * 0.5, 0, 0.15)
+        end
+        return 0
+    end
+
+    -- Target movement history. The replicated velocity can read zero for players that move by
+    -- teleporting their position (speed hacks), so movement is also measured from position samples.
+    local History = setmetatable({}, { __mode = "k" })
+    local HISTORY_SPAN = 0.4
+
+    local function sample(entry, now)
+        local root = entry.Root
+        if not root or not root.Parent then
+            return
+        end
+        local list = History[entry.Model]
+        if not list then
+            list = {}
+            History[entry.Model] = list
+        end
+        local last = list[#list]
+        if last and now - last.t < 0.03 then
+            return
+        end
+        list[#list + 1] = { t = now, p = root.Position }
+        while #list > 2 and now - list[1].t > HISTORY_SPAN do
+            table.remove(list, 1)
+        end
+    end
+
+    local function measuredVelocity(entry, now)
+        local list = History[entry.Model]
+        if not list or #list < 2 then
+            return nil
+        end
+        local newest = list[#list]
+        local oldest
+        for _, point in ipairs(list) do
+            if newest.t - point.t >= 0.08 then
+                oldest = point
+            end
+        end
+        if not oldest then
+            return nil
+        end
+        local dt = newest.t - oldest.t
+        if dt <= 0 or now - newest.t > 0.25 then
+            return nil
+        end
+        local velocity = (newest.p - oldest.p) / dt
+        if velocity.Magnitude > 130 then
+            return nil -- a teleport, not movement
+        end
+        return velocity
+    end
+
     -- Where "the crosshair" is: screen centre in first person / locked mouse, otherwise the cursor
     local function aimReference(cam)
         if Util.IsFirstPerson() or UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
@@ -4734,6 +5104,7 @@ do
             local lastTryAt = 0
             local lastTarget, lastTargetAt = nil, 0
             local blacklist, blacklistText = parseList(cfg.Ignore), cfg.Ignore
+            local randomPick = setmetatable({}, { __mode = "k" })   -- model -> { part, at }
 
             local setStatus = makeStatusLabel(mod, "Projectile Aim", -130)
 
@@ -4758,8 +5129,55 @@ do
                 circle.Visible = false
             end
 
+            local function bodyPart(entry, name)
+                local part = entry.Model:FindFirstChild(name)
+                if part and part:IsA("BasePart") then
+                    return part
+                end
+                return nil
+            end
+
+            -- Which body part to aim at for this target
+            local function partFor(entry, cam, mouse, projmeta, origin)
+                local mode = cfg.AimPart
+                local head = bodyPart(entry, "Head")
+                if mode == "Head" then
+                    return head or entry.Root
+                elseif mode == "Dynamic" then
+                    local text = string.lower(tostring(origin and origin.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
+                    if string.find(text, "headhunter", 1, true) then
+                        return head or entry.Root
+                    end
+                    return entry.Root
+                elseif mode == "Closest" and cam and mouse then
+                    local best, bestDistance = entry.Root, math.huge
+                    for _, name in ipairs(BODY_PARTS) do
+                        local part = bodyPart(entry, name)
+                        if part then
+                            local point, onScreen = cam:WorldToViewportPoint(part.Position)
+                            if onScreen and point.Z > 0 then
+                                local distance = (Vector2.new(point.X, point.Y) - mouse).Magnitude
+                                if distance < bestDistance then
+                                    best, bestDistance = part, distance
+                                end
+                            end
+                        end
+                    end
+                    return best
+                elseif mode == "Randomize" then
+                    local memory = randomPick[entry.Model]
+                    if not memory or os.clock() - memory.at > 3 or not memory.part.Parent then
+                        local pick = (math.random() * 100 < (cfg.HeadChance or 50)) and head or nil
+                        memory = { part = pick or bodyPart(entry, "UpperTorso") or entry.Root, at = os.clock() }
+                        randomPick[entry.Model] = memory
+                    end
+                    return memory.part
+                end
+                return entry.Root
+            end
+
             -- Best target near the crosshair; returns entry, aimPart
-            local function pickTarget(origin, cam)
+            local function pickTarget(origin, cam, projmeta, tool)
                 local mouse = aimReference(cam)
                 local best, bestPart, bestScore = nil, nil, math.huge
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
@@ -4772,20 +5190,27 @@ do
                         end
                     end
                     if ok then
-                        local part = entry.Root
-                        if cfg.AimPart == "Head" then
-                            local head = entry.Model:FindFirstChild("Head")
-                            if head and head:IsA("BasePart") then
-                                part = head
-                            end
-                        end
+                        local part = partFor(entry, cam, mouse, projmeta, tool)
                         local distance = (part.Position - origin).Magnitude
                         if distance <= cfg.Range then
                             local point, onScreen = cam:WorldToViewportPoint(part.Position)
                             local screen = (Vector2.new(point.X, point.Y) - mouse).Magnitude
-                            if onScreen and point.Z > 0 and screen <= cfg.FOV
+                            -- the target you were just aiming at gets a small head start, so two players
+                            -- close together don't make the aim flip back and forth
+                            local sticky = (entry == lastTarget and os.clock() - lastTargetAt < 0.8) and 1.3 or 1
+                            if onScreen and point.Z > 0 and screen <= cfg.FOV * sticky
                                 and (not cfg.WallCheck or Util.HasLineOfSight(cam.CFrame.Position, part.Position)) then
-                                local score = (cfg.Sort == "Distance") and distance or screen
+                                local score
+                                if cfg.Sort == "Distance" then
+                                    score = distance
+                                elseif cfg.Sort == "Health" then
+                                    score = entry.Humanoid and entry.Humanoid.Health or 100
+                                else
+                                    score = screen
+                                end
+                                if sticky > 1 then
+                                    score = score * 0.65
+                                end
                                 if score < bestScore then
                                     best, bestPart, bestScore = entry, part, score
                                 end
@@ -4797,9 +5222,13 @@ do
             end
 
             -- Returns a modified copy of the game's launch values, or nil to leave the shot alone
-            local function aimShot(native, projmeta, worldmeta)
+            local function aimShot(native, projmeta, worldmeta, tool)
                 local cam = Workspace.CurrentCamera
                 if not cam or typeof(native.initialVelocity) ~= "Vector3" or typeof(native.positionFrom) ~= "Vector3" then
+                    return nil
+                end
+                local firstPerson = Util.IsFirstPerson()
+                if (cfg.WorkMode == "First Person" and not firstPerson) or (cfg.WorkMode == "Third Person" and firstPerson) then
                     return nil
                 end
                 if cfg.Ignore ~= blacklistText then
@@ -4818,33 +5247,83 @@ do
                 local gravity = tonumber(native.gravitationalAcceleration)
                     or (DEFAULT_GRAVITY * (tonumber(projmeta and projmeta.gravityMultiplier) or 1))
 
-                local entry, part = pickTarget(from, cam)
+                local entry, part = pickTarget(from, cam, projmeta, tool)
                 if not entry then
                     return nil
                 end
 
-                local lifetime = 3
+                -- Per-projectile numbers (some weapons override them)
+                local meta, overrides = nil, {}
                 pcall(function()
-                    local meta = projmeta:getProjectileMeta()
-                    lifetime = tonumber(meta.predictionLifetimeSec) or tonumber(meta.lifetimeSec) or 3
+                    meta = projmeta:getProjectileMeta()
+                    if type(meta.getProjectileOverridesFunction) == "function" then
+                        overrides = meta.getProjectileOverridesFunction(LocalPlayer)
+                    end
                 end)
-                lifetime = math.min(lifetime, 4)
+                if type(overrides) ~= "table" then
+                    overrides = {}
+                end
+                meta = type(meta) == "table" and meta or {}
+                local normalLife = tonumber(overrides.lifetimeOverride) or tonumber(meta.lifetimeSec) or 3
+                local predictedLife = tonumber(overrides.predictionLifetimeOverride) or tonumber(meta.predictionLifetimeSec)
+                local lifetime = math.min((worldmeta and predictedLife) or normalLife, 4)
+                local returnDistance = tonumber(overrides.returnDistanceOverride) or tonumber(meta.returnDistance)
 
                 local root, hum = entry.Root, entry.Humanoid
+                local now = os.clock()
                 local velocity = root.AssemblyLinearVelocity
+                if cfg.MeasuredVelocity then
+                    sample(entry, now)
+                    local measured = measuredVelocity(entry, now)
+                    if measured then
+                        local replicated = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+                        local moved = Vector3.new(measured.X, 0, measured.Z).Magnitude
+                        -- trust the measured movement when the replicated velocity clearly under-reports it
+                        if moved > replicated * 1.3 + 2 then
+                            velocity = Vector3.new(measured.X, velocity.Y, measured.Z)
+                        end
+                    end
+                end
+                if projectileName == "telepearl" then
+                    velocity = Vector3.zero
+                end
+
                 local horizontalLead = cfg.HorizontalLead / 100
                 local verticalLead = cfg.VerticalLead / 100
                 local vx, vz = velocity.X * horizontalLead, velocity.Z * horizontalLead
                 local airborne = hum.FloorMaterial == Enum.Material.Air
                 local vy = airborne and velocity.Y * verticalLead or 0
+                if cfg.JumpPrediction and not airborne and velocity.Y < 20 then
+                    local okState, state = pcall(function()
+                        return hum:GetState()
+                    end)
+                    if okState and state == Enum.HumanoidStateType.Jumping then
+                        airborne = true
+                        vy = JUMP_SPEED * verticalLead
+                    end
+                end
 
                 local targetGravity = Workspace.Gravity
                 local balloons = entry.Model:GetAttribute("InflatedBalloons")
                 if type(balloons) == "number" and balloons > 0 then
                     targetGravity = targetGravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
                 end
+                local primary = entry.Model.PrimaryPart
+                if primary and primary:FindFirstChild(FLOATY_MARKER) then
+                    targetGravity = 6
+                end
+                if entry.Player and entry.Player:GetAttribute("IsOwlTarget") then
+                    for _, owl in ipairs(CollectionService:GetTagged("Owl")) do
+                        if owl:GetAttribute("Target") == entry.Player.UserId and owl:GetAttribute("Status") == 2 then
+                            targetGravity = 0
+                            break
+                        end
+                    end
+                end
 
+                local lead = cfg.PingCompensation and pingLead() or 0
                 local base = part.Position
+
                 -- Don't predict a falling target through the floor
                 local floorY = nil
                 if airborne then
@@ -4856,21 +5335,48 @@ do
                     end
                 end
 
+                -- Don't predict a runner through a wall: movement stops where the path is blocked
+                local runSpeed = Vector3.new(vx, 0, vz).Magnitude
+                local runDirection = runSpeed > 0.5 and Vector3.new(vx, 0, vz).Unit or nil
+                local runLimit = math.huge
+                if cfg.WallAwareLead and runDirection then
+                    RayFilter.Refresh()
+                    local reach = runSpeed * (lifetime + lead) + 2
+                    local hit = Workspace:Raycast(root.Position, runDirection * reach, RayFilter.Params)
+                    if hit then
+                        runLimit = math.max(hit.Distance - 1.8, 0)
+                    end
+                end
+
                 local yOffsetNow = 0
                 local function targetAt(t)
+                    local tt = t + lead
                     local y = base.Y + yOffsetNow
                     if airborne then
-                        y = y + vy * t - 0.5 * targetGravity * t * t
+                        y = y + vy * tt - 0.5 * targetGravity * tt * tt
                         if floorY and y < floorY + yOffsetNow then
                             y = floorY + yOffsetNow
                         end
                     end
-                    return Vector3.new(base.X + vx * t, y, base.Z + vz * t)
+                    local x, z = base.X + vx * tt, base.Z + vz * tt
+                    if runDirection and runSpeed * tt > runLimit then
+                        x, z = base.X + runDirection.X * runLimit, base.Z + runDirection.Z * runLimit
+                    end
+                    return Vector3.new(x, y, z)
                 end
 
                 local bow = Bedwars.BowConstants
-                -- The bow offset only applies to the third person arrow spawn; first person fires from the camera
-                local useOffset = cfg.OffsetFix and bow and tonumber(bow.RelX) ~= nil and not Util.IsFirstPerson()
+                -- Where the arrow spawns relative to the camera. A weapon can define its own offset.
+                local relX, relY, relZ
+                local toolMeta = tool and Bedwars.ItemMeta and Bedwars.ItemMeta[tool.Name]
+                local relative = toolMeta and toolMeta.projectileSource and toolMeta.projectileSource.relativeOverride
+                if type(relative) == "table" then
+                    relX, relY, relZ = relative.relX or 0, relative.relY or 0, relative.relZ or 0
+                elseif bow and tonumber(bow.RelX) ~= nil then
+                    relX, relY, relZ = bow.RelX, bow.RelY or 0, bow.RelZ or 0
+                end
+                -- The offset only applies to the third person arrow spawn; first person fires from the camera
+                local useOffset = cfg.OffsetFix and relX ~= nil and not firstPerson
 
                 local chosen, chosenTime
                 for _, dy in ipairs({ 0, 0.8, -0.8, 1.6, -1.6 }) do
@@ -4878,7 +5384,7 @@ do
                     local v, flight = solveLaunch(from, speed, gravity, targetAt, lifetime)
                     if v then
                         if useOffset then
-                            local spawn = (CFrame.lookAt(from, from + v) * CFrame.new(-bow.RelX, -(bow.RelY or 0), -(bow.RelZ or 0))).Position
+                            local spawn = (CFrame.lookAt(from, from + v) * CFrame.new(-relX, -relY, -relZ)).Position
                             local v2, flight2 = solveLaunch(spawn, speed, gravity, targetAt, lifetime)
                             if v2 then
                                 v, flight = v2, flight2
@@ -4893,6 +5399,10 @@ do
                     end
                 end
                 if not chosen then
+                    return nil
+                end
+                -- boomerang-style projectiles turn around at a fixed distance
+                if returnDistance and speed * chosenTime > returnDistance - 2 then
                     return nil
                 end
 
@@ -4910,8 +5420,11 @@ do
                 if not active or type(nativeResult) ~= "table" then
                     return nativeResult
                 end
-                local _, projmeta, worldmeta = ...
-                local ok, modified = pcall(aimShot, nativeResult, projmeta, worldmeta)
+                local _, projmeta, worldmeta, tool = ...
+                if typeof(tool) ~= "Instance" then
+                    tool = nil
+                end
+                local ok, modified = pcall(aimShot, nativeResult, projmeta, worldmeta, tool)
                 if ok and modified then
                     return modified
                 end
@@ -4940,8 +5453,22 @@ do
             end
 
             -- The hook goes in as soon as the game's controllers exist (retries until then)
+            local lastSampleAt = 0
             mod.Maid:Give(RunService.Heartbeat:Connect(function()
                 local cam = Workspace.CurrentCamera
+                -- keep a short movement history of nearby targets (used by Measured Velocity)
+                local now = os.clock()
+                if cfg.MeasuredVelocity and installed and now - lastSampleAt >= 0.05 then
+                    lastSampleAt = now
+                    local _, _, myRoot = Util.GetCharacter(LocalPlayer)
+                    if myRoot then
+                        for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
+                            if (entry.Root.Position - myRoot.Position).Magnitude <= cfg.Range * 1.5 then
+                                sample(entry, now)
+                            end
+                        end
+                    end
+                end
                 if circle then
                     local mouse = cam and aimReference(cam) or UserInputService:GetMouseLocation()
                     circle.Visible = cfg.ShowFOV and installed
@@ -4994,8 +5521,16 @@ do
 
     aim:AddSection("Targeting")
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players" })
-    aim:AddOption({ Label = "Aim Part", Key = "AimPart", Options = { "Body", "Head" }, Default = "Body" })
-    aim:AddOption({ Label = "Sort", Key = "Sort", Options = { "Cursor", "Distance" }, Default = "Cursor", Tip = "Cursor picks whoever is closest to your crosshair." })
+    aim:AddOption({
+        Label = "Aim Part", Key = "AimPart", Options = { "Body", "Head", "Dynamic", "Closest", "Randomize" }, Default = "Body",
+        Tip = "Dynamic aims at the head only for head-hunter style weapons. Closest picks the part nearest your crosshair. Randomize rolls head or body for each target.",
+    })
+    aim:AddSlider({
+        Label = "Head Chance", Key = "HeadChance", Min = 0, Max = 100, Default = 50, Step = 5, Suffix = "%",
+        ShowIf = function(c) return c.AimPart == "Randomize" end,
+    })
+    aim:AddOption({ Label = "Sort", Key = "Sort", Options = { "Cursor", "Distance", "Health" }, Default = "Cursor", Tip = "Cursor picks whoever is closest to your crosshair. Health picks the weakest." })
+    aim:AddOption({ Label = "Work Mode", Key = "WorkMode", Options = { "Both", "First Person", "Third Person" }, Default = "Both", Tip = "Only redirect shots in this camera view." })
     aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
     aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 250, Default = 120, Step = 5, Suffix = " studs" })
     aim:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
@@ -5005,6 +5540,11 @@ do
     aim:AddSlider({ Label = "Horizontal Lead", Key = "HorizontalLead", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "100% = full prediction of sideways movement." })
     aim:AddSlider({ Label = "Vertical Lead", Key = "VerticalLead", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "100% = full prediction of vertical movement." })
     aim:AddToggle({ Label = "Bow Offset Fix", Key = "OffsetFix", Default = true })
+    aim:AddSection("Prediction")
+    aim:AddToggle({ Label = "Measured Velocity", Key = "MeasuredVelocity", Default = true, Tip = "Also measures how far a target actually moves, so speed hackers and laggy players are led correctly." })
+    aim:AddToggle({ Label = "Wall Aware Lead", Key = "WallAwareLead", Default = true, Tip = "Stops the predicted path at walls instead of leading through them." })
+    aim:AddToggle({ Label = "Jump Prediction", Key = "JumpPrediction", Default = true, Tip = "Leads targets that are just leaving the ground." })
+    aim:AddToggle({ Label = "Ping Compensation", Key = "PingCompensation", Default = true, Tip = "Adds half your ping to the lead." })
     aim:AddSection("Visuals")
     aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
@@ -6479,7 +7019,11 @@ do
     local toolDamage = {}           -- breakType -> { damage, item } (rebuilt every loop)
     local highlight = nil
     local lastEquip = 0
-    local stats = { Tracked = 0, InRange = 0, Rejected = 0, Nearest = nil, Sent = 0, Reply = "none yet", Beds = {} }
+    local stats = { Tracked = 0, InRange = 0, Rejected = 0, Nearest = nil, Sent = 0, Reply = "none yet", Beds = {},
+        Replies = {}, Cells = {}, Distinct = 0 }
+    local activeLock = nil          -- { target, anchor, exit, exitTime } while a target is being dug
+    local MIN_BED_GAP = 0.3         -- the game's own hit cooldown; faster hits on a bed get dropped
+    local MAX_STICK = 6             -- seconds one entry block is kept before the path is re-checked
 
     -- Blocks ---------------------------------------------------------------------------
     -- The game's block engine is used when it can be found. If it can't, blocks are looked up
@@ -6865,7 +7409,7 @@ do
 
     -- Breaking ----------------------------------------------------------------------------------
     -- Returns (true, description) when it sent a hit, (false, reason) otherwise
-    local function breakTarget(target, anchor)
+    local function breakTarget(target, anchor, lock)
         local cfg = nuker.Config
         local handler
         pcall(function()
@@ -6883,29 +7427,56 @@ do
             positions[1] = cellOf(target.Position) * 3
         end
 
-        local bestExit, bestCost, bestStart = nil, math.huge, nil
-        for _, worldPosition in ipairs(positions) do
-            local exit, cost = findPath(target, worldPosition, cfg.Angle, anchor)
-            if exit and cost < bestCost then
-                bestExit, bestCost, bestStart = exit, cost, worldPosition
-            end
-        end
-        if not bestExit then
-            return false, "no way in (everything around it is unbreakable or out of range)"
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            return false, "no character"
         end
 
-        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not root or (root.Position - bestExit).Magnitude > 30 then
-            return false, "too far from the entry block"
+        -- Keep hitting the same entry block until it is gone. Re-planning every tick made the
+        -- chosen block flip between neighbours as you moved, so each one only got a single hit.
+        local bestExit, block, cell
+        if lock and lock.exit and os.clock() - (lock.exitTime or 0) < MAX_STICK
+            and (root.Position - lock.exit).Magnitude <= 30 then
+            local held, heldCell = blockAt(lock.exit)
+            if held and held.Parent and not held:GetAttribute("NoBreak") and heldCell then
+                bestExit, block, cell = lock.exit, held, heldCell
+            else
+                lock.exit = nil
+            end
         end
-        local block, cell = blockAt(bestExit)
-        if not block then
-            block, cell = target, cellOf(target.Position)
+
+        if not bestExit then
+            local bestCost = math.huge
+            for _, worldPosition in ipairs(positions) do
+                local exit, cost = findPath(target, worldPosition, cfg.Angle, anchor)
+                if exit and cost < bestCost then
+                    bestExit, bestCost = exit, cost
+                end
+            end
+            if not bestExit then
+                return false, "no way in (everything around it is unbreakable or out of range)"
+            end
+            if (root.Position - bestExit).Magnitude > 30 then
+                return false, "too far from the entry block"
+            end
+            block, cell = blockAt(bestExit)
+            if not block then
+                block, cell = target, cellOf(target.Position)
+            end
+            if lock then
+                lock.exit, lock.exitTime = bestExit, os.clock()
+            end
         end
         if not cell or block:GetAttribute("NoBreak") then
+            if lock then
+                lock.exit = nil
+            end
             return false, "entry block can't be broken"
         end
         if not cfg.SelfBreak and block ~= target and isOwnTeamBlock(block) then
+            if lock then
+                lock.exit = nil
+            end
             return false, "entry block is your team's"
         end
         if not equipFor(block) then
@@ -6921,11 +7492,20 @@ do
                 hitNormal = Vector3.new(0, 1, 0),
             })
             stats.Sent = stats.Sent + 1
+            local key = tostring(cell)
+            if not stats.Cells[key] then
+                stats.Cells[key] = true
+                stats.Distinct = stats.Distinct + 1
+            end
             if type(promise) == "table" and type(promise.andThen) == "function" then
                 promise:andThen(function(result)
                     stats.Reply = tostring(result)
+                    stats.Replies[stats.Reply] = (stats.Replies[stats.Reply] or 0) + 1
                     if result == "cancelled" or result == "destroyed" then
                         pathCache = {}
+                        if activeLock then
+                            activeLock.exit = nil
+                        end
                     end
                 end)
             end
@@ -7025,6 +7605,13 @@ do
             end
         end
         add("Hits sent", stats.Sent > 0, tostring(stats.Sent) .. ", last reply: " .. stats.Reply)
+        local counts = {}
+        for reply, amount in pairs(stats.Replies) do
+            counts[#counts + 1] = reply .. " x" .. amount
+        end
+        table.sort(counts)
+        add("Server replies", #counts > 0, #counts > 0 and table.concat(counts, ", ") or "none yet")
+        add("Different blocks hit", true, tostring(stats.Distinct) .. " (a high number next to few 'destroyed' means hits are spread out)")
         local text = table.concat(lines, "\n")
         local copied = false
         if type(setclipboard) == "function" then
@@ -7044,6 +7631,8 @@ do
 
             local cfg = mod.Config
             pathCache, toolDamage = {}, {}
+            activeLock = nil
+            stats.Replies, stats.Cells, stats.Distinct, stats.Sent = {}, {}, 0, 0
             local setStatus = makeStatusLabel(mod, "Nuker", -160)
 
             highlight = New("BoxHandleAdornment", {
@@ -7059,6 +7648,7 @@ do
             mod.Maid:Give(function()
                 highlight = nil
                 pathCache = {}
+                activeLock = nil
             end)
 
             -- Beds: the game tags them "bed". As a backup also look for anything named "bed" in the map.
@@ -7080,6 +7670,12 @@ do
             stats.Beds = beds
 
             local function pickTarget(position)
+                -- keep digging the same target until it is gone / out of reach
+                local held = activeLock and activeLock.target
+                if held and held.Parent and (held.Position - position).Magnitude < cfg.Range
+                    and passesChecks(held) and isBreakable(held) then
+                    return held
+                end
                 local lists = {}
                 if cfg.Beds then lists[#lists + 1] = beds end
                 if cfg.LuckyBlocks then lists[#lists + 1] = luckyBlocks end
@@ -7138,6 +7734,7 @@ do
                         local ok, result, info = pcall(function()
                             local target = pickTarget(root.Position)
                             if not target then
+                                activeLock = nil
                                 if stats.Tracked == 0 then
                                     return false, "no beds/blocks found in this match yet"
                                 elseif stats.InRange == 0 then
@@ -7146,12 +7743,33 @@ do
                                 end
                                 return false, string.format("%d in range but not breakable (team/shield/protected)", stats.Rejected)
                             end
-                            local anchor = (cfg.TargetMode == "Distance") and root.Position or nil
-                            local sent, text = breakTarget(target, anchor)
+
+                            -- Stay on one target (and one side of it) until it is gone, so the entry
+                            -- block doesn't change while you move.
+                            local lock = activeLock
+                            if lock and lock.target ~= target then
+                                lock = nil
+                            end
+                            if lock and lock.anchor and (lock.anchor - root.Position).Magnitude > 12 then
+                                lock.anchor = root.Position
+                                lock.exit = nil
+                            end
+                            if not lock then
+                                lock = { target = target, anchor = root.Position }
+                            end
+                            activeLock = lock
+
+                            local anchor = (cfg.TargetMode == "Distance") and lock.anchor or nil
+                            local sent, text = breakTarget(target, anchor, lock)
                             if sent then
                                 setStatus(true, string.format("%s %.0f studs away, %s", target.Name,
                                     (target.Position - root.Position).Magnitude, text))
-                                task.wait(cfg.BreakSpeed)
+                                local pause = cfg.BreakSpeed
+                                -- hits on or right next to a bed need the game's own 0.3s spacing
+                                if lock.exit and (lock.exit - target.Position).Magnitude < 4 then
+                                    pause = math.max(pause, MIN_BED_GAP)
+                                end
+                                task.wait(pause)
                                 return true
                             end
                             return false, text
@@ -8905,7 +9523,7 @@ do
     }
     local PLACEHOLDER_ICON = "rbxassetid://6031075931"
 
-    local function teamColor(plr)
+    local function teamColorOrNil(plr)
         local id = tonumber(plr:GetAttribute("Team"))
         if id and TEAM_COLORS[id] then
             return TEAM_COLORS[id]
@@ -8916,7 +9534,11 @@ do
         if ok and color then
             return color
         end
-        return Theme.AccentLight
+        return nil
+    end
+
+    local function teamColor(plr)
+        return teamColorOrNil(plr) or Theme.AccentLight
     end
 
     local function sameTeam(plr)
@@ -9334,10 +9956,75 @@ do
     invEsp:AddNote("Shows at most the 10 nearest players. Needs to be in a Bedwars match.")
 
     -- ====================== NAMETAGS ======================
+    local CollectionService = service("CollectionService")
+
     local nameTags
     local tagFolder
-    local tags = {}               -- player -> { gui, ... }
-    local hiddenDefaults = {}     -- humanoid -> original DisplayDistanceType, billboard -> original Enabled
+    local tags = {}               -- entity key (Player or NPC model) -> tag
+    local drawings = {}           -- entity key -> { Text, BG, head } (Stream Proof mode)
+    local hiddenDefaults = {}     -- humanoid / billboard -> original value (game's own tags)
+    local rankCache, rankRetry = {}, {}
+    local enchantMap
+    local ROMAN = { "I", "II", "III", "IV", "V" }
+
+    local FONT_NAMES = {
+        "Gotham", "GothamMedium", "GothamBold", "GothamBlack", "SourceSans", "SourceSansBold", "SourceSansSemibold",
+        "Ubuntu", "Roboto", "RobotoMono", "Code", "Oswald", "Nunito", "Michroma", "Bangers", "FredokaOne",
+        "Merriweather", "PatrickHand", "Highway", "SciFi", "Fantasy", "Arcade", "Cartoon",
+    }
+    local COLOR_NAMES = { "Purple", "Blue", "Cyan", "Green", "Lime", "Yellow", "Orange", "Red", "Pink", "White" }
+    local COLORS = {
+        Purple = Color3.fromRGB(152, 98, 255), Blue = Color3.fromRGB(86, 148, 255), Cyan = Color3.fromRGB(64, 208, 232),
+        Green = Color3.fromRGB(84, 214, 120), Lime = Color3.fromRGB(170, 230, 70), Yellow = Color3.fromRGB(255, 225, 80),
+        Orange = Color3.fromRGB(255, 156, 80), Red = Color3.fromRGB(255, 80, 96), Pink = Color3.fromRGB(255, 104, 176),
+        White = Color3.fromRGB(240, 240, 250),
+    }
+    local POTIONS = {
+        { name = "PotSerpent", attr = "StatusEffect_serpents_touch_potion", item = "serpents_touch_potion", timed = true },
+        { name = "PotFury", attr = "StatusEffect_fury_potion", item = "fury_potion", timed = true },
+        { name = "PotInvis", attr = "StatusEffect_invisibility", item = "invisibility_potion", timed = true },
+        { name = "PotJump", attr = "JumpBoost", item = "jump_potion", timed = false },
+        { name = "PotPie", attr = "SpeedPieBuff", item = "speed_pie", timed = false },
+    }
+    local DEVICE_ICONS = { Mobile = "📱", PC = "🖥", Controller = "🎮" }
+
+    local function cfgOf()
+        return nameTags.Config
+    end
+
+    local function textSize()
+        return math.max(1, math.floor(14 * (cfgOf().Scale or 1) + 0.5))
+    end
+
+    local function iconSize()
+        return math.max(6, math.floor(24 * (cfgOf().Scale or 1) + 0.5))
+    end
+
+    local function hex(color)
+        return string.format("#%02x%02x%02x", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+    end
+
+    local function escape(text)
+        local safe = tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+        return safe
+    end
+
+    -- Health ------------------------------------------------------------------------------------
+    local function shieldOf(char)
+        local total = char:GetAttribute("TotalShield")
+        if type(total) == "number" then
+            return math.max(total, 0)
+        end
+        local sum = 0
+        pcall(function()
+            for name, value in pairs(char:GetAttributes()) do
+                if string.find(name, "Shield", 1, true) and type(value) == "number" and value > 0 then
+                    sum = sum + value
+                end
+            end
+        end)
+        return sum
+    end
 
     local function healthOf(char, hum)
         local value = char:GetAttribute("Health")
@@ -9348,104 +10035,508 @@ do
         if type(maxValue) ~= "number" or maxValue <= 0 then
             maxValue = hum and hum.MaxHealth or 100
         end
-        return math.max(0, value), math.max(1, maxValue)
+        return math.max(0, value), math.max(1, maxValue), shieldOf(char)
     end
 
-    local function hex(color)
-        return string.format("#%02x%02x%02x", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
-    end
-
-    local function equipmentOf(char)
-        local list = {}
-        local hand = char:FindFirstChild("HandInvItem")
-        local held = hand and hand.Value
-        if held and held.Name ~= "" then
-            list[#list + 1] = held.Name
+    local function healthColor(ratio)
+        local cfg = cfgOf()
+        if cfg.CustomHealth then
+            local full = COLORS[cfg.FullColor] or COLORS.Green
+            local mid = COLORS[cfg.MidColor] or COLORS.Yellow
+            local low = COLORS[cfg.LowColor] or COLORS.Red
+            if ratio >= 0.5 then
+                return full:Lerp(mid, (1 - ratio) / 0.5)
+            end
+            return mid:Lerp(low, (0.5 - ratio) / 0.5)
         end
-        for slot = 0, 2 do
-            local armor = char:FindFirstChild("ArmorInvItem_" .. slot)
-            local piece = armor and armor.Value
-            if piece and piece.Name ~= "" then
-                list[#list + 1] = piece.Name
+        if ratio >= 0.7 then
+            return Color3.fromRGB(0, 255, 0)
+        elseif ratio >= 0.3 then
+            return Color3.fromRGB(255, 255, 0)
+        elseif ratio >= 0.1 then
+            return Color3.fromRGB(255, 165, 0)
+        end
+        return Color3.fromRGB(255, 0, 0)
+    end
+
+    -- Entities --------------------------------------------------------------------------------
+    local function bossName(model)
+        if model:GetAttribute("BossType") == "Bhaa" or string.lower(model.Name) == "bhaa"
+            or model:FindFirstChild("BhaaModel") or model:FindFirstChild("BhaaHead") then
+            return "Bhaa"
+        end
+        if model.Name == "Titan" then
+            return "Titan"
+        end
+        return nil
+    end
+
+    local function listEntities()
+        local cfg = cfgOf()
+        local list = {}
+        if cfg.Players ~= false then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    list[#list + 1] = { key = plr, plr = plr }
+                end
+            end
+        end
+        if cfg.NPCs or cfg.Bosses then
+            for _, model in ipairs(CollectionService:GetTagged("entity")) do
+                if model.Parent and model:IsA("Model") and not Players:GetPlayerFromCharacter(model) then
+                    local boss = bossName(model)
+                    if (boss and cfg.Bosses) or (not boss and cfg.NPCs) then
+                        list[#list + 1] = { key = model, model = model, boss = boss }
+                    end
+                end
             end
         end
         return list
     end
 
-    local function tagTextSize()
-        return math.floor(14 * (nameTags.Config.Scale or 1) + 0.5)
+    local function parts(entry)
+        if entry.plr then
+            local char, hum, root = Util.GetCharacter(entry.plr)
+            return char, hum, root, char and (char:FindFirstChild("Head") or root)
+        end
+        local model = entry.model
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        local root = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
+        return model, hum, root, model:FindFirstChild("Head") or root
     end
 
-    local function buildTag(plr)
+    local function nameOf(entry)
+        if entry.plr then
+            return cfgOf().DisplayName == false and entry.plr.Name or entry.plr.DisplayName
+        end
+        return entry.boss or entry.model.Name
+    end
+
+    local function nameColor(entry)
+        local cfg = cfgOf()
+        if entry.plr and cfg.TeamColors ~= false then
+            local color = teamColorOrNil(entry.plr)
+            if color then
+                return color
+            end
+        end
+        return COLORS[cfg.PlayerColor] or COLORS.Purple
+    end
+
+    -- Inventory-derived data ---------------------------------------------------------------------
+    local function countsOf(plr)
+        local counts = {}
+        local folder = inventoriesFolder()
+        local inventory = folder and folder:FindFirstChild(plr.Name)
+        if inventory then
+            for _, child in ipairs(inventory:GetChildren()) do
+                local amount = child:GetAttribute("Amount")
+                if amount == nil and child:IsA("ValueBase") then
+                    amount = child.Value
+                end
+                counts[child.Name] = tonumber(amount) or 1
+            end
+        end
+        return counts
+    end
+
+    local function tinkerImage(level)
+        local ok, image = pcall(function()
+            local ids = require(ReplicatedStorage.TS.image["image-id"]).BedwarsImageId
+            return ({ ids.WOOD_TINKER_MECH, ids.IRON_TINKER_MECH, ids.DIAMOND_TINKER_MECH, ids.EMERALD_TINKER_MECH, ids.VOID_TINKER_MECH })[level]
+        end)
+        return ok and image or ""
+    end
+
+    -- Held item + armor from the character's ObjectValues. Armor is sorted by name so the
+    -- helmet / chestplate / boots slots line up whatever order the game lists them in.
+    local function gearOf(char)
+        local gear = { hand = nil, Helmet = nil, Chestplate = nil, Boots = nil }
+        local hand = char:FindFirstChild("HandInvItem")
+        local held = hand and hand.Value
+        if held and held.Name ~= "" then
+            gear.hand = held.Name
+        end
+        local fallback = { "Helmet", "Chestplate", "Boots" }
+        for slot = 0, 2 do
+            local armor = char:FindFirstChild("ArmorInvItem_" .. slot)
+            local piece = armor and armor.Value
+            if piece and piece.Name ~= "" then
+                local lowered = string.lower(piece.Name)
+                local place = (string.find(lowered, "helmet", 1, true) and "Helmet")
+                    or (string.find(lowered, "chestplate", 1, true) and "Chestplate")
+                    or ((string.find(lowered, "boots", 1, true) or string.find(lowered, "leggings", 1, true)) and "Boots")
+                    or fallback[slot + 1]
+                gear[place] = piece.Name
+            end
+        end
+        return gear
+    end
+
+    local function enchantImage(char)
+        if not enchantMap then
+            enchantMap = {}
+            pcall(function()
+                local meta = require(ReplicatedStorage.TS.enchant["enchant-meta"])
+                for _, group in pairs({ meta.EnchantMeta, meta.ToolEnchantMeta, meta.ArmorEnchantMeta }) do
+                    if type(group) == "table" then
+                        for _, entry in pairs(group) do
+                            if type(entry) == "table" and entry.statusEffect and entry.image then
+                                enchantMap[entry.statusEffect] = entry.image
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        local found = ""
+        pcall(function()
+            for attr, value in pairs(char:GetAttributes()) do
+                if string.sub(attr, 1, 13) == "StatusEffect_" and type(value) == "number" and value < 0 then
+                    local effect = string.sub(attr, 14)
+                    if not string.find(effect, "stacks", 1, true) then
+                        local image = enchantMap[effect]
+                        if image and image ~= "" then
+                            found = image
+                            return
+                        end
+                    end
+                end
+            end
+        end)
+        return found
+    end
+
+    local function potionActive(char, def)
+        local value = char:GetAttribute(def.attr)
+        if value == nil then
+            return false
+        end
+        if def.timed then
+            return type(value) == "number" and value > Workspace:GetServerTimeNow()
+        end
+        return value ~= false and value ~= 0
+    end
+
+    local function stackTier(counts, word)
+        for name in pairs(counts) do
+            if string.find(string.lower(name), word, 1, true) then
+                return tonumber(string.sub(name, -1)) or 1
+            end
+        end
+        return nil
+    end
+
+    -- Short per-kit status that sits left of the name (only things the game exposes as attributes)
+    local function kitTracker(plr, char, counts)
+        local kit = kitOf(plr)
+        if not kit then
+            return ""
+        end
+        local function roman(n)
+            return ROMAN[n] or tostring(n)
+        end
+        if kit == "void_knight" then
+            local tier = plr:GetAttribute("VoidKnightTier") or 0
+            if tier > 0 then return "【" .. roman(tier) .. "】", Color3.fromRGB(180, 80, 255) end
+        elseif kit == "block_kicker" then
+            local count = char:GetAttribute("BlockKickerKit_BlockCount") or plr:GetAttribute("BlockKickerKit_BlockCount") or 0
+            if count > 0 then return "【" .. count .. "】", Color3.fromRGB(100, 210, 100) end
+        elseif kit == "elk_master" then
+            if char:FindFirstChild("elk") then return "【🦌】", Color3.fromRGB(160, 220, 80) end
+        elseif kit == "summoner" then
+            local tier = plr:GetAttribute("Summoner_ClawLevel") or 0
+            if tier > 0 then return "【" .. roman(tier) .. "】", Color3.fromRGB(191, 0, 255) end
+        elseif kit == "paladin" then
+            return "【🪽】", Color3.fromRGB(255, 242, 150)
+        elseif kit == "davey" then
+            local stacks = char:GetAttribute("StatusEffect_powdered_stacks") or 0
+            if stacks > 0 then return "【" .. stacks .. "】", Color3.fromRGB(255, 105, 130) end
+        elseif kit == "wizard" then
+            local tier = stackTier(counts, "wizard_staff")
+            if tier then return "【" .. roman(tier) .. "】", Color3.fromRGB(130, 100, 240) end
+        elseif kit == "winter_lady" then
+            local tier = stackTier(counts, "frost_staff")
+            if tier then return "【" .. roman(tier) .. "】", Color3.fromRGB(200, 225, 255) end
+        elseif kit == "aery" then
+            return "【" .. (plr:GetAttribute("AeryStacks") or 0) .. "】", Color3.fromRGB(130, 210, 255)
+        elseif kit == "warrior" then
+            return "【" .. (plr:GetAttribute("Grit") or 0) .. "/100】", Color3.fromRGB(220, 60, 60)
+        elseif kit == "mimic" then
+            if Workspace:FindFirstChild("DisguisedPlayerBlock_" .. tostring(plr.UserId)) then
+                return "【👔】", Color3.fromRGB(180, 210, 60)
+            end
+        elseif kit == "disruptor" then
+            local target = plr:GetAttribute("DisruptorTarget")
+            return "【" .. (target and (tostring(target) .. " Team") or "Unknown Team") .. "】", Color3.fromRGB(40, 180, 140)
+        end
+        return ""
+    end
+
+    local function deviceOf(plr)
+        local value = string.upper(tostring(plr:GetAttribute("UserInputType") or ""))
+        if value == "MOBILE" then
+            return "Mobile"
+        elseif value == "GAMEPAD" or value == "CONTROLLER" then
+            return "Controller"
+        end
+        return "PC"
+    end
+
+    -- Rank badge: asked for once per player, kept for the match
+    local function rankImage(plr)
+        local cached = rankCache[plr.UserId]
+        if cached ~= nil then
+            return cached or ""
+        end
+        if rankRetry[plr.UserId] and os.clock() < rankRetry[plr.UserId] then
+            return ""
+        end
+        rankRetry[plr.UserId] = os.clock() + 20
+        task.spawn(function()
+            local ok, success, data = pcall(function()
+                return Bedwars.Client:Get("FetchRanks"):CallServerAsync({ plr.UserId }):await()
+            end)
+            if ok and success and type(data) == "table" then
+                local division = data[1] and data[1].rankDivision
+                local meta = division and Bedwars.RankMeta and Bedwars.RankMeta[division]
+                if meta and meta.image then
+                    rankCache[plr.UserId] = meta.image
+                end
+            end
+        end)
+        return ""
+    end
+
+    -- Tag construction -------------------------------------------------------------------------------
+    local function buildTag(entry)
+        local cfg = cfgOf()
+        local size = iconSize()
+        local fontOk, font = pcall(function()
+            return Enum.Font[cfg.Font or "Gotham"]
+        end)
+        font = fontOk and font or FONT.Bold
+
         local gui = New("BillboardGui", {
-            Name = "NovaTag_" .. plr.Name,
-            Size = UDim2.fromOffset(360, 90),
+            Name = "NovaTag",
+            Size = UDim2.fromOffset(520, 220),
             StudsOffsetWorldSpace = Vector3.new(0, 2.4, 0),
             AlwaysOnTop = true,
             LightInfluence = 0,
             ResetOnSpawn = false,
-            MaxDistance = nameTags.Config.MaxDistance or 250,
             Parent = tagFolder,
         })
-        local pill = New("Frame", {
-            Name = "Pill",
+        local stack = New("Frame", {
+            Name = "Stack",
             AnchorPoint = Vector2.new(0.5, 1),
             Position = UDim2.fromScale(0.5, 1),
             Size = UDim2.fromOffset(0, 0),
             AutomaticSize = Enum.AutomaticSize.XY,
-            BackgroundColor3 = Color3.new(0, 0, 0),
-            BackgroundTransparency = 0.45,
-            BorderSizePixel = 0,
+            BackgroundTransparency = 1,
             Parent = gui,
         }, {
-            Round(6),
-            Pad(6, 3, 6, 3),
             New("UIListLayout", {
-                Padding = UDim.new(0, 2),
+                Padding = UDim.new(0, 3),
                 SortOrder = Enum.SortOrder.LayoutOrder,
                 HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                VerticalAlignment = Enum.VerticalAlignment.Bottom,
             }),
         })
-        local line = New("TextLabel", {
-            Name = "Line",
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.XY,
+
+        local function makeRow(name, order)
+            return New("Frame", {
+                Name = name,
+                LayoutOrder = order,
+                Size = UDim2.fromOffset(0, 0),
+                AutomaticSize = Enum.AutomaticSize.XY,
+                BackgroundTransparency = 1,
+                Visible = false,
+                Parent = stack,
+            }, {
+                New("UIListLayout", {
+                    FillDirection = Enum.FillDirection.Horizontal,
+                    Padding = UDim.new(0, 2),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                    VerticalAlignment = Enum.VerticalAlignment.Center,
+                }),
+            })
+        end
+        local extras, gear = makeRow("Extras", 1), makeRow("Gear", 2)
+
+        local slots, order = {}, 0
+        local function slot(parent, name, counted)
+            order = order + 1
+            local icon = New("ImageLabel", {
+                Name = name,
+                BackgroundTransparency = 1,
+                Size = UDim2.fromOffset(size, size),
+                LayoutOrder = order,
+                Image = "",
+                Visible = false,
+                Parent = parent,
+            })
+            local amount
+            if counted then
+                amount = New("TextLabel", {
+                    Name = "Amt",
+                    BackgroundTransparency = 1,
+                    AnchorPoint = Vector2.new(0.5, 1),
+                    Position = UDim2.new(0.5, 0, 1, 3),
+                    Size = UDim2.fromOffset(size + 8, math.max(8, math.floor(size * 0.5))),
+                    Font = FONT.Bold,
+                    TextSize = math.max(6, math.floor(size * 0.5)),
+                    TextColor3 = Color3.new(1, 1, 1),
+                    TextStrokeTransparency = 0,
+                    TextXAlignment = Enum.TextXAlignment.Center,
+                    TextYAlignment = Enum.TextYAlignment.Bottom,
+                    Text = "",
+                    ZIndex = 2,
+                    Parent = icon,
+                })
+            end
+            slots[name] = { icon = icon, amount = amount }
+        end
+        if cfg.Enchant then slot(extras, "Enchant") end
+        if cfg.Potions then
+            for _, def in ipairs(POTIONS) do slot(extras, def.name) end
+        end
+        if cfg.Loot then
+            slot(extras, "Iron", true)
+            slot(extras, "Diamond", true)
+            slot(extras, "Emerald", true)
+        end
+        if cfg.BedBreak then
+            slot(extras, "Tnt", true)
+            slot(extras, "Siege", true)
+        end
+        if cfg.Kits then slot(gear, "KitIcon") end
+        if cfg.Equipment then
+            slot(gear, "Hand", true)
+            slot(gear, "Helmet")
+            slot(gear, "Chestplate")
+            slot(gear, "Boots")
+        end
+
+        local pill = New("Frame", {
+            Name = "Pill",
+            LayoutOrder = 3,
             Size = UDim2.fromOffset(0, 0),
-            Font = FONT.Bold,
-            TextSize = tagTextSize(),
-            RichText = true,
-            TextColor3 = Theme.Text,
-            Text = plr.DisplayName,
-            LayoutOrder = 1,
-            Parent = pill,
-        })
-        local icons = New("Frame", {
-            Name = "Icons",
-            BackgroundTransparency = 1,
             AutomaticSize = Enum.AutomaticSize.XY,
-            Size = UDim2.fromOffset(0, 0),
-            LayoutOrder = 2,
-            Visible = false,
-            Parent = pill,
+            BackgroundColor3 = Color3.new(0, 0, 0),
+            BackgroundTransparency = cfg.Transparency or 0.5,
+            BorderSizePixel = 0,
+            Parent = stack,
         }, {
+            Round(5),
+            Pad(5, 2, 5, 2),
             New("UIListLayout", {
                 FillDirection = Enum.FillDirection.Horizontal,
-                Padding = UDim.new(0, 2),
+                Padding = UDim.new(0, 4),
                 SortOrder = Enum.SortOrder.LayoutOrder,
-                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                VerticalAlignment = Enum.VerticalAlignment.Center,
             }),
         })
-        return { gui = gui, line = line, icons = icons, equipKey = nil, kitKey = nil }
+        local function label(name, order, visible)
+            return New("TextLabel", {
+                Name = name,
+                LayoutOrder = order,
+                BackgroundTransparency = 1,
+                AutomaticSize = Enum.AutomaticSize.XY,
+                Size = UDim2.fromOffset(0, 0),
+                Font = font,
+                TextSize = textSize(),
+                RichText = true,
+                TextColor3 = Theme.Text,
+                Text = "",
+                Visible = visible,
+                Parent = pill,
+            })
+        end
+        local tag = {
+            gui = gui, extras = extras, gear = gear, pill = pill, slots = slots,
+            tracker = cfg.KitTracker and label("Tracker", 1, false) or nil,
+            line = label("Line", 2, true),
+            device = cfg.Device and label("Device", 3, true) or nil,
+        }
+        if cfg.Rank then
+            tag.rank = New("ImageLabel", {
+                Name = "Rank", LayoutOrder = 4, BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size),
+                Image = "", Visible = false, Parent = pill,
+            })
+        end
+        if cfg.Gloop then
+            tag.gloop = New("ImageLabel", {
+                Name = "Gloop", LayoutOrder = 5, BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size),
+                Image = itemIcon("glue_projectile"), Visible = false, Parent = pill,
+            })
+        end
+        return tag
     end
 
-    local function removeTag(plr)
-        local tag = tags[plr]
+    local function removeTag(key)
+        local tag = tags[key]
         if tag then
             tag.gui:Destroy()
-            tags[plr] = nil
+            tags[key] = nil
         end
     end
 
+    local function removeDrawing(key)
+        local drawn = drawings[key]
+        if drawn then
+            pcall(function()
+                drawn.Text.Visible = false
+                drawn.BG.Visible = false
+                drawn.Text:Remove()
+                drawn.BG:Remove()
+            end)
+            drawings[key] = nil
+        end
+    end
+
+    local function resetTags()
+        for key in pairs(tags) do
+            removeTag(key)
+        end
+        for key in pairs(drawings) do
+            removeDrawing(key)
+        end
+    end
+
+    local function setSlot(tag, name, image, label)
+        local entry = tag.slots[name]
+        if not entry then
+            return
+        end
+        local show = image ~= nil and image ~= ""
+        if entry.icon.Visible ~= show then
+            entry.icon.Visible = show
+        end
+        if show then
+            if entry.icon.Image ~= image then
+                entry.icon.Image = image
+            end
+            if entry.amount then
+                entry.amount.Text = label or ""
+            end
+        end
+    end
+
+    local function syncRow(row)
+        local any = false
+        for _, child in ipairs(row:GetChildren()) do
+            if child:IsA("ImageLabel") and child.Visible then
+                any = true
+                break
+            end
+        end
+        if row.Visible ~= any then
+            row.Visible = any
+        end
+    end
+
+    -- The game's own name tags are hidden while ours are on, and put back afterwards
     local function setDefaultTags(char, hidden)
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then
@@ -9494,103 +10585,234 @@ do
         hiddenDefaults = {}
     end
 
-    local function updateTag(plr)
-        local cfg = nameTags.Config
-        local char, hum, root = Util.GetCharacter(plr)
-        local head = char and (char:FindFirstChild("Head") or root)
-        if not char or not head or (not cfg.Teammates and sameTeam(plr)) then
-            removeTag(plr)
-            return
+    local function drawingSupported()
+        local ok, fn = pcall(function()
+            return Drawing and Drawing.new
+        end)
+        return ok and type(fn) == "function"
+    end
+
+    local function updateDrawing(entry, head, text, color)
+        local drawn = drawings[entry.key]
+        if not drawn then
+            local bg = Drawing.new("Square")
+            bg.Filled = true
+            bg.Thickness = 0
+            bg.Color = Color3.new(0, 0, 0)
+            bg.ZIndex = 1
+            bg.Visible = false
+            local label = Drawing.new("Text")
+            label.Center = false
+            label.Outline = true
+            label.OutlineColor = Color3.new(0, 0, 0)
+            label.Font = 2
+            label.ZIndex = 2
+            label.Visible = false
+            drawn = { Text = label, BG = bg }
+            drawings[entry.key] = drawn
+        end
+        drawn.Text.Size = textSize()
+        drawn.Text.Text = text
+        drawn.Text.Color = color
+        drawn.BG.Transparency = 1 - (cfgOf().Transparency or 0.5)
+        drawn.head = head
+    end
+
+    local function positionDrawings()
+        local camera = Workspace.CurrentCamera
+        for _, drawn in pairs(drawings) do
+            local head = drawn.head
+            local shown = false
+            if camera and head and head.Parent then
+                local point, onScreen = camera:WorldToViewportPoint(head.Position + Vector3.new(0, 2, 0))
+                if onScreen and point.Z > 0 then
+                    local bounds = drawn.Text.TextBounds
+                    drawn.Text.Position = Vector2.new(point.X - bounds.X / 2, point.Y - bounds.Y)
+                    drawn.BG.Size = Vector2.new(bounds.X + 8, bounds.Y + 7)
+                    drawn.BG.Position = Vector2.new(point.X - bounds.X / 2 - 4, point.Y - bounds.Y - 3)
+                    shown = true
+                end
+            end
+            drawn.Text.Visible = shown
+            drawn.BG.Visible = shown
+        end
+    end
+
+    -- One refresh of one entity ---------------------------------------------------------------------
+    local function updateEntry(entry, useDrawing)
+        local cfg = cfgOf()
+        local plr = entry.plr
+        local char, hum, root, head = parts(entry)
+        if not char or not head or (hum and hum.Health <= 0) then
+            return false
+        end
+        if plr and cfg.HideTeammates ~= false and sameTeam(plr) then
+            return false
         end
 
-        local tag = tags[plr] or buildTag(plr)
-        tags[plr] = tag
-        tag.gui.Adornee = head
-        tag.gui.MaxDistance = cfg.MaxDistance or 250
+        local distance
+        local _, _, mine = Util.GetCharacter(LocalPlayer)
+        if mine and root then
+            distance = (mine.Position - root.Position).Magnitude
+        end
+        local inRange = true
+        if cfg.DistanceCheck then
+            inRange = distance ~= nil and distance >= (cfg.DistanceMin or 0) and distance <= (cfg.DistanceMax or 64)
+        end
 
-        local color = teamColor(plr)
-        local name = (cfg.Name == "Username") and plr.Name or plr.DisplayName
-        local text = string.format('<font color="%s">%s</font>', hex(color), name)
+        local counts = plr and (cfg.Loot or cfg.BedBreak or cfg.KitTracker or cfg.Equipment) and countsOf(plr) or {}
+        local color = nameColor(entry)
 
+        -- text
+        local name = nameOf(entry)
+        local prefix = (cfg.Distance and distance) and string.format("[%d] ", math.floor(distance)) or ""
+        local hp, maxHp, shield, ratio = 0, 1, 0, 1
         if cfg.Health then
-            local health, maxHealth = healthOf(char, hum)
-            local ratio = math.clamp(health / maxHealth, 0, 1)
-            local hpColor = Color3.fromRGB(255, 96, 118):Lerp(Color3.fromRGB(110, 224, 150), ratio)
-            text = text .. string.format(' <font color="%s">%d</font>', hex(hpColor), math.ceil(health))
+            hp, maxHp, shield = healthOf(char, hum)
+            ratio = math.clamp(hp / maxHp, 0, 1)
         end
-        if cfg.Distance then
-            local distance = distanceTo(plr)
-            if distance then
-                text = text .. string.format(' <font color="%s">[%dm]</font>', hex(Theme.TextDim), math.floor(distance))
+
+        if useDrawing then
+            local text = prefix .. name
+            if cfg.Health then
+                text = text .. " " .. (shield > 0 and (math.round(hp) .. " +" .. math.round(shield)) or tostring(math.round(hp)))
+            end
+            local kit = cfg.Kits and plr and kitOf(plr)
+            if kit then
+                local pretty = kit:gsub("_", " "):gsub("^%l", string.upper)
+                text = text .. " (" .. pretty .. ")"
+            end
+            updateDrawing(entry, head, text, cfg.Health and healthColor(ratio) or color)
+            local drawn = drawings[entry.key]
+            if drawn then
+                drawn.inRange = inRange
+                if not inRange then
+                    drawn.head = nil
+                end
+            end
+            return true
+        end
+
+        local tag = tags[entry.key] or buildTag(entry)
+        tags[entry.key] = tag
+        tag.gui.Adornee = head
+        tag.gui.Enabled = inRange
+
+        local text = prefix .. escape(name)
+        if cfg.Health then
+            text = text .. string.format(' <font color="%s">%d</font>', hex(healthColor(ratio)), math.round(hp))
+            if shield > 0 then
+                text = text .. string.format(' <font color="#ffffff">%d</font>', math.round(shield))
             end
         end
-        tag.line.TextSize = tagTextSize()
+        tag.line.TextColor3 = color
         tag.line.Text = text
 
-        -- kit icon + held item and armor, rebuilt only when they change
-        local kit = cfg.Kits and kitOf(plr) or nil
-        local equipment = cfg.Equipment and equipmentOf(char) or {}
-        local key = (kit or "") .. "|" .. table.concat(equipment, ",") .. "|" .. tostring(tagTextSize())
-        if tag.equipKey ~= key then
-            tag.equipKey = key
-            for _, child in ipairs(tag.icons:GetChildren()) do
-                if child:IsA("GuiObject") then
-                    child:Destroy()
-                end
+        if tag.tracker then
+            local trackerText, trackerColor = "", nil
+            if plr then
+                trackerText, trackerColor = kitTracker(plr, char, counts)
             end
-            local size = tagTextSize() + 4
-            local count = 0
-            local function addIcon(image)
-                count = count + 1
-                New("ImageLabel", {
-                    BackgroundTransparency = 1,
-                    Size = UDim2.fromOffset(size, size),
-                    Image = image,
-                    LayoutOrder = count,
-                    Parent = tag.icons,
-                })
+            tag.tracker.Visible = trackerText ~= nil and trackerText ~= ""
+            tag.tracker.Text = trackerText or ""
+            if trackerColor then
+                tag.tracker.TextColor3 = trackerColor
             end
-            if kit then
-                local image = kitIcon(kit)
-                if image ~= "" then
-                    addIcon(image)
-                end
+        end
+        if tag.device and plr then
+            tag.device.Text = DEVICE_ICONS[deviceOf(plr)] or ""
+        end
+        if tag.rank and plr then
+            local image = rankImage(plr)
+            tag.rank.Visible = image ~= ""
+            tag.rank.Image = image
+        end
+        if tag.gloop then
+            local glue = char:GetAttribute("GlueSlow")
+            if glue ~= nil and glue ~= 0 and glue ~= tag.lastGlue then
+                tag.gloopUntil = os.clock() + 10
             end
-            for _, itemType in ipairs(equipment) do
-                addIcon(itemIcon(itemType))
-            end
-            tag.icons.Visible = count > 0
+            tag.lastGlue = glue
+            tag.gloop.Visible = tag.gloopUntil ~= nil and os.clock() < tag.gloopUntil
         end
 
-        if cfg.HideGameTags then
+        -- icon rows
+        if tag.slots.Enchant then
+            setSlot(tag, "Enchant", enchantImage(char))
+        end
+        if cfg.Potions then
+            for _, def in ipairs(POTIONS) do
+                setSlot(tag, def.name, potionActive(char, def) and itemIcon(def.item) or "")
+            end
+        end
+        if plr then
+            if cfg.Loot then
+                for _, pair in ipairs({ { "Iron", "iron" }, { "Diamond", "diamond" }, { "Emerald", "emerald" } }) do
+                    local amount = counts[pair[2]] or 0
+                    setSlot(tag, pair[1], amount > 0 and itemIcon(pair[2]) or "", shortCount(amount))
+                end
+            end
+            if cfg.BedBreak then
+                local tnt, siege = counts.tnt or 0, counts.siege_tnt or 0
+                setSlot(tag, "Tnt", tnt > 0 and itemIcon("tnt") or "", shortCount(tnt))
+                setSlot(tag, "Siege", siege > 0 and itemIcon("siege_tnt") or "", shortCount(siege))
+            end
+            if cfg.Kits then
+                local kit = kitOf(plr)
+                setSlot(tag, "KitIcon", kit and kitIcon(kit) or "")
+            end
+            if cfg.Equipment then
+                local gear = gearOf(char)
+                setSlot(tag, "Hand", gear.hand and itemIcon(gear.hand) or "",
+                    (gear.hand and (counts[gear.hand] or 0) > 1) and shortCount(counts[gear.hand]) or "")
+                setSlot(tag, "Helmet", gear.Helmet and itemIcon(gear.Helmet) or "")
+                local chest = gear.Chestplate and itemIcon(gear.Chestplate) or ""
+                if kitOf(plr) == "tinker" then
+                    local level = plr:GetAttribute("TinkerMachineLevel")
+                    if level and level >= 1 and level <= 5 then
+                        local mech = tinkerImage(level)
+                        if mech ~= "" then
+                            chest = mech
+                        end
+                    end
+                end
+                setSlot(tag, "Chestplate", chest)
+                setSlot(tag, "Boots", gear.Boots and itemIcon(gear.Boots) or "")
+            end
+        end
+        syncRow(tag.extras)
+        syncRow(tag.gear)
+
+        if plr and cfg.HideGameTags then
             setDefaultTags(char, true)
         end
+        return true
     end
 
     local function refreshTags()
+        local useDrawing = cfgOf().StreamProof and drawingSupported()
         local seen = {}
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer then
-                seen[plr] = true
-                updateTag(plr)
+        for _, entry in ipairs(listEntities()) do
+            local ok, shown = pcall(updateEntry, entry, useDrawing)
+            if ok and shown then
+                seen[entry.key] = true
             end
         end
-        for plr in pairs(tags) do
-            if not seen[plr] then
-                removeTag(plr)
+        for key in pairs(tags) do
+            if not seen[key] or useDrawing then
+                removeTag(key)
             end
         end
-    end
-
-    local function resetTags()
-        for plr in pairs(tags) do
-            removeTag(plr)
+        for key in pairs(drawings) do
+            if not seen[key] or not useDrawing then
+                removeDrawing(key)
+            end
         end
     end
 
     nameTags = Tabs.Render:CreateModule({
         Name = "NameTags",
-        Description = "Overhead tags with name, health, distance, kit and gear.",
+        Description = "Overhead tags with name, health, distance, gear, kit and more.",
         OnEnable = function(mod)
             pcall(Bedwars.ResolveExtras)
             tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
@@ -9602,44 +10824,87 @@ do
                     tagFolder = nil
                 end
             end)
-
+            mod.Maid:Give(RunService.RenderStepped:Connect(function()
+                if next(drawings) then
+                    pcall(positionDrawings)
+                end
+            end))
             mod.Maid:Give(task.spawn(function()
                 while mod.Enabled do
                     pcall(refreshTags)
-                    task.wait(0.15)
+                    task.wait(0.12)
                 end
             end))
         end,
     })
 
-    local function rebuildTags()
+    -- Anything that changes how a tag is built starts the tags over
+    local function rebuild()
         if nameTags.Enabled then
             resetTags()
         end
     end
-
     local function defaultsChanged()
         if nameTags.Enabled and not nameTags.Config.HideGameTags then
             restoreDefaults()
         end
     end
+    local function whenCustomHealth(cfg)
+        return cfg.Health and cfg.CustomHealth
+    end
 
-    nameTags:AddSection("Tag")
+    nameTags:AddSection("Targets")
+    nameTags:AddToggle({ Label = "Players", Key = "Players", Default = true, Callback = rebuild })
+    nameTags:AddToggle({ Label = "NPCs", Key = "NPCs", Default = false, Tip = "Non-player entities like zombies and golems.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Bosses", Key = "Bosses", Default = false, Tip = "Titan and Bhaa.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Hide Teammates", Key = "HideTeammates", Default = true, Callback = rebuild })
+
+    nameTags:AddSection("Look")
+    nameTags:AddOption({ Label = "Font", Key = "Font", Options = FONT_NAMES, Default = "Gotham", Dropdown = true, Callback = rebuild })
+    nameTags:AddToggle({ Label = "Team Colors", Key = "TeamColors", Default = true, Tip = "Colour names by team. Off = everyone uses Player Color." })
     nameTags:AddOption({
-        Label = "Name", Key = "Name", Options = { "Display", "Username" }, Default = "Display",
+        Label = "Player Color", Key = "PlayerColor", Options = COLOR_NAMES, Swatches = COLORS, Default = "Purple",
+        Tip = "Used for NPCs, and for players when Team Colors is off.",
     })
+    nameTags:AddSlider({ Label = "Scale", Key = "Scale", Min = 0.1, Max = 1.5, Default = 1, Step = 0.1, Suffix = "x", Callback = rebuild })
+    nameTags:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.5, Step = 0.1, Callback = rebuild })
+
+    nameTags:AddSection("Name")
+    nameTags:AddToggle({ Label = "Use Displayname", Key = "DisplayName", Default = true })
     nameTags:AddToggle({ Label = "Health", Key = "Health", Default = true })
+    nameTags:AddToggle({ Label = "Custom Health Colors", Key = "CustomHealth", Default = false, ShowIf = function(c) return c.Health end })
+    nameTags:AddOption({ Label = "Full HP Color", Key = "FullColor", Options = COLOR_NAMES, Swatches = COLORS, Default = "Green", ShowIf = whenCustomHealth })
+    nameTags:AddOption({ Label = "Mid HP Color", Key = "MidColor", Options = COLOR_NAMES, Swatches = COLORS, Default = "Yellow", ShowIf = whenCustomHealth })
+    nameTags:AddOption({ Label = "Low HP Color", Key = "LowColor", Options = COLOR_NAMES, Swatches = COLORS, Default = "Red", ShowIf = whenCustomHealth })
     nameTags:AddToggle({ Label = "Distance", Key = "Distance", Default = true })
-    nameTags:AddToggle({ Label = "Kit", Key = "Kits", Default = false, Tip = "Kit icon next to their gear." })
-    nameTags:AddToggle({ Label = "Held Item And Armor", Key = "Equipment", Default = true })
+
+    nameTags:AddSection("Icons")
+    nameTags:AddToggle({ Label = "Equipment", Key = "Equipment", Default = true, Tip = "Held item, helmet, chestplate and boots.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Show Kits", Key = "Kits", Default = false, Callback = rebuild })
+    nameTags:AddToggle({ Label = "Kit Tracker", Key = "KitTracker", Default = false, Tip = "Kit status next to the name (tiers, stacks, grit...).", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Loot", Key = "Loot", Default = false, Tip = "Iron, diamond and emerald they are carrying.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Bed Break", Key = "BedBreak", Default = false, Tip = "TNT and siege TNT they are carrying.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Potions", Key = "Potions", Default = false, Tip = "Active potion effects.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Enchant", Key = "Enchant", Default = false, Tip = "Shows an active enchant effect.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Rank", Key = "Rank", Default = false, Tip = "Their ranked badge (asked from the game once per player).", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Device Icon", Key = "Device", Default = false, Tip = "Phone, PC or controller.", Callback = rebuild })
+    nameTags:AddToggle({ Label = "Gloop", Key = "Gloop", Default = false, Tip = "Shows for 10s after they get hit by a glue projectile.", Callback = rebuild })
+
+    nameTags:AddSection("Range")
+    nameTags:AddToggle({ Label = "Distance Check", Key = "DistanceCheck", Default = false, Tip = "Only show players inside the distance window below." })
     nameTags:AddSlider({
-        Label = "Scale", Key = "Scale", Min = 0.6, Max = 2, Default = 1, Step = 0.1, Suffix = "x",
-        Callback = rebuildTags,
+        Label = "Min Distance", Key = "DistanceMin", Min = 0, Max = 256, Default = 0, Step = 4, Suffix = " studs",
+        ShowIf = function(c) return c.DistanceCheck end,
     })
-    nameTags:AddSection("Players")
-    nameTags:AddToggle({ Label = "Show Teammates", Key = "Teammates", Default = false })
     nameTags:AddSlider({
-        Label = "Max Distance", Key = "MaxDistance", Min = 50, Max = 1000, Default = 250, Step = 25, Suffix = " studs",
+        Label = "Max Distance", Key = "DistanceMax", Min = 0, Max = 256, Default = 64, Step = 4, Suffix = " studs",
+        ShowIf = function(c) return c.DistanceCheck end,
+    })
+
+    nameTags:AddSection("Other")
+    nameTags:AddToggle({
+        Label = "Stream Proof", Key = "StreamProof", Default = false,
+        Tip = "Draws plain text tags with the Drawing library (no icons). Needs an executor that supports Drawing.",
     })
     nameTags:AddToggle({
         Label = "Hide Game Tags", Key = "HideGameTags", Default = true,
@@ -10021,7 +11286,10 @@ end
 
 -- ====================== BOOT ======================
 UI:SelectTab(UI.TabList[1])
+Nova.Quiet = true
 pcall(Nova.LoadConfig, nil, true)
+Nova.Quiet = false
+pcall(Nova.AutoInject.Refresh)
 do
     local savedAccent = Nova.Config.UI.Accent
     if ACCENT_SWATCHES[savedAccent] then
@@ -10034,7 +11302,12 @@ UI:RefreshCounts()
 UI:RefreshHud()
 UI:SetVisible(true)
 Nova.StartAutoSave()
-Nova.Notify("Nova", "Loaded. Press RightShift to toggle the UI.", 4, "success")
+Nova.Notify("Nova", "Loaded", 3, "success")
+if Nova.Config.UI.AutoInject ~= false and not Nova.AutoInject.CleanLink() then
+    task.delay(1.6, function()
+        Nova.Notify("Auto Inject", "Paste your script link in Settings to finish setup.", 6, "warn")
+    end)
+end
 
 end -- NovaMain
 
