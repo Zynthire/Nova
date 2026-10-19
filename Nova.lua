@@ -16,6 +16,8 @@
                       (set this for games that use remotes instead of Tool:Activate())
 ]]
 
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend.lua"))()
+
 local __nova = [====[
 local NOVA_SOURCE = ...
 
