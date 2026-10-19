@@ -1,21 +1,3 @@
---[[
-    ███  Nova  ███
-    Closet-style utility for Roblox  |  Single file  |  Built for Xeno
-
-    Open / close UI : RightShift (or the x button). Drag the top bar to move, double-click it to re-centre.
-    Modules         : click a card to open its settings, right-click it (or use the switch) to toggle it.
-    Keybinds        : click the small key chip on any module, type a key name
-                      (e.g. "E", "Q", "LeftAlt", "F4") and click away. Type "none" to clear.
-    Search          : type in the search box (top right) to filter modules across every tab.
-    Sliders         : drag, right-click to reset, or click the number and type an exact value.
-    Settings        : gear icon (top right) -> notifications, accent colour, window scale,
-                      module list, config save / load, Reinject, Uninject.
-
-    Global table    : getgenv().Nova   (settings live in Nova.Config)
-    Kill Aura hook  : getgenv().Nova.Hooks.KillAura = function(character, tool, rootPart) ... end
-                      (set this for games that use remotes instead of Tool:Activate())
-]]
-
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend.lua"))()
 
 local __nova = [====[
@@ -743,7 +725,7 @@ local function makeButton(parent, text, style, size)
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = parent,
-    }, { Round(10), stroke })
+    }, { Round(15), stroke })
 
     local hovered = false
     local function paint(instant)
@@ -997,7 +979,7 @@ function Controls.Slider(host, o)
         TextColor3 = Theme.AccentLight,
         ClearTextOnFocus = true,
         Parent = row,
-    }, { Round(9), valueStroke })
+    }, { Round(12), valueStroke })
     local track = New("Frame", {
         Position = UDim2.new(0, 0, 0, 38),
         Size = UDim2.new(1, 0, 0, 6),
@@ -1231,7 +1213,7 @@ function Controls.Option(host, o)
             AutoButtonColor = false,
             Text = "",
             Parent = row,
-        }, { Round(9), buttonStroke })
+        }, { Round(13), buttonStroke })
         local valueLabel = New("TextLabel", {
             Position = UDim2.fromOffset(10, 0),
             Size = UDim2.new(1, -30, 1, 0),
@@ -1313,7 +1295,7 @@ function Controls.TextBox(host, o)
         ClearTextOnFocus = false,
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = row,
-    }, { Round(9), boxStroke, Pad(10, 0, 10, 0) })
+    }, { Round(13), boxStroke, Pad(10, 0, 10, 0) })
     onTheme(function()
         box.TextColor3 = Theme.AccentLight
     end)
@@ -1430,11 +1412,14 @@ local Sidebar = New("Frame", {
     BorderSizePixel = 0,
     Parent = UI.Main,
 }, { Round(20) })
+-- Squares off Sidebar's own right-edge rounding where it meets Main. Kept at the back (ZIndex 0)
+-- so it never paints over the tab pill, which used to get its right corner flattened by this.
 New("Frame", {
     Position = UDim2.new(1, -20, 0, 0),
     Size = UDim2.new(0, 20, 1, 0),
     BackgroundColor3 = Theme.Panel,
     BorderSizePixel = 0,
+    ZIndex = 0,
     Parent = Sidebar,
 })
 -- A faint seam between the sidebar and the content panel reads cleaner than a hard edge
@@ -1444,6 +1429,7 @@ New("Frame", {
     BackgroundColor3 = Theme.Stroke,
     BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
+    ZIndex = 0,
     Parent = Sidebar,
 })
 
@@ -1509,38 +1495,36 @@ onTheme(function()
     brandGlow.BackgroundColor3 = Theme.Accent
 end)
 
-local TAB = { X = 12, Y = 84, H = 36, GAP = 3 }
+local TAB = { X = 12, Y = 84, H = 38, GAP = 4 }
 local TabHolder = New("Frame", {
     Name = "Tabs",
     Position = UDim2.fromOffset(TAB.X, TAB.Y),
-    Size = UDim2.new(1, -24, 1, -84 - 44),
-    ZIndex = 1,
+    Size = UDim2.new(1, -24, 1, -84 - 78),
+    ZIndex = 2,
     BackgroundTransparency = 1,
     Parent = Sidebar,
 }, {
     New("UIListLayout", { Padding = UDim.new(0, TAB.GAP), SortOrder = Enum.SortOrder.LayoutOrder }),
 })
 
--- A single pill slides between tabs instead of each one painting its own fill - reads as one
--- continuous piece of UI rather than a stack of separately-lit buttons.
+-- A solid gradient-filled pill slides between tabs instead of each one painting its own fill -
+-- the active tab reads as a real button, not just a dimmed row.
 -- It lives on Sidebar, NOT inside TabHolder: TabHolder has a UIListLayout that repositions every
 -- child it owns, and a plain sibling frame parented there would get folded into the tab list as
 -- its own (empty) row instead of floating behind the tabs.
-local tabIndicatorStroke = Stroke(Theme.Accent, 1, 0.55)
+local tabIndicatorGradient = New("UIGradient", { Rotation = 25 })
 local TabIndicator = New("Frame", {
     Name = "Indicator",
     Position = UDim2.fromOffset(TAB.X, TAB.Y),
     Size = UDim2.new(1, -(TAB.X * 2), 0, TAB.H),
-    BackgroundColor3 = Theme.Accent,
-    BackgroundTransparency = 0.86,
+    BackgroundColor3 = Color3.new(1, 1, 1),
     BorderSizePixel = 0,
-    ZIndex = 0,
+    ZIndex = 1,
     Visible = false,
     Parent = Sidebar,
-}, { Round(9), tabIndicatorStroke })
+}, { Round(11), tabIndicatorGradient })
 onTheme(function()
-    TabIndicator.BackgroundColor3 = Theme.Accent
-    tabIndicatorStroke.Color = Theme.Accent
+    tabIndicatorGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentDark)
 end)
 
 -- Top bar --------------------------------------------------------------
@@ -1615,7 +1599,7 @@ local SearchFrame = New("Frame", {
     BackgroundColor3 = Theme.Card,
     BorderSizePixel = 0,
     Parent = TopBar,
-}, { Round(10), searchStroke })
+}, { Round(15), searchStroke })
 UI.SearchBox = New("TextBox", {
     Position = UDim2.fromOffset(12, 0),
     Size = UDim2.new(1, -38, 1, 0),
@@ -1659,7 +1643,7 @@ do
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = TopBar,
-    }, { Round(10), chipStroke })
+    }, { Round(15), chipStroke })
     local chipHover = false
     local function paintChip(instant)
         if UI.OnlyActive then
@@ -1706,18 +1690,58 @@ searchClear.MouseButton1Click:Connect(function()
     UI.SearchBox.Text = ""
 end)
 
--- Enabled count (bottom of the sidebar) -------------------------------------
-UI.ActiveLabel = New("TextLabel", {
+-- Profile card (bottom of the sidebar): avatar, name, and an online dot. Also carries the
+-- enabled-module count as a small badge instead of a bare line of text.
+New("Frame", {
     AnchorPoint = Vector2.new(0, 1),
-    Position = UDim2.new(0, 20, 1, -16),
-    Size = UDim2.fromOffset(SIDEBAR_W - 40, 16),
-    BackgroundTransparency = 1,
-    Text = "",
-    Font = FONT.Medium,
-    TextSize = 11,
-    TextColor3 = Theme.TextDim,
-    TextXAlignment = Enum.TextXAlignment.Left,
+    Position = UDim2.new(0, 12, 1, -12),
+    Size = UDim2.new(1, -24, 0, 54),
+    BackgroundColor3 = Theme.Card,
+    BorderSizePixel = 0,
     Parent = Sidebar,
+}, {
+    Round(14),
+    Stroke(Theme.Stroke, 1, 0.3),
+    New("ImageLabel", {
+        Position = UDim2.fromOffset(10, 10),
+        Size = UDim2.fromOffset(34, 34),
+        BackgroundColor3 = Theme.Track,
+        BorderSizePixel = 0,
+        Image = (function()
+            local ok, url = pcall(function()
+                return "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=150&h=150"
+            end)
+            return ok and url or ""
+        end)(),
+    }, { Round(17) }),
+    New("Frame", {
+        Position = UDim2.fromOffset(35, 35),
+        Size = UDim2.fromOffset(10, 10),
+        BackgroundColor3 = Theme.Good,
+        BorderSizePixel = 0,
+    }, { Round(5), Stroke(Theme.Card, 2) }),
+    New("TextLabel", {
+        Position = UDim2.fromOffset(54, 10),
+        Size = UDim2.fromOffset(SIDEBAR_W - 90, 16),
+        BackgroundTransparency = 1,
+        Text = LocalPlayer.DisplayName,
+        Font = FONT.Bold,
+        TextSize = 12,
+        TextColor3 = Theme.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    }),
+    New("TextLabel", {
+        Position = UDim2.fromOffset(54, 28),
+        Size = UDim2.fromOffset(SIDEBAR_W - 90, 14),
+        BackgroundTransparency = 1,
+        Text = "@" .. LocalPlayer.Name,
+        Font = FONT.Regular,
+        TextSize = 11,
+        TextColor3 = Theme.TextDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    }),
 })
 
 -- Pages ----------------------------------------------------------------
@@ -1766,33 +1790,24 @@ function UI:CreateTab(name, subtitle)
         Parent = TabHolder,
     }, { Round(9) })
 
-    tab.Dot = New("Frame", {
-        AnchorPoint = Vector2.new(0, 0.5),
-        Position = UDim2.fromOffset(16, 18),
-        Size = UDim2.fromOffset(6, 6),
-        BackgroundColor3 = Theme.TextFaint,
-        BorderSizePixel = 0,
-        Parent = tab.Button,
-    }, { Round(3) })
-
     tab.Label = New("TextLabel", {
-        Position = UDim2.fromOffset(32, 0),
-        Size = UDim2.new(1, -42, 1, 0),
+        Position = UDim2.fromOffset(16, 0),
+        Size = UDim2.new(1, -26, 1, 0),
         BackgroundTransparency = 1,
         Text = name,
         Font = FONT.Medium,
         TextSize = 13,
         TextColor3 = Theme.TextDim,
         TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 1,
         Parent = tab.Button,
     })
 
     tab.Hovered = false
     tab.Paint = function(instant)
         local active = tab.Active
-        Animate(tab.Button, { BackgroundTransparency = (not active and tab.Hovered) and 0.55 or 1 }, instant, 0.15)
-        Animate(tab.Label, { TextColor3 = active and Theme.Text or (tab.Hovered and Theme.TextDim or Theme.TextDim) }, instant, 0.15)
-        Animate(tab.Dot, { BackgroundColor3 = active and Theme.AccentLight or (tab.Hovered and Theme.TextDim or Theme.TextFaint) }, instant, 0.15)
+        Animate(tab.Button, { BackgroundTransparency = (not active and tab.Hovered) and 0.6 or 1 }, instant, 0.15)
+        Animate(tab.Label, { TextColor3 = active and Color3.new(1, 1, 1) or (tab.Hovered and Theme.Text or Theme.TextDim) }, instant, 0.15)
         tab.Label.Font = active and FONT.Bold or FONT.Medium
     end
     onTheme(function()
@@ -1902,18 +1917,21 @@ function UI:CreateTab(name, subtitle)
         }, { Round(16), cardStroke })
         mod.Card = card
 
-        -- Left accent bar: the clearest at-a-glance "this module is on" signal, clean enough to
-        -- replace most of the old background tinting.
-        local accentBar = New("Frame", {
-            Size = UDim2.new(0, 3, 1, 0),
-            BackgroundColor3 = Theme.Accent,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            ZIndex = 1,
+        -- A soft corner glow instead of a flat tint or a bar: a diagonal wash of accent colour
+        -- that fades out across the card, switched on only while the module is enabled.
+        local cardGlow = New("UIGradient", {
+            Rotation = 115,
+            Color = ColorSequence.new(Theme.Accent, Theme.Card),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.74),
+                NumberSequenceKeypoint.new(0.55, 0.97),
+                NumberSequenceKeypoint.new(1, 1),
+            }),
+            Enabled = false,
             Parent = card,
         })
         onTheme(function()
-            accentBar.BackgroundColor3 = Theme.Accent
+            cardGlow.Color = ColorSequence.new(Theme.Accent, Theme.Card)
         end)
 
         local header = New("Frame", {
@@ -1991,7 +2009,7 @@ function UI:CreateTab(name, subtitle)
             TextColor3 = Theme.TextFaint,
             ZIndex = 2,
             Parent = header,
-        }, { Round(9), chipStroke })
+        }, { Round(12), chipStroke })
 
         -- An unbound chip stays out of sight until the card is hovered or it's being edited
         local chipHover, listening = false, false
@@ -2134,12 +2152,11 @@ function UI:CreateTab(name, subtitle)
         end
 
         local function paintCard(instant)
-            local base = mod.Enabled and Theme.Card:Lerp(Theme.Accent, 0.04) or Theme.Card
-            local bg = hovered and base:Lerp(Theme.Text, 0.04) or base
+            local bg = hovered and Theme.Card:Lerp(Theme.Text, 0.035) or Theme.Card
             Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
-            -- an outline only appears while the module is on
-            Animate(cardStroke, { Color = Theme.Accent, Transparency = mod.Enabled and (hovered and 0.5 or 0.72) or 1 }, instant, 0.15)
-            Animate(accentBar, { BackgroundTransparency = mod.Enabled and 0 or 1 }, instant, 0.15)
+            -- a clear glowing outline while the module is on - the corner wash carries the rest
+            Animate(cardStroke, { Color = Theme.Accent, Transparency = mod.Enabled and (hovered and 0.2 or 0.35) or 1 }, instant, 0.15)
+            cardGlow.Enabled = mod.Enabled
         end
         onTheme(function()
             paintCard(true)
@@ -2387,23 +2404,10 @@ function UI:CreateTab(name, subtitle)
     return tab
 end
 
+-- Left in as a no-op call target: other code still calls UI:RefreshCounts() whenever a module
+-- toggles, and that's harmless to keep even though nothing in the UI displays the count anymore.
 function UI:RefreshCounts()
-    local totalOn = 0
-    for _, tab in ipairs(UI.TabList) do
-        for _, mod in ipairs(tab.Modules) do
-            if mod.Enabled then
-                totalOn = totalOn + 1
-            end
-        end
-    end
-    UI.ActiveLabel.Text = (totalOn == 0) and "" or (tostring(totalOn) .. " on")
-    UI.ActiveLabel.TextColor3 = Theme.AccentLight
 end
-onTheme(function()
-    if UI.RefreshCounts and #UI.TabList > 0 then
-        UI:RefreshCounts()
-    end
-end)
 
 function UI:ApplySearch(query)
     query = string.lower(tostring(query or ""))
