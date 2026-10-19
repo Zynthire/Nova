@@ -1,0 +1,1 @@
+print("[NOVA] Successfully Injected")
