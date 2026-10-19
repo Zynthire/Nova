@@ -673,6 +673,19 @@ end
 
 local UI = { Tabs = {}, TabList = {}, Visible = false, BaseScale = 1 }
 
+-- Keybind chips "listen" for the next key press instead of taking typed text. Only one chip
+-- listens at a time; starting a new one cancels whichever was already waiting.
+function UI:StartKeyListen(handlers)
+    if UI.KeyListen and UI.KeyListen.Cancel then
+        pcall(UI.KeyListen.Cancel)
+    end
+    UI.KeyListen = handlers
+end
+
+function UI:StopKeyListen()
+    UI.KeyListen = nil
+end
+
 -- ---------------------------------------------------------------------
 -- Shared widgets
 -- ---------------------------------------------------------------------
@@ -1457,8 +1470,7 @@ local brandTile = New("Frame", {
     Parent = BrandArea,
 }, { Round(12) })
 local brandGradient = New("UIGradient", { Rotation = 45, Parent = brandTile })
-local brandRing = Stroke(Color3.new(1, 1, 1), 1, 0.7)
-brandRing.Parent = brandTile
+Stroke(Color3.new(1, 1, 1), 1, 0.7).Parent = brandTile
 New("TextLabel", {
     Size = UDim2.fromScale(1, 1),
     BackgroundTransparency = 1,
@@ -1495,28 +1507,34 @@ onTheme(function()
     brandGlow.BackgroundColor3 = Theme.Accent
 end)
 
+local TAB = { X = 12, Y = 84, H = 36, GAP = 3 }
 local TabHolder = New("Frame", {
     Name = "Tabs",
-    Position = UDim2.fromOffset(12, 84),
+    Position = UDim2.fromOffset(TAB.X, TAB.Y),
     Size = UDim2.new(1, -24, 1, -84 - 44),
+    ZIndex = 1,
     BackgroundTransparency = 1,
     Parent = Sidebar,
 }, {
-    New("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }),
+    New("UIListLayout", { Padding = UDim.new(0, TAB.GAP), SortOrder = Enum.SortOrder.LayoutOrder }),
 })
 
 -- A single pill slides between tabs instead of each one painting its own fill - reads as one
 -- continuous piece of UI rather than a stack of separately-lit buttons.
+-- It lives on Sidebar, NOT inside TabHolder: TabHolder has a UIListLayout that repositions every
+-- child it owns, and a plain sibling frame parented there would get folded into the tab list as
+-- its own (empty) row instead of floating behind the tabs.
 local tabIndicatorStroke = Stroke(Theme.Accent, 1, 0.55)
 local TabIndicator = New("Frame", {
     Name = "Indicator",
-    Size = UDim2.new(1, 0, 0, 36),
+    Position = UDim2.fromOffset(TAB.X, TAB.Y),
+    Size = UDim2.new(1, -(TAB.X * 2), 0, TAB.H),
     BackgroundColor3 = Theme.Accent,
     BackgroundTransparency = 0.86,
     BorderSizePixel = 0,
     ZIndex = 0,
     Visible = false,
-    Parent = TabHolder,
+    Parent = Sidebar,
 }, { Round(9), tabIndicatorStroke })
 onTheme(function()
     TabIndicator.BackgroundColor3 = Theme.Accent
@@ -1531,7 +1549,7 @@ local TopBar = New("Frame", {
     BackgroundTransparency = 1,
     Parent = UI.Main,
 })
-local topBarDivider = New("Frame", {
+New("Frame", {
     AnchorPoint = Vector2.new(0, 1),
     Position = UDim2.new(0, 0, 1, 0),
     Size = UDim2.new(1, 0, 0, 1),
@@ -1540,9 +1558,6 @@ local topBarDivider = New("Frame", {
     BorderSizePixel = 0,
     Parent = TopBar,
 })
-onTheme(function()
-    topBarDivider.BackgroundColor3 = Theme.Stroke
-end)
 local titleBar = New("Frame", {
     AnchorPoint = Vector2.new(0, 0.5),
     Position = UDim2.fromOffset(PAGE_PAD, 23),
@@ -1728,18 +1743,19 @@ function UI:SelectTab(selected)
         tab.Paint(instant)
     end
     TabIndicator.Visible = true
-    Animate(TabIndicator, { Position = selected.Button.Position }, instant, 0.22, Enum.EasingStyle.Quint)
+    local targetY = TAB.Y + (selected.Index - 1) * (TAB.H + TAB.GAP)
+    Animate(TabIndicator, { Position = UDim2.fromOffset(TAB.X, targetY) }, instant, 0.22, Enum.EasingStyle.Quint)
     UI.CurrentTab = selected
     UI.TitleLabel.Text = selected.Name
     UI.SubtitleLabel.Text = selected.Subtitle or ""
 end
 
 function UI:CreateTab(name, subtitle)
-    local tab = { Name = name, Subtitle = subtitle, Modules = {}, Active = false, Matches = 0 }
+    local tab = { Name = name, Subtitle = subtitle, Modules = {}, Active = false, Matches = 0, Index = #UI.TabList + 1 }
 
     tab.Button = New("TextButton", {
         Name = name,
-        Size = UDim2.new(1, 0, 0, 36),
+        Size = UDim2.new(1, 0, 0, TAB.H),
         BackgroundColor3 = Theme.Card,
         BackgroundTransparency = 1,
         AutoButtonColor = false,
@@ -1956,38 +1972,39 @@ function UI:CreateTab(name, subtitle)
         switchTrack.ZIndex = 2
         switchClick.ZIndex = 3
 
-        -- Keybind chip (typed key name)
+        -- Keybind chip: click it, then press the key you want. Press the key it's already bound
+        -- to (or double-click the chip) to clear it.
         local chipStroke = Stroke(Theme.Stroke, 1)
-        local keyBox = New("TextBox", {
+        local keyBox = New("TextButton", {
+            Name = "KeyBind",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -66, 0.5, 0),
             Size = UDim2.fromOffset(66, 24),
             BackgroundColor3 = Theme.Panel,
             BorderSizePixel = 0,
+            AutoButtonColor = false,
             Text = keyText(cfg.Key),
-            PlaceholderText = "type key",
-            PlaceholderColor3 = Theme.TextFaint,
-            TextColor3 = Theme.TextFaint,
             Font = FONT.Medium,
             TextSize = 11,
-            ClearTextOnFocus = true,
+            TextColor3 = Theme.TextFaint,
             ZIndex = 2,
             Parent = header,
         }, { Round(9), chipStroke })
 
-        -- An unbound chip stays out of sight until the card is hovered or the chip is being edited
-        local chipHover = false
+        -- An unbound chip stays out of sight until the card is hovered or it's being edited
+        local chipHover, listening = false, false
         local function refreshChip()
             local unbound = (cfg.Key == nil or cfg.Key == "None")
-            local show = (not unbound) or hovered or chipHover or keyBox:IsFocused()
+            local show = (not unbound) or hovered or chipHover or listening
             keyBox.BackgroundTransparency = show and 0 or 1
             chipStroke.Transparency = show and 0 or 1
-            keyBox.PlaceholderText = show and "type key" or ""
         end
         local function paintChip()
-            local unbound = (cfg.Key == nil or cfg.Key == "None")
-            keyBox.Text = keyText(cfg.Key)
-            keyBox.TextColor3 = unbound and Theme.TextFaint or Theme.AccentLight
+            if not listening then
+                local unbound = (cfg.Key == nil or cfg.Key == "None")
+                keyBox.Text = keyText(cfg.Key)
+                keyBox.TextColor3 = unbound and Theme.TextFaint or Theme.AccentLight
+            end
             refreshChip()
         end
         paintChip()
@@ -1998,49 +2015,81 @@ function UI:CreateTab(name, subtitle)
             paintChip()
         end
 
-        keyBox.Focused:Connect(function()
+        local function stopListening()
+            if not listening then
+                return
+            end
+            listening = false
+            UI:StopKeyListen()
+            chipStroke.Color = chipHover and Theme.StrokeHover or Theme.Stroke
+            paintChip()
+        end
+
+        local function startListening()
+            if listening then
+                return
+            end
+            listening = true
+            keyBox.Text = "Click a key…"
+            keyBox.TextColor3 = Theme.AccentLight
             chipStroke.Color = Theme.Accent
-            UI:HideTip()
             refreshChip()
+            UI:StartKeyListen({
+                Cancel = stopListening,
+                Apply = function(keyCode)
+                    if keyCode == Enum.KeyCode.RightShift then
+                        Nova.Notify(def.Name, "RightShift is reserved for the window", 3, "error")
+                    elseif keyCode.Name == cfg.Key then
+                        cfg.Key = "None"
+                        Nova.Notify(def.Name, "Keybind cleared", 2)
+                    else
+                        cfg.Key = keyCode.Name
+                        Nova.Notify(def.Name, "Bound to " .. keyText(keyCode.Name), 2)
+                    end
+                    stopListening()
+                end,
+            })
+        end
+
+        local lastChipClick = 0
+        keyBox.MouseButton1Click:Connect(function()
+            UI:HideTip()
+            local now = os.clock()
+            local isDouble = (now - lastChipClick) < 0.3
+            lastChipClick = now
+            if isDouble then
+                stopListening()
+                if cfg.Key ~= nil and cfg.Key ~= "None" then
+                    cfg.Key = "None"
+                    paintChip()
+                    Nova.Notify(def.Name, "Keybind cleared", 2)
+                end
+            elseif listening then
+                stopListening()
+            else
+                startListening()
+            end
         end)
         keyBox.MouseEnter:Connect(function()
             chipHover = true
             refreshChip()
-            if not keyBox:IsFocused() then
+            if not listening then
                 chipStroke.Color = Theme.StrokeHover
             end
         end)
         keyBox.MouseLeave:Connect(function()
             chipHover = false
             refreshChip()
-            if not keyBox:IsFocused() then
+            if not listening then
                 chipStroke.Color = Theme.Stroke
             end
         end)
-        keyBox.FocusLost:Connect(function()
-            chipStroke.Color = Theme.Stroke
-            task.defer(refreshChip)
-            local text = string.gsub(keyBox.Text, "%s+", "")
-            local lowered = string.lower(text)
-            if text ~= "" and text ~= keyText(cfg.Key) then
-                if lowered == "none" or lowered == "clear" or lowered == "-" then
-                    cfg.Key = "None"
-                    Nova.Notify(def.Name, "Keybind cleared", 2)
-                else
-                    local keyCode = KeyLookup[lowered]
-                    if not keyCode then
-                        Nova.Notify(def.Name, "Unknown key: " .. text, 3, "error")
-                    elseif keyCode == Enum.KeyCode.RightShift then
-                        Nova.Notify(def.Name, "RightShift is reserved for the window", 3, "error")
-                    else
-                        cfg.Key = keyCode.Name
-                        Nova.Notify(def.Name, "Bound to " .. keyText(keyCode.Name), 2)
-                    end
-                end
+        UI:AttachTip(keyBox, function()
+            if listening then
+                return "Press any key to bind it. Press the current key again to clear it. Esc cancels."
             end
-            paintChip()
+            return "Keybind. Click, then press a key. Double-click to clear."
         end)
-        UI:AttachTip(keyBox, "Keybind. Click, type a key (E, Q, LeftAlt, F4...) and click away. Type none to clear.")
 
         -- Body (rows live here)
         local divider = New("Frame", {
@@ -3593,6 +3642,18 @@ Nova.Maid:Give(UserInputService.InputBegan:Connect(function(input)
     if input.UserInputType ~= Enum.UserInputType.Keyboard then
         return
     end
+    if UI.KeyListen then
+        local handlers = UI.KeyListen
+        UI.KeyListen = nil
+        if input.KeyCode == Enum.KeyCode.Escape then
+            if handlers.Cancel then
+                pcall(handlers.Cancel)
+            end
+        elseif handlers.Apply then
+            pcall(handlers.Apply, input.KeyCode)
+        end
+        return
+    end
     if UserInputService:GetFocusedTextBox() then
         return
     end
@@ -3629,6 +3690,11 @@ function Nova.Unload(keepSaved)
     end
     Nova.Unloaded = true
     Nova.Unloading = keepSaved and "keep" or "remove"
+    -- Hide the window immediately so nothing lingers on screen while cleanup runs below
+    pcall(function()
+        UI.Gui.Enabled = false
+        UI.Main.Visible = false
+    end)
 
     -- Disable every module first so each one restores what it touched
     for _, mod in ipairs(Nova.ModuleList) do
@@ -3644,6 +3710,11 @@ function Nova.Unload(keepSaved)
     end)
 
     Nova.Maid:Clean()
+    -- Belt-and-suspenders: some executors' hidden-UI containers don't repaint instantly on
+    -- Destroy(), so also explicitly drop it from the tree.
+    pcall(function()
+        UI.Gui.Parent = nil
+    end)
 
     if keepSaved then
         env.__NovaSaved = Util.DeepCopy(Nova.Config)
@@ -6774,6 +6845,10 @@ do
         return mine ~= theirs
     end
 
+    -- The game only seems to populate this attribute once a kit is actually locked in, not while
+    -- someone is still "SELECTING KIT..." - showing the "none" placeholder art during that window
+    -- looked like every enemy had the same generic/blank icon, which is the "doesn't show the
+    -- current kit" bug. Safer to just hide it until a real kit shows up than to show a wrong one.
     local function ensureKitIcon(host, plr)
         unclip(host)
         local icon = host:FindFirstChild("NovaKitRender")
@@ -6786,9 +6861,10 @@ do
                 SizeConstraint = Enum.SizeConstraint.RelativeYY,
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
-                ImageTransparency = 0.3,
+                ImageTransparency = 0.08,
                 ScaleType = Enum.ScaleType.Crop,
-                ZIndex = 0,
+                Visible = false,
+                ZIndex = 5,
                 Parent = host,
             }, {
                 New("UIAspectRatioConstraint", {
@@ -6798,9 +6874,15 @@ do
                 }),
             })
         end
-        local image = kitImage(plr:GetAttribute("PlayingAsKits") or "none")
-        if icon.Image ~= image then
-            icon.Image = image
+        local raw = plr:GetAttribute("PlayingAsKits")
+        if type(raw) == "string" and raw ~= "" and raw ~= "none" then
+            local image = kitImage(raw)
+            if icon.Image ~= image then
+                icon.Image = image
+            end
+            icon.Visible = true
+        else
+            icon.Visible = false
         end
     end
 
