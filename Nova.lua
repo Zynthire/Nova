@@ -499,18 +499,19 @@ do
 end
 
 local Theme = {
-    Background  = Color3.fromRGB(12, 10, 19),
-    Panel       = Color3.fromRGB(17, 15, 27),
-    Card        = Color3.fromRGB(23, 20, 36),
+    Background  = Color3.fromRGB(8, 7, 14),
+    Panel       = Color3.fromRGB(14, 12, 23),
+    Card        = Color3.fromRGB(26, 22, 40),
+    CardHi      = Color3.fromRGB(32, 28, 49),
     Accent      = Color3.fromRGB(152, 98, 255),
     AccentDark  = Color3.fromRGB(104, 62, 205),
     AccentLight = Color3.fromRGB(198, 164, 255),
-    Text        = Color3.fromRGB(240, 235, 252),
+    Text        = Color3.fromRGB(242, 238, 253),
     TextDim     = Color3.fromRGB(150, 142, 178),
-    TextFaint   = Color3.fromRGB(102, 96, 130),
-    Stroke      = Color3.fromRGB(44, 38, 68),
-    StrokeHover = Color3.fromRGB(74, 66, 112),
-    Track       = Color3.fromRGB(50, 44, 78),
+    TextFaint   = Color3.fromRGB(100, 94, 128),
+    Stroke      = Color3.fromRGB(38, 33, 58),
+    StrokeHover = Color3.fromRGB(70, 62, 108),
+    Track       = Color3.fromRGB(46, 40, 72),
     Good        = Color3.fromRGB(110, 224, 150),
     Bad         = Color3.fromRGB(255, 96, 118),
     Warn        = Color3.fromRGB(255, 198, 96),
@@ -727,7 +728,7 @@ local function makeButton(parent, text, style, size)
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = parent,
-    }, { Round(8), stroke })
+    }, { Round(10), stroke })
 
     local hovered = false
     local function paint(instant)
@@ -981,7 +982,7 @@ function Controls.Slider(host, o)
         TextColor3 = Theme.AccentLight,
         ClearTextOnFocus = true,
         Parent = row,
-    }, { Round(7), valueStroke })
+    }, { Round(9), valueStroke })
     local track = New("Frame", {
         Position = UDim2.new(0, 0, 0, 38),
         Size = UDim2.new(1, 0, 0, 6),
@@ -1121,14 +1122,14 @@ function Controls.Option(host, o)
             BackgroundColor3 = Theme.Panel,
             BorderSizePixel = 0,
             Parent = row,
-        }, { Round(8), Stroke(Theme.Stroke, 1) })
+        }, { Round(9), Stroke(Theme.Stroke, 1) })
         local highlight = New("Frame", {
             Position = UDim2.fromOffset(2, 2),
             Size = UDim2.fromOffset(widths[1], 22),
             BackgroundColor3 = Theme.Accent,
             BorderSizePixel = 0,
             Parent = segment,
-        }, { Round(6) })
+        }, { Round(7) })
         local buttons = {}
         local x = 2
         for index, item in ipairs(list) do
@@ -1215,7 +1216,7 @@ function Controls.Option(host, o)
             AutoButtonColor = false,
             Text = "",
             Parent = row,
-        }, { Round(8), buttonStroke })
+        }, { Round(9), buttonStroke })
         local valueLabel = New("TextLabel", {
             Position = UDim2.fromOffset(10, 0),
             Size = UDim2.new(1, -30, 1, 0),
@@ -1297,7 +1298,7 @@ function Controls.TextBox(host, o)
         ClearTextOnFocus = false,
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = row,
-    }, { Round(7), boxStroke, Pad(10, 0, 10, 0) })
+    }, { Round(9), boxStroke, Pad(10, 0, 10, 0) })
     onTheme(function()
         box.TextColor3 = Theme.AccentLight
     end)
@@ -1385,7 +1386,7 @@ UI.Main = New("Frame", {
     BorderSizePixel = 0,
     Visible = false,
     Parent = UI.Holder,
-}, { Round(16), mainStroke })
+}, { Round(20), mainStroke })
 
 UI.Scale = New("UIScale", { Scale = 1, Parent = UI.Main })
 
@@ -1413,11 +1414,20 @@ local Sidebar = New("Frame", {
     BackgroundColor3 = Theme.Panel,
     BorderSizePixel = 0,
     Parent = UI.Main,
-}, { Round(16) })
+}, { Round(20) })
 New("Frame", {
-    Position = UDim2.new(1, -16, 0, 0),
-    Size = UDim2.new(0, 16, 1, 0),
+    Position = UDim2.new(1, -20, 0, 0),
+    Size = UDim2.new(0, 20, 1, 0),
     BackgroundColor3 = Theme.Panel,
+    BorderSizePixel = 0,
+    Parent = Sidebar,
+})
+-- A faint seam between the sidebar and the content panel reads cleaner than a hard edge
+New("Frame", {
+    Position = UDim2.new(1, 0, 0, 10),
+    Size = UDim2.new(0, 1, 1, -20),
+    BackgroundColor3 = Theme.Stroke,
+    BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     Parent = Sidebar,
 })
@@ -1429,14 +1439,26 @@ local BrandArea = New("Frame", {
     BackgroundTransparency = 1,
     Parent = Sidebar,
 })
+local brandGlow = New("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromOffset(16 + 17, 17 + 17),
+    Size = UDim2.fromOffset(48, 48),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BackgroundTransparency = 0.88,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+    Parent = BrandArea,
+}, { Round(16) })
 local brandTile = New("Frame", {
     Position = UDim2.fromOffset(16, 17),
     Size = UDim2.fromOffset(34, 34),
     BackgroundColor3 = Color3.new(1, 1, 1),
     BorderSizePixel = 0,
     Parent = BrandArea,
-}, { Round(10) })
+}, { Round(12) })
 local brandGradient = New("UIGradient", { Rotation = 45, Parent = brandTile })
+local brandRing = Stroke(Color3.new(1, 1, 1), 1, 0.7)
+brandRing.Parent = brandTile
 New("TextLabel", {
     Size = UDim2.fromScale(1, 1),
     BackgroundTransparency = 1,
@@ -1447,18 +1469,30 @@ New("TextLabel", {
     Parent = brandTile,
 })
 New("TextLabel", {
-    Position = UDim2.fromOffset(58, 17),
-    Size = UDim2.fromOffset(100, 34),
+    Position = UDim2.fromOffset(58, 15),
+    Size = UDim2.fromOffset(100, 22),
     BackgroundTransparency = 1,
     Text = "Nova",
     Font = FONT.Bold,
-    TextSize = 20,
+    TextSize = 19,
     TextColor3 = Theme.Text,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = BrandArea,
+})
+New("TextLabel", {
+    Position = UDim2.fromOffset(59, 37),
+    Size = UDim2.fromOffset(100, 12),
+    BackgroundTransparency = 1,
+    Text = "v" .. Nova.Version,
+    Font = FONT.Medium,
+    TextSize = 10,
+    TextColor3 = Theme.TextFaint,
     TextXAlignment = Enum.TextXAlignment.Left,
     Parent = BrandArea,
 })
 onTheme(function()
     brandGradient.Color = ColorSequence.new(Theme.AccentLight, Theme.AccentDark)
+    brandGlow.BackgroundColor3 = Theme.Accent
 end)
 
 local TabHolder = New("Frame", {
@@ -1468,8 +1502,26 @@ local TabHolder = New("Frame", {
     BackgroundTransparency = 1,
     Parent = Sidebar,
 }, {
-    New("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }),
+    New("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }),
 })
+
+-- A single pill slides between tabs instead of each one painting its own fill - reads as one
+-- continuous piece of UI rather than a stack of separately-lit buttons.
+local tabIndicatorStroke = Stroke(Theme.Accent, 1, 0.55)
+local TabIndicator = New("Frame", {
+    Name = "Indicator",
+    Size = UDim2.new(1, 0, 0, 36),
+    BackgroundColor3 = Theme.Accent,
+    BackgroundTransparency = 0.86,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+    Visible = false,
+    Parent = TabHolder,
+}, { Round(9), tabIndicatorStroke })
+onTheme(function()
+    TabIndicator.BackgroundColor3 = Theme.Accent
+    tabIndicatorStroke.Color = Theme.Accent
+end)
 
 -- Top bar --------------------------------------------------------------
 local TopBar = New("Frame", {
@@ -1479,8 +1531,31 @@ local TopBar = New("Frame", {
     BackgroundTransparency = 1,
     Parent = UI.Main,
 })
+local topBarDivider = New("Frame", {
+    AnchorPoint = Vector2.new(0, 1),
+    Position = UDim2.new(0, 0, 1, 0),
+    Size = UDim2.new(1, 0, 0, 1),
+    BackgroundColor3 = Theme.Stroke,
+    BackgroundTransparency = 0.4,
+    BorderSizePixel = 0,
+    Parent = TopBar,
+})
+onTheme(function()
+    topBarDivider.BackgroundColor3 = Theme.Stroke
+end)
+local titleBar = New("Frame", {
+    AnchorPoint = Vector2.new(0, 0.5),
+    Position = UDim2.fromOffset(PAGE_PAD, 23),
+    Size = UDim2.fromOffset(3, 16),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+    Parent = TopBar,
+}, { Round(2) })
+onTheme(function()
+    titleBar.BackgroundColor3 = Theme.Accent
+end)
 UI.TitleLabel = New("TextLabel", {
-    Position = UDim2.fromOffset(PAGE_PAD, 11),
+    Position = UDim2.fromOffset(PAGE_PAD + 11, 11),
     Size = UDim2.fromOffset(230, 22),
     BackgroundTransparency = 1,
     Text = "",
@@ -1491,7 +1566,7 @@ UI.TitleLabel = New("TextLabel", {
     Parent = TopBar,
 })
 UI.SubtitleLabel = New("TextLabel", {
-    Position = UDim2.fromOffset(PAGE_PAD, 33),
+    Position = UDim2.fromOffset(PAGE_PAD + 11, 33),
     Size = UDim2.fromOffset(230, 14),
     BackgroundTransparency = 1,
     Text = "",
@@ -1523,7 +1598,7 @@ local SearchFrame = New("Frame", {
     BackgroundColor3 = Theme.Card,
     BorderSizePixel = 0,
     Parent = TopBar,
-}, { Round(9), searchStroke })
+}, { Round(10), searchStroke })
 UI.SearchBox = New("TextBox", {
     Position = UDim2.fromOffset(12, 0),
     Size = UDim2.new(1, -38, 1, 0),
@@ -1567,7 +1642,7 @@ do
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = TopBar,
-    }, { Round(9), chipStroke })
+    }, { Round(10), chipStroke })
     local chipHover = false
     local function paintChip(instant)
         if UI.OnlyActive then
@@ -1646,11 +1721,14 @@ function UI:SelectTab(selected)
         return
     end
     UI:CloseDropdown()
+    local instant = not TabIndicator.Visible
     for _, tab in ipairs(UI.TabList) do
         tab.Active = (tab == selected)
         tab.Page.Visible = tab.Active
-        tab.Paint(false)
+        tab.Paint(instant)
     end
+    TabIndicator.Visible = true
+    Animate(TabIndicator, { Position = selected.Button.Position }, instant, 0.22, Enum.EasingStyle.Quint)
     UI.CurrentTab = selected
     UI.TitleLabel.Text = selected.Name
     UI.SubtitleLabel.Text = selected.Subtitle or ""
@@ -1662,7 +1740,7 @@ function UI:CreateTab(name, subtitle)
     tab.Button = New("TextButton", {
         Name = name,
         Size = UDim2.new(1, 0, 0, 36),
-        BackgroundColor3 = Theme.Accent,
+        BackgroundColor3 = Theme.Card,
         BackgroundTransparency = 1,
         AutoButtonColor = false,
         Text = "",
@@ -1670,9 +1748,18 @@ function UI:CreateTab(name, subtitle)
         Parent = TabHolder,
     }, { Round(9) })
 
+    tab.Dot = New("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.fromOffset(16, 18),
+        Size = UDim2.fromOffset(6, 6),
+        BackgroundColor3 = Theme.TextFaint,
+        BorderSizePixel = 0,
+        Parent = tab.Button,
+    }, { Round(3) })
+
     tab.Label = New("TextLabel", {
-        Position = UDim2.fromOffset(14, 0),
-        Size = UDim2.new(1, -24, 1, 0),
+        Position = UDim2.fromOffset(32, 0),
+        Size = UDim2.new(1, -42, 1, 0),
         BackgroundTransparency = 1,
         Text = name,
         Font = FONT.Medium,
@@ -1685,15 +1772,9 @@ function UI:CreateTab(name, subtitle)
     tab.Hovered = false
     tab.Paint = function(instant)
         local active = tab.Active
-        local bgAlpha = 1
-        local bgColor = Theme.Accent
-        if active then
-            bgAlpha = 0.86
-        elseif tab.Hovered then
-            bgAlpha, bgColor = 0.55, Theme.Card
-        end
-        Animate(tab.Button, { BackgroundTransparency = bgAlpha, BackgroundColor3 = bgColor }, instant, 0.15)
-        Animate(tab.Label, { TextColor3 = active and Theme.AccentLight or (tab.Hovered and Theme.Text or Theme.TextDim) }, instant, 0.15)
+        Animate(tab.Button, { BackgroundTransparency = (not active and tab.Hovered) and 0.55 or 1 }, instant, 0.15)
+        Animate(tab.Label, { TextColor3 = active and Theme.Text or (tab.Hovered and Theme.TextDim or Theme.TextDim) }, instant, 0.15)
+        Animate(tab.Dot, { BackgroundColor3 = active and Theme.AccentLight or (tab.Hovered and Theme.TextDim or Theme.TextFaint) }, instant, 0.15)
         tab.Label.Font = active and FONT.Bold or FONT.Medium
     end
     onTheme(function()
@@ -1800,8 +1881,22 @@ function UI:CreateTab(name, subtitle)
             ClipsDescendants = true,
             LayoutOrder = #tab.Modules + 1,
             Parent = tab.Page,
-        }, { Round(14), cardStroke })
+        }, { Round(16), cardStroke })
         mod.Card = card
+
+        -- Left accent bar: the clearest at-a-glance "this module is on" signal, clean enough to
+        -- replace most of the old background tinting.
+        local accentBar = New("Frame", {
+            Size = UDim2.new(0, 3, 1, 0),
+            BackgroundColor3 = Theme.Accent,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 1,
+            Parent = card,
+        })
+        onTheme(function()
+            accentBar.BackgroundColor3 = Theme.Accent
+        end)
 
         local header = New("Frame", {
             Name = "Header",
@@ -1878,7 +1973,7 @@ function UI:CreateTab(name, subtitle)
             ClearTextOnFocus = true,
             ZIndex = 2,
             Parent = header,
-        }, { Round(7), chipStroke })
+        }, { Round(9), chipStroke })
 
         -- An unbound chip stays out of sight until the card is hovered or the chip is being edited
         local chipHover = false
@@ -1988,11 +2083,12 @@ function UI:CreateTab(name, subtitle)
         end
 
         local function paintCard(instant)
-            local base = mod.Enabled and Theme.Card:Lerp(Theme.Accent, 0.1) or Theme.Card
+            local base = mod.Enabled and Theme.Card:Lerp(Theme.Accent, 0.04) or Theme.Card
             local bg = hovered and base:Lerp(Theme.Text, 0.04) or base
             Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
             -- an outline only appears while the module is on
             Animate(cardStroke, { Color = Theme.Accent, Transparency = mod.Enabled and (hovered and 0.5 or 0.72) or 1 }, instant, 0.15)
+            Animate(accentBar, { BackgroundTransparency = mod.Enabled and 0 or 1 }, instant, 0.15)
         end
         onTheme(function()
             paintCard(true)
@@ -2318,7 +2414,7 @@ local TipFrame = New("Frame", {
     Visible = false,
     ZIndex = 90,
     Parent = UI.Main,
-}, { Round(8), Stroke(Theme.StrokeHover, 1) })
+}, { Round(9), Stroke(Theme.StrokeHover, 1) })
 local TipLabel = New("TextLabel", {
     Position = UDim2.fromOffset(10, 6),
     Size = UDim2.new(1, -20, 1, -12),
@@ -2409,7 +2505,7 @@ UI.DropdownFrame = New("Frame", {
     Visible = false,
     ZIndex = 61,
     Parent = UI.Main,
-}, { Round(10), Stroke(Theme.StrokeHover, 1) })
+}, { Round(12), Stroke(Theme.StrokeHover, 1) })
 local DropList = New("ScrollingFrame", {
     Size = UDim2.fromScale(1, 1),
     BackgroundTransparency = 1,
@@ -2467,7 +2563,7 @@ function UI:OpenDropdown(anchor, list, current, onSelect)
             LayoutOrder = index,
             ZIndex = 63,
             Parent = DropList,
-        }, { Round(6) })
+        }, { Round(7) })
         New("TextLabel", {
             Position = UDim2.fromOffset(10, 0),
             Size = UDim2.new(1, -30, 1, 0),
@@ -2628,7 +2724,7 @@ function Nova.Notify(title, text, duration, kind, force)
         Text = "",
         ClipsDescendants = true,
         Parent = wrap,
-    }, { Round(10), Stroke(Theme.Stroke, 1) })
+    }, { Round(12), Stroke(Theme.Stroke, 1) })
 
     -- Slim status dot instead of a boxed icon
     New("Frame", {
@@ -2792,7 +2888,7 @@ function UI:RefreshHud()
             TextXAlignment = Enum.TextXAlignment.Left,
             LayoutOrder = index,
             Parent = ModuleHud,
-        }, { Round(6), Pad(10, 0, 0, 0) })
+        }, { Round(7), Pad(10, 0, 0, 0) })
         New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, 0, 0.5, 0),
@@ -3177,7 +3273,7 @@ local SettingsMenu = New("Frame", {
     Visible = false,
     ZIndex = 41,
     Parent = UI.Main,
-}, { Round(14), Stroke(Theme.StrokeHover, 1) })
+}, { Round(16), Stroke(Theme.StrokeHover, 1) })
 local SettingsScale = New("UIScale", { Scale = 1, Parent = SettingsMenu })
 
 New("TextLabel", {
@@ -5402,6 +5498,191 @@ do
     aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing.")
 end
 
+-- ====================== MODULE: AUTO CAITLYN ======================
+-- Execute assist for ranged weapons: locks the lowest-health enemy in range and fires on them
+-- for you while you hold a bow or crossbow.
+--
+-- I could not read catvape's real "AutoCaitlyn" source (its loader is locked behind a licence
+-- key) and found no trace of it in the other reference code either, only its saved setting names
+-- (Select HP, Select Range, Hit Range, Proximity Range). This module is built from those names,
+-- not a verified port - the exact behaviour of the original may differ.
+do
+    local caitlyn
+
+    local function isRangedWeapon(name)
+        local meta = name and Bedwars.ItemMeta and Bedwars.ItemMeta[name]
+        return meta ~= nil and meta.projectileSource ~= nil
+    end
+
+    local function healthPercent(hum)
+        local max = hum.MaxHealth
+        if not max or max <= 0 then
+            return 100
+        end
+        return (hum.Health / max) * 100
+    end
+
+    -- True when another player on the target's team is standing within `range` of them
+    local function hasNearbyAlly(entry, list, range)
+        for _, other in ipairs(list) do
+            if other ~= entry and other.Player and entry.Player and other.Humanoid.Health > 0
+                and other.Player:GetAttribute("Team") == entry.Player:GetAttribute("Team")
+                and other.Root and entry.Root
+                and (other.Root.Position - entry.Root.Position).Magnitude <= range then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- `forAcquire`: true while picking a brand new lock (also gated by Select Range). An existing
+    -- lock is allowed to drift past Select Range and only drops once it passes Hit Range, checked
+    -- separately by the caller.
+    local function qualifies(cfg, entry, root, list, forAcquire)
+        if not entry.Player or Util.IsTeammate(entry.Player) or entry.Humanoid.Health <= 0 or not entry.Root then
+            return false
+        end
+        if healthPercent(entry.Humanoid) > cfg.SelectHP then
+            return false
+        end
+        if forAcquire and (entry.Root.Position - root.Position).Magnitude > cfg.SelectRange then
+            return false
+        end
+        if cfg.RequireSight and not Util.HasStrictSight(root.Position + Vector3.new(0, 1.5, 0), entry.Root.Position) then
+            return false
+        end
+        if cfg.AvoidGroups and hasNearbyAlly(entry, list, cfg.ProximityRange) then
+            return false
+        end
+        return true
+    end
+
+    caitlyn = Tabs.Combat:CreateModule({
+        Name = "Auto Caitlyn",
+        Description = "Locks the lowest-health enemy in range and fires on them for you.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local setStatus = makeStatusLabel(mod, "Auto Caitlyn", -160)
+            local locked = nil
+            local lastFire = 0
+
+            mod.Maid:Give(function()
+                locked = nil
+            end)
+
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    task.wait(0.05)
+                    local _, _, root = Util.GetCharacter(LocalPlayer)
+                    local toolName = Util.GetHeldName()
+
+                    if not root then
+                        locked = nil
+                        setStatus(false)
+                    elseif not isRangedWeapon(toolName) then
+                        locked = nil
+                        setStatus(true, "hold a bow or crossbow")
+                    else
+                        local list = Util.GetTargets("Players")
+
+                        if locked then
+                            local stillListed = false
+                            for _, entry in ipairs(list) do
+                                if entry == locked then
+                                    stillListed = true
+                                    break
+                                end
+                            end
+                            if not stillListed or not qualifies(cfg, locked, root, list, false) then
+                                locked = nil
+                            end
+                        end
+                        if not locked then
+                            local best, bestDistance
+                            for _, entry in ipairs(list) do
+                                if qualifies(cfg, entry, root, list, true) then
+                                    local distance = (entry.Root.Position - root.Position).Magnitude
+                                    if not bestDistance or distance < bestDistance then
+                                        best, bestDistance = entry, distance
+                                    end
+                                end
+                            end
+                            locked = best
+                        end
+
+                        if not locked then
+                            setStatus(true, "no low-health target in range")
+                        else
+                            local distance = (locked.Root.Position - root.Position).Magnitude
+                            if distance > cfg.HitRange then
+                                setStatus(true, string.format("%s is %.0f studs away (out of hit range)", locked.Name, distance))
+                            else
+                                setStatus(true, "firing on " .. locked.Name)
+                                if os.clock() - lastFire >= (cfg.FireDelay or 0.6) then
+                                    lastFire = os.clock()
+                                    local camera = Workspace.CurrentCamera
+                                    if camera and cfg.AimCamera then
+                                        pcall(function()
+                                            camera.CFrame = CFrame.new(camera.CFrame.Position, locked.Root.Position + Vector3.new(0, 1, 0))
+                                        end)
+                                    end
+                                    if VirtualInputManager and camera then
+                                        local size = camera.ViewportSize
+                                        for _, down in ipairs({ true, false }) do
+                                            pcall(function()
+                                                VirtualInputManager:SendMouseButtonEvent(size.X / 2, size.Y / 2, 0, down, game, 1)
+                                            end)
+                                            task.wait()
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end))
+        end,
+    })
+
+    caitlyn:AddSection("Target")
+    caitlyn:AddSlider({
+        Label = "Select HP", Key = "SelectHP", Min = 1, Max = 100, Default = 41, Step = 1, Suffix = "%",
+        Tip = "Only locks enemies at or below this health percentage.",
+    })
+    caitlyn:AddSlider({
+        Label = "Select Range", Key = "SelectRange", Min = 5, Max = 50, Default = 20, Step = 1, Suffix = " studs",
+        Tip = "How close a qualifying enemy has to be before it gets locked.",
+    })
+    caitlyn:AddSlider({
+        Label = "Hit Range", Key = "HitRange", Min = 10, Max = 200, Default = 100, Step = 5, Suffix = " studs",
+        Tip = "Keeps firing on a locked target until it drifts this far away.",
+    })
+    caitlyn:AddToggle({
+        Label = "Require Line of Sight", Key = "RequireSight", Default = true,
+        Tip = "Won't lock a target you can't actually see.",
+    })
+    caitlyn:AddToggle({
+        Label = "Avoid Groups", Key = "AvoidGroups", Default = false,
+        Tip = "Skips a target if one of their teammates is standing near them (Proximity Range).",
+    })
+    caitlyn:AddSlider({
+        Label = "Proximity Range", Key = "ProximityRange", Min = 5, Max = 200, Default = 50, Step = 5, Suffix = " studs",
+        ShowIf = function(c)
+            return c.AvoidGroups
+        end,
+    })
+    caitlyn:AddSection("Firing")
+    caitlyn:AddToggle({
+        Label = "Aim Camera", Key = "AimCamera", Default = true,
+        Tip = "Points your camera at the target right before each shot. Turn off to aim yourself and only have it click.",
+    })
+    caitlyn:AddSlider({
+        Label = "Fire Delay", Key = "FireDelay", Min = 0.2, Max = 2, Default = 0.6, Step = 0.1, Suffix = "s",
+        Tip = "Minimum time between shots.",
+    })
+    caitlyn:AddNote("Bedwars only. Hold a bow or crossbow. Pair with Projectile Aim for guaranteed hits - this module only decides when to fire, not how the shot lands.")
+end
+
 -- ====================== MODULE: ESP ======================
 do
     local PALETTE = {
@@ -6870,6 +7151,7 @@ do
     local breakableCache = setmetatable({}, { __mode = "k" })
     local toolDamage = {}           -- breakType -> { damage, item } (rebuilt every loop)
     local highlight = nil
+    local bedMarker = nil
     local lastEquip = 0
     local stats = { Tracked = 0, InRange = 0, Rejected = 0, Nearest = nil, Sent = 0, Reply = "none yet", Beds = {},
         Replies = {}, Cells = {}, Distinct = 0 }
@@ -7506,8 +7788,22 @@ do
                 Parent = Workspace.CurrentCamera or Workspace,
             })
             mod.Maid:Give(highlight)
+            -- A tall beam on whatever bed Nova currently thinks is nearest, in range or not, so you
+            -- can see at a glance whether it's looking at the right spot.
+            bedMarker = New("BoxHandleAdornment", {
+                Name = "NovaNukerBedMarker",
+                AlwaysOnTop = true,
+                ZIndex = 1,
+                Transparency = 0.45,
+                Color3 = Theme.Warn,
+                Size = Vector3.new(1.4, 200, 1.4),
+                Adornee = nil,
+                Parent = Workspace.CurrentCamera or Workspace,
+            })
+            mod.Maid:Give(bedMarker)
             mod.Maid:Give(function()
                 highlight = nil
+                bedMarker = nil
                 pathCache = {}
                 activeLock = nil
             end)
@@ -7531,7 +7827,21 @@ do
             local scanParams
             local lastScan = -10
             local function looksLikeBed(inst)
-                return inst and (inst.Name == "bed" or CollectionService:HasTag(inst, "bed"))
+                if not inst then
+                    return false
+                end
+                if inst.Name == "bed" or CollectionService:HasTag(inst, "bed") then
+                    return true
+                end
+                -- last resort for a renamed/retagged bed: anything with "bed" in its name, excluding
+                -- obvious unrelated matches like "bedrock"
+                if nuker.Config.BroadBedMatch then
+                    local lower = string.lower(inst.Name)
+                    if string.find(lower, "bed", 1, true) and not string.find(lower, "bedrock", 1, true) then
+                        return true
+                    end
+                end
+                return false
             end
             local function scanForBeds(position, force)
                 if not force and os.clock() - lastScan < 1.5 then
@@ -7587,6 +7897,7 @@ do
                         if distance and list == beds and (not stats.NearestBed or distance < stats.NearestBed) then
                             stats.NearestBed = distance
                             stats.NearestBedOwn = isOwnTeamBlock(block)
+                            stats.NearestBedPart = block
                         end
                         if distance then
                             stats.Tracked = stats.Tracked + 1
@@ -7638,6 +7949,12 @@ do
                                 scanForBeds(root.Position)
                             end
                             local target = pickTarget(root.Position)
+                            if bedMarker then
+                                local part = cfg.ShowNearestBed and stats.NearestBedPart
+                                -- Size.Y = 200 and no CFrame offset centers the pillar on the bed itself,
+                                -- so it reaches well above and below it either way.
+                                bedMarker.Adornee = (part and part.Parent) and part or nil
+                            end
                             if not target then
                                 activeLock = nil
                                 if stats.Tracked == 0 then
@@ -7712,7 +8029,15 @@ do
         Tip = "Distance digs in from the side closest to you. Health goes through the weakest blocks.",
     })
     nuker:AddSection("Range")
-    nuker:AddSlider({ Label = "Range", Key = "Range", Min = 1, Max = 30, Default = 30, Step = 1, Suffix = " studs", Tip = "How far away a target can be." })
+    nuker:AddSlider({ Label = "Range", Key = "Range", Min = 1, Max = 50, Default = 30, Step = 1, Suffix = " studs", Tip = "How far away a target can be." })
+    nuker:AddToggle({
+        Label = "Show Nearest Bed", Key = "ShowNearestBed", Default = true,
+        Tip = "Draws a tall marker through whichever bed Nova currently thinks is closest, in range or not - use it to check Nova is looking at the right one.",
+    })
+    nuker:AddToggle({
+        Label = "Broad Bed Match", Key = "BroadBedMatch", Default = false,
+        Tip = "If the marker above never lines up with a real bed, try this: it matches anything with \"bed\" in its name, not just the game's own tag.",
+    })
     nuker:AddSlider({ Label = "Break Angle", Key = "Angle", Min = 0, Max = 360, Default = 360, Step = 5, Suffix = "°", Tip = "Only dig through blocks inside this cone in front of your camera." })
     nuker:AddSlider({ Label = "Break Speed", Key = "BreakSpeed", Min = 0, Max = 0.3, Default = 0.25, Step = 0.01, Suffix = "s", Tip = "Wait between hits. Lower is faster." })
     nuker:AddSection("Behaviour")
