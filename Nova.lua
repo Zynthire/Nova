@@ -1,4 +1,20 @@
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend.lua"))()
+--[[
+    ███  Nova  ███
+    Closet-style utility for Roblox  |  Single file  |  Built for Xeno
+
+    Open / close UI : RightShift (or the x button). Drag the top bar to move, double-click it to re-centre.
+    Modules         : click a card to open its settings, right-click it (or use the switch) to toggle it.
+    Keybinds        : click the small key chip on any module, type a key name
+                      (e.g. "E", "Q", "LeftAlt", "F4") and click away. Type "none" to clear.
+    Search          : type in the search box (top right) to filter modules across every tab.
+    Sliders         : drag, right-click to reset, or click the number and type an exact value.
+    Settings        : gear icon (top right) -> notifications, accent colour, window scale,
+                      module list, config save / load, Reinject, Uninject.
+
+    Global table    : getgenv().Nova   (settings live in Nova.Config)
+    Kill Aura hook  : getgenv().Nova.Hooks.KillAura = function(character, tool, rootPart) ... end
+                      (set this for games that use remotes instead of Tool:Activate())
+]]
 
 local __nova = [====[
 local NOVA_SOURCE = ...
