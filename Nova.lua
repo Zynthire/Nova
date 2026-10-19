@@ -3,6 +3,7 @@
 ]]
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/console.lua"))()
 
 local __nova = [====[
 local NOVA_SOURCE = ...
