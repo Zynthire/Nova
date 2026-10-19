@@ -1,20 +1,5 @@
---[[
-    ███  Nova  ███
-    Closet-style utility for Roblox  |  Single file  |  Built for Xeno
 
-    Open / close UI : RightShift (or the x button). Drag the top bar to move, double-click it to re-centre.
-    Modules         : click a card to open its settings, right-click it (or use the switch) to toggle it.
-    Keybinds        : click the small key chip on any module, type a key name
-                      (e.g. "E", "Q", "LeftAlt", "F4") and click away. Type "none" to clear.
-    Search          : type in the search box (top right) to filter modules across every tab.
-    Sliders         : drag, right-click to reset, or click the number and type an exact value.
-    Settings        : gear icon (top right) -> notifications, accent colour, window scale,
-                      module list, config save / load, Reinject, Uninject.
-
-    Global table    : getgenv().Nova   (settings live in Nova.Config)
-    Kill Aura hook  : getgenv().Nova.Hooks.KillAura = function(character, tool, rootPart) ... end
-                      (set this for games that use remotes instead of Tool:Activate())
-]]
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backendlua"))()
 
 local __nova = [====[
 local NOVA_SOURCE = ...
@@ -332,9 +317,26 @@ function RayFilter.Refresh()
     RayFilter.Params.FilterDescendantsInstances = list
 end
 
+-- Sweeps a small sphere instead of an infinitely thin line, so a razor-thin wall can't be missed by
+-- a ray grazing just past its face. Falls back to a plain raycast if an executor lacks Spherecast.
+local function sightCast(origin, radius, direction, params)
+    local ok, hit = pcall(Workspace.Spherecast, Workspace, origin, radius, direction, params)
+    if ok then
+        return hit
+    end
+    return Workspace:Raycast(origin, direction, params)
+end
+
 -- Skips hits right next to the origin (your own head / viewmodel in first person) and see-through parts
--- Strict version used by Kill Aura: five rays must all be clear, so grazing the corner of a block
--- (or peeking past it) doesn't count as seeing the target. Nothing near you is ignored either.
+-- Strict version used by Kill Aura: nine sphere-sweeps must all be clear (left/right AND up/down,
+-- from both the target's side and your own), so grazing the corner of a block, peeking through a
+-- diagonal gap, or seeing just a sliver of a target over a ledge doesn't count as seeing them.
+-- Nothing near you is ignored either. The old see-through allowance for fully invisible parts
+-- (barriers, spawn shields) is gone too - only truly see-through parts (Transparency 1, no visible
+-- block) still let a cast pass. A plain raycast is an infinitely thin line, so a paper-thin wall can
+-- occasionally slip between two sample points on either side of it (floating point grazes its
+-- face); Spherecast sweeps a small volume instead of a line, so it can't thread that gap.
+local SIGHT_CAST_RADIUS = 0.22
 function Util.HasStrictSight(origin, targetPosition)
     RayFilter.Refresh()
     local toward = targetPosition - origin
@@ -343,6 +345,7 @@ function Util.HasStrictSight(origin, targetPosition)
     end
     local flat = Vector3.new(toward.X, 0, toward.Z)
     local side = flat.Magnitude > 0.01 and flat.Unit:Cross(Vector3.new(0, 1, 0)) or Vector3.new(1, 0, 0)
+    local up = Vector3.new(0, 1, 0)
     local function clear(from, to)
         local current = from
         for _ = 1, 4 do
@@ -350,11 +353,11 @@ function Util.HasStrictSight(origin, targetPosition)
             if direction.Magnitude < 0.3 then
                 return true
             end
-            local hit = Workspace:Raycast(current, direction, RayFilter.Params)
+            local hit = sightCast(current, SIGHT_CAST_RADIUS, direction, RayFilter.Params)
             if not hit then
                 return true
             end
-            if hit.Instance.Transparency >= 0.95 then
+            if hit.Instance.Transparency >= 1 then
                 current = hit.Position + direction.Unit * 0.15
             else
                 return false
@@ -365,8 +368,12 @@ function Util.HasStrictSight(origin, targetPosition)
     return clear(origin, targetPosition)
         and clear(origin, targetPosition + side * 0.7)
         and clear(origin, targetPosition - side * 0.7)
+        and clear(origin, targetPosition + up * 0.7)
+        and clear(origin, targetPosition - up * 0.5)
         and clear(origin + side * 0.5, targetPosition)
         and clear(origin - side * 0.5, targetPosition)
+        and clear(origin + up * 0.4, targetPosition)
+        and clear(origin - up * 0.4, targetPosition)
 end
 
 function Util.HasLineOfSight(origin, targetPosition)
@@ -1348,7 +1355,10 @@ function Controls.ButtonRow(host, defs, showIf)
         button.LayoutOrder = index
         button.MouseButton1Click:Connect(function()
             if def.Callback then
-                def.Callback()
+                local ok, err = pcall(def.Callback)
+                if not ok then
+                    pcall(Nova.Notify, "Nova", "Button error: " .. tostring(err), 4, "error", true)
+                end
             end
         end)
         UI:AttachTip(button, def.Tip)
@@ -3538,7 +3548,7 @@ do
             Label = "Reinject", Style = "accent",
             Tip = "Rebuild Nova from scratch and keep your current settings.",
             Callback = function()
-                Nova.AutoSave()
+                pcall(Nova.AutoSave)
                 Nova.Reinject()
             end,
         },
@@ -3546,7 +3556,7 @@ do
             Label = "Uninject", Style = "danger",
             Tip = "Turn everything off and remove Nova completely.",
             Callback = function()
-                Nova.AutoSave()
+                pcall(Nova.AutoSave)
                 Nova.Unload(false)
             end,
         },
@@ -3712,13 +3722,27 @@ function Nova.Unload(keepSaved)
     end
     Nova.Unloaded = true
     Nova.Unloading = keepSaved and "keep" or "remove"
-    -- Hide the window immediately so nothing lingers on screen while cleanup runs below
+    -- Rip the whole UI tree out FIRST, before anything else below runs. Every tag, icon and
+    -- overlay (NameTags, Kit ESP, ...) is a descendant of UI.Gui, so destroying it here guarantees
+    -- nothing can be left on screen even if a module's own cleanup further down hangs or never
+    -- gets a turn to run (a stuck WaitForChild, a network call that never resolves, etc.) - each
+    -- step below is independently pcall'd so one failing can't stop the next.
     pcall(function()
         UI.Gui.Enabled = false
+    end)
+    pcall(function()
         UI.Main.Visible = false
     end)
+    pcall(function()
+        UI.Gui.Parent = nil
+    end)
+    pcall(function()
+        UI.Gui:Destroy()
+    end)
 
-    -- Disable every module first so each one restores what it touched
+    -- Disable every module so each one restores what it touched (walkspeed, hidden default game
+    -- tags, etc). The visuals are already gone above, so from here this is best-effort state
+    -- cleanup - it no longer gates whether anything stays on screen.
     for _, mod in ipairs(Nova.ModuleList) do
         pcall(function()
             if mod.Enabled then
@@ -3736,6 +3760,33 @@ function Nova.Unload(keepSaved)
     -- Destroy(), so also explicitly drop it from the tree.
     pcall(function()
         UI.Gui.Parent = nil
+    end)
+
+    -- Last-resort sweep: catches anything a module's own cleanup missed (e.g. Kit ESP or
+    -- NameTags icons), wherever it ended up parented, so nothing can outlive a real Unload.
+    pcall(function()
+        local roots = {}
+        local okGui, gui = pcall(function() return LocalPlayer:FindFirstChildOfClass("PlayerGui") end)
+        if okGui and gui then
+            roots[#roots + 1] = gui
+        end
+        local okCore, core = pcall(function() return game:GetService("CoreGui") end)
+        if okCore and core then
+            roots[#roots + 1] = core
+        end
+        if gethui then
+            local okHidden, hidden = pcall(gethui)
+            if okHidden and hidden then
+                roots[#roots + 1] = hidden
+            end
+        end
+        for _, root in ipairs(roots) do
+            for _, inst in ipairs(root:GetDescendants()) do
+                if type(inst.Name) == "string" and inst.Name:sub(1, 4) == "Nova" then
+                    pcall(inst.Destroy, inst)
+                end
+            end
+        end
     end)
 
     if keepSaved then
@@ -4969,8 +5020,8 @@ do
     aura:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
     aura:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
     aura:AddSection("Timing")
-    aura:AddSlider({ Label = "Min Interval", Key = "MinInterval", Min = 0.05, Max = 0.6, Default = 0.12, Step = 0.01, Suffix = "s", Tip = "The sword's own attack speed is the real minimum." })
-    aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = true, Tip = "Varies the delay between hits slightly." })
+    aura:AddSlider({ Label = "Min Interval", Key = "MinInterval", Min = 0.05, Max = 0.6, Default = 0.05, Step = 0.01, Suffix = "s", Tip = "The sword's own attack speed is the real minimum." })
+    aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = false, Tip = "Varies the delay between hits slightly." })
     aura:AddSection("Activation")
     aura:AddToggle({ Label = "Swing Only", Key = "SwingOnly", Default = false, Tip = "One hit per click you make." })
     aura:AddToggle({ Label = "Require Mouse Down", Key = "RequireMouseDown", Default = false, Tip = "Only attack while you hold a mouse button." })
@@ -5650,7 +5701,7 @@ do
         return true
     end
 
-    caitlyn = Tabs.Combat:CreateModule({
+    caitlyn = Tabs.Kits:CreateModule({
         Name = "Auto Caitlyn",
         Description = "Locks the lowest-health enemy in range and fires on them for you.",
         OnEnable = function(mod)
@@ -11502,9 +11553,21 @@ do
         Tip = "Draws plain text tags with the Drawing library (no icons). Needs an executor that supports Drawing.",
     })
     nameTags:AddToggle({
-        Label = "Hide Game Tags", Key = "HideGameTags", Default = true,
-        Tip = "Hides the game's own name tags while this is on.", Callback = defaultsChanged,
+        Label = "Hide Game Tags", Key = "HideGameTags", Default = false,
+        Tip = "Hides the game's own name tags while this is on. Off by default so the game's normal tags stay visible.",
+        Callback = defaultsChanged,
     })
+
+    -- Belt-and-suspenders: guarantees our tags and any hidden default tags are cleaned up on a
+    -- full Unload even if something above skipped the module's own Disable cleanup.
+    Nova.Maid:Give(function()
+        resetTags()
+        restoreDefaults()
+        if tagFolder then
+            tagFolder:Destroy()
+            tagFolder = nil
+        end
+    end)
 end
 
 -- ====================== MODULE: WORLD (SKY) ======================
