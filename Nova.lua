@@ -1,3 +1,7 @@
+--[[
+    ███  Nova  ███
+]]
+
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend.lua"))()
 
 local __nova = [====[
@@ -1047,6 +1051,24 @@ function Controls.Slider(host, o)
         valueBox.TextColor3 = Theme.AccentLight
     end)
 
+    -- A fractional Step (0.1, 0.01, ...) always displays with that many decimals, so a slider at
+    -- its default like 14 still reads "14.0" / "14.00" instead of Lua's tostring dropping the
+    -- trailing zero - the whole point of a decimal step is seeing the decimal.
+    local stepDecimals = 0
+    do
+        local text = tostring(step)
+        local dot = string.find(text, "%.")
+        if dot then
+            stepDecimals = #text - dot
+        end
+    end
+    local function formatValue(value)
+        if stepDecimals > 0 then
+            return string.format("%." .. stepDecimals .. "f", value)
+        end
+        return tostring(value)
+    end
+
     local function apply(value)
         value = math.clamp(value, min, max)
         value = math.floor(value / step + 0.5) * step
@@ -1056,7 +1078,7 @@ function Controls.Slider(host, o)
         local alpha = (max > min) and ((value - min) / (max - min)) or 0
         fill.Size = UDim2.fromScale(alpha, 1)
         knob.Position = UDim2.fromScale(alpha, 0.5)
-        valueBox.Text = tostring(value) .. (o.Suffix or "")
+        valueBox.Text = formatValue(value) .. (o.Suffix or "")
     end
 
     local function fromInput(input)
@@ -1081,11 +1103,20 @@ function Controls.Slider(host, o)
         apply(default)
         host:Changed(key, cfg[key], o.Callback)
     end)
+    -- Scroll wheel over the bar nudges the value by one Step
+    hit.MouseWheelForward:Connect(function()
+        apply(cfg[key] + step)
+        host:Changed(key, cfg[key], o.Callback)
+    end)
+    hit.MouseWheelBackward:Connect(function()
+        apply(cfg[key] - step)
+        host:Changed(key, cfg[key], o.Callback)
+    end)
 
     -- Click the number to type an exact value
     valueBox.Focused:Connect(function()
         valueStroke.Color = Theme.Accent
-        valueBox.Text = tostring(cfg[key])
+        valueBox.Text = formatValue(cfg[key])
     end)
     valueBox.FocusLost:Connect(function()
         valueStroke.Color = Theme.Stroke
@@ -5020,7 +5051,7 @@ do
 
     aura:AddSection("Targeting")
     aura:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players" })
-    aura:AddSlider({ Label = "Range", Key = "Range", Min = 3, Max = 22, Default = 12, Step = 0.5, Suffix = " studs", Tip = "Hits only register up to the server's reach (about 14.4 studs)." })
+    aura:AddSlider({ Label = "Range", Key = "Range", Min = 3, Max = 22, Default = 12, Step = 0.1, Suffix = " studs", Tip = "Hits only register up to the server's reach (about 14.4 studs)." })
     aura:AddSlider({ Label = "Max Angle", Key = "Angle", Min = 30, Max = 360, Default = 180, Step = 5, Suffix = "°", Tip = "Field of view in front of you. 360 hits all around." })
     aura:AddSlider({ Label = "Max Targets", Key = "MaxTargets", Min = 1, Max = 5, Default = 1, Step = 1 })
     aura:AddOption({ Label = "Sort", Key = "Sort", Options = { "Distance", "Health", "Angle" }, Default = "Distance" })
