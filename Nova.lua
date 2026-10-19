@@ -1,4 +1,3 @@
-
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend.lua"))()
 
 local __nova = [====[
@@ -328,15 +327,16 @@ local function sightCast(origin, radius, direction, params)
 end
 
 -- Skips hits right next to the origin (your own head / viewmodel in first person) and see-through parts
--- Strict version used by Kill Aura: nine sphere-sweeps must all be clear (left/right AND up/down,
--- from both the target's side and your own), so grazing the corner of a block, peeking through a
--- diagonal gap, or seeing just a sliver of a target over a ledge doesn't count as seeing them.
+-- Strict version used by Kill Aura: thirteen sphere-sweeps must all be clear (left/right, up/down
+-- AND the four diagonals between them, from both the target's side and your own), so grazing the
+-- corner of a block, peeking through a diagonal gap, or seeing just a sliver of a target over a
+-- ledge doesn't count as seeing them.
 -- Nothing near you is ignored either. The old see-through allowance for fully invisible parts
 -- (barriers, spawn shields) is gone too - only truly see-through parts (Transparency 1, no visible
 -- block) still let a cast pass. A plain raycast is an infinitely thin line, so a paper-thin wall can
 -- occasionally slip between two sample points on either side of it (floating point grazes its
 -- face); Spherecast sweeps a small volume instead of a line, so it can't thread that gap.
-local SIGHT_CAST_RADIUS = 0.22
+local SIGHT_CAST_RADIUS = 0.3
 function Util.HasStrictSight(origin, targetPosition)
     RayFilter.Refresh()
     local toward = targetPosition - origin
@@ -370,6 +370,13 @@ function Util.HasStrictSight(origin, targetPosition)
         and clear(origin, targetPosition - side * 0.7)
         and clear(origin, targetPosition + up * 0.7)
         and clear(origin, targetPosition - up * 0.5)
+        -- Diagonal offsets: a corner where two thin walls meet can have a gap a pure left/right or
+        -- pure up/down ray slips through even though neither axis alone sees a path. Checking both
+        -- axes combined closes that off.
+        and clear(origin, targetPosition + side * 0.6 + up * 0.6)
+        and clear(origin, targetPosition - side * 0.6 - up * 0.6)
+        and clear(origin, targetPosition + side * 0.6 - up * 0.4)
+        and clear(origin, targetPosition - side * 0.6 + up * 0.4)
         and clear(origin + side * 0.5, targetPosition)
         and clear(origin - side * 0.5, targetPosition)
         and clear(origin + up * 0.4, targetPosition)
