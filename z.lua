@@ -4574,82 +4574,71 @@ do
     end
 
     local hitRemote
-function Bedwars.SendHit(item, targetChar, selfPos, targetPos)
-	if not hitRemote then
-		local ok, remote = pcall(function()
-			return Bedwars.Client:Get("SwordHit")
-		end)
-		if ok and remote then
-			hitRemote = remote
-		end
-	end
-	if not hitRemote then
-		return false, "SwordHit remote not found"
-	end
+    -- Sends one SwordHit with TRUE positions (your real position, the target's real position).
+    function Bedwars.SendHit(item, targetChar, selfPos, targetPos)
+        if not hitRemote then
+            local ok, remote = pcall(function()
+                return Bedwars.Client:Get("SwordHit")
+            end)
+            if ok and remote then
+                hitRemote = remote
+            end
+        end
+        if not hitRemote then
+            return false, "SwordHit remote not found"
+        end
 
-	local weapon = item
-	local inventories = ReplicatedStorage:FindFirstChild("Inventories")
-	local mine = inventories and inventories:FindFirstChild(LocalPlayer.Name)
-	local owned = mine and mine:FindFirstChild(item.Name)
-	if owned then
-		weapon = owned
-	end
+        local weapon = item
+        local inventories = ReplicatedStorage:FindFirstChild("Inventories")
+        local mine = inventories and inventories:FindFirstChild(LocalPlayer.Name)
+        local owned = mine and mine:FindFirstChild(item.Name)
+        if owned then
+            weapon = owned
+        end
 
-	local offset = targetPos - selfPos
-	if offset.Magnitude < 0.01 then
-		return false, "target is on top of you"
-	end
+        local offset = targetPos - selfPos
+        if offset.Magnitude < 0.01 then
+            return false, "target is on top of you"
+        end
 
-	-- Use the real camera when possible (critical in first person while strafing)
-	local cam = Workspace.CurrentCamera
-	local camOrigin = (cam and cam.CFrame.Position) or selfPos
+        -- Spoof selfPosition so the server sees a distance ≤ ReachLimit (~14.4)
+        -- while still hitting the real target (same method Vape / CatVape use)
+        local limit = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0)
+            and (Bedwars.ReachLimit - 0.05)
+            or 14.35
+        local reportedSelf = selfPos
+        if offset.Magnitude > limit then
+            reportedSelf = targetPos - offset.Unit * limit
+        end
 
-	local limit = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0)
-		and (Bedwars.ReachLimit - 0.05)
-		or 14.35
+        local payload = {
+            weapon = weapon,
+            chargedAttack = { chargeRatio = 0 },
+            entityInstance = targetChar,
+            validate = {
+                raycast = {
+                    cameraPosition = { value = reportedSelf },
+                    cursorDirection = { value = (targetPos - reportedSelf).Unit },
+                },
+                targetPosition = { value = targetPos },
+                selfPosition = { value = reportedSelf },
+            },
+        }
 
-	-- Direction from camera → target (not root → target)
-	local toTarget = targetPos - camOrigin
-	local dist = toTarget.Magnitude
-	local dir = dist > 0.01 and toTarget.Unit or offset.Unit
-
-	-- Spoof selfPosition along the camera ray so reported distance ≤ limit
-	-- while cameraPosition stays real. This is what makes first-person strafing work.
-	local reportedSelf = selfPos
-	if dist > limit then
-		reportedSelf = camOrigin + dir * math.max(dist - limit, 0)
-	else
-		-- Still keep selfPosition near the camera ray when close
-		reportedSelf = selfPos
-	end
-
-	local payload = {
-		weapon = weapon,
-		chargedAttack = { chargeRatio = 0 },
-		entityInstance = targetChar,
-		validate = {
-			raycast = {
-				cameraPosition = { value = camOrigin },
-				cursorDirection = { value = dir },
-			},
-			targetPosition = { value = targetPos },
-			selfPosition = { value = reportedSelf },
-		},
-	}
-
-	if type(hitRemote.SendToServer) == "function" then
-		if pcall(hitRemote.SendToServer, hitRemote, payload) then
-			return true
-		end
-	end
-	if hitRemote.instance then
-		if pcall(function()
-			hitRemote.instance:FireServer(payload)
-		end) then
-			return true
-		end
-	end
-	return false, "couldn't send SwordHit"
+        if type(hitRemote.SendToServer) == "function" then
+            if pcall(hitRemote.SendToServer, hitRemote, payload) then
+                return true
+            end
+        end
+        if hitRemote.instance then
+            if pcall(function()
+                hitRemote.instance:FireServer(payload)
+            end) then
+                return true
+            end
+        end
+        return false, "couldn't send SwordHit"
+    end
 end
 
 -- Small status pill shared by the Bedwars modules
