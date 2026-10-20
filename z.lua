@@ -376,6 +376,7 @@ function Util.HasStrictSight(origin, targetPosition)
     local flat = Vector3.new(toward.X, 0, toward.Z)
     local side = flat.Magnitude > 0.01 and flat.Unit:Cross(Vector3.new(0, 1, 0)) or Vector3.new(1, 0, 0)
     local up = Vector3.new(0, 1, 0)
+    local blocker = nil
     local function clear(from, to)
         local current = from
         for _ = 1, 4 do
@@ -390,12 +391,16 @@ function Util.HasStrictSight(origin, targetPosition)
             if hit.Instance.Transparency >= 1 then
                 current = hit.Position + direction.Unit * 0.15
             else
+                -- Full path, not just the part name, so a stray instance that should've been
+                -- filtered out (e.g. a viewmodel we didn't know to exclude) is easy to pin down.
+                local ok, full = pcall(hit.Instance.GetFullName, hit.Instance)
+                blocker = ok and full or hit.Instance.Name
                 return false
             end
         end
         return false
     end
-    return clear(origin, targetPosition)
+    local seen = clear(origin, targetPosition)
         and clear(origin, targetPosition + side * 0.7)
         and clear(origin, targetPosition - side * 0.7)
         and clear(origin, targetPosition + up * 0.7)
@@ -411,6 +416,7 @@ function Util.HasStrictSight(origin, targetPosition)
         and clear(origin - side * 0.5, targetPosition)
         and clear(origin + up * 0.4, targetPosition)
         and clear(origin - up * 0.4, targetPosition)
+    return seen, (not seen) and blocker or nil
 end
 
 function Util.HasLineOfSight(origin, targetPosition)
@@ -4896,9 +4902,9 @@ do
                     end
                 end
                 if cfg.WallCheck then
-                    local seen = Util.HasStrictSight(head.Position, entry.Root.Position)
+                    local seen, blocker = Util.HasStrictSight(head.Position, entry.Root.Position)
                     if not seen then
-                        return "is behind a wall"
+                        return "is behind a wall" .. (blocker and (" [" .. blocker .. "]") or "")
                     end
                 end
                 return nil
