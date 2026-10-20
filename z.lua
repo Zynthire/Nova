@@ -4574,7 +4574,7 @@ do
     end
 
     local hitRemote
-    -- Sends one SwordHit with TRUE positions (your real position, the target's real position).
+    
 function Bedwars.SendHit(item, targetChar, selfPos, targetPos)
 	if not hitRemote then
 		local ok, remote = pcall(function()
