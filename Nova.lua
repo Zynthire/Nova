@@ -4094,13 +4094,6 @@ do
         if cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player) then
             return nil
         end
-        -- World-space lock range (studs from you to the target)
-        local _, _, myRoot = Util.GetCharacter(LocalPlayer)
-        local origin = (myRoot and myRoot.Position) or cam.CFrame.Position
-        local worldDist = (entry.Root.Position - origin).Magnitude
-        if worldDist > (cfg.Range or 30) then
-            return nil
-        end
         local part, distance = getAimPart(entry, cfg.AimPart, cam, mousePos)
         if not part or distance > cfg.FOV then
             return nil
@@ -4230,7 +4223,6 @@ do
     aim:AddSection("Targeting")
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players", Tip = "Who the aim assist can lock onto." })
     aim:AddOption({ Label = "Aim Part", Key = "AimPart", Options = { "Head", "Torso", "Closest" }, Default = "Closest", Tip = "Closest picks whichever part is nearer to your cursor." })
-    aim:AddSlider({ Label = "Range", Key = "Range", Min = 5, Max = 30, Default = 30, Step = 0.5, Suffix = " studs", Tip = "How far away a target can be for aim assist to lock on." })
     aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 20, Max = 600, Default = 150, Step = 5, Suffix = " px", Tip = "Only targets inside this radius around your cursor are considered." })
     aim:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, Tip = "Ignore targets you can't see." })
     aim:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, Tip = "Ignore your teammates." })
@@ -4606,25 +4598,17 @@ do
             return false, "target is on top of you"
         end
 
-        -- Reach spoof (Vape-style): report selfPosition closer along the real path
-        -- so the server sees ≤ ~14.4 studs. Keeps first-person strafing working.
-        local limit = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0)
-            and (Bedwars.ReachLimit - 0.01)
-            or 14.39
+        -- Server hard-caps sword reach around 14.4. Always spoof to that, never the
+        -- slider max (22) or a mis-read ReachLimit — those made long-range + FP fail.
+        local serverReach = 14.39
         local dir = offset.Unit
         local reportedSelf = selfPos
-        if mag > limit then
-            reportedSelf = selfPos + dir * (mag - limit)
+        if mag > serverReach then
+            reportedSelf = selfPos + dir * (mag - serverReach)
         end
 
         local cam = Workspace.CurrentCamera
         local camOrigin = (cam and cam.CFrame.Position) or selfPos
-        local camDir = targetPos - camOrigin
-        if camDir.Magnitude > 0.01 then
-            camDir = camDir.Unit
-        else
-            camDir = dir
-        end
 
         local payload = {
             weapon = weapon,
@@ -4633,7 +4617,7 @@ do
             validate = {
                 raycast = {
                     cameraPosition = { value = camOrigin },
-                    cursorDirection = { value = camDir },
+                    cursorDirection = { value = dir },
                 },
                 targetPosition = { value = targetPos },
                 selfPosition = { value = reportedSelf },
@@ -4773,6 +4757,9 @@ do
         end)
         attempt("KitMeta", function()
             return require(walk(ReplicatedStorage, "TS", "games", "bedwars", "kit", "bedwars-kit-meta")).BedwarsKitMeta
+        end)
+        attempt("StatusEffectUtil", function()
+            return require(walk(ReplicatedStorage, "TS", "status-effect", "status-effect-util")).StatusEffectUtil
         end)
 
         if Bedwars.BlockController and Bedwars.DamageBlockRemotes and Bedwars.Store then
@@ -4990,6 +4977,28 @@ do
                     return
                 end
 
+                -- CatVape Attackable check (you only): frozen / Sophia, elk
+                if cfg.AttackableCheck then
+                    if char:FindFirstChild("elk") then
+                        idle("not attackable (elk)")
+                        return
+                    end
+                    local frozen = false
+                    local util = Bedwars.StatusEffectUtil
+                    if util and type(util.isActive) == "function" then
+                        local ok, active = pcall(util.isActive, util, char, "frozen")
+                        frozen = ok and active == true
+                    else
+                        local attr = char:GetAttribute("StatusEffect_frozen")
+                        frozen = attr == true
+                            or (type(attr) == "number" and attr > Workspace:GetServerTimeNow())
+                    end
+                    if frozen then
+                        idle("not attackable (frozen)")
+                        return
+                    end
+                end
+
                 if not mouseOk() then
                     idle("hold the " .. string.lower(tostring(cfg.MouseButton)) .. " mouse button (Require Mouse Down)")
                     return
@@ -5124,6 +5133,12 @@ do
     aura:AddToggle({ Label = "Swing Only", Key = "SwingOnly", Default = false, Tip = "One hit per click you make." })
     aura:AddToggle({ Label = "Require Mouse Down", Key = "RequireMouseDown", Default = false, Tip = "Only attack while you hold a mouse button." })
     aura:AddOption({ Label = "Mouse Button", Key = "MouseButton", Options = { "Left", "Right" }, Default = "Left", ShowIf = function(c) return c.RequireMouseDown end })
+    aura:AddToggle({
+        Label = "Attackable Check",
+        Key = "AttackableCheck",
+        Default = true,
+        Tip = "Stops swinging while you are frozen (Sophia) or on elk. Same as CatVape.",
+    })
     aura:AddSection("Visuals")
     aura:AddToggle({ Label = "Swing Animation", Key = "SwingAnimation", Default = true, ShowIf = function(c) return not c.SwingOnly end })
     aura:AddToggle({ Label = "Face Target", Key = "FaceTarget", Default = false })
