@@ -4574,7 +4574,6 @@ do
     end
 
     local hitRemote
-    
 function Bedwars.SendHit(item, targetChar, selfPos, targetPos)
 	if not hitRemote then
 		local ok, remote = pcall(function()
