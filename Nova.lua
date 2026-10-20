@@ -1,4 +1,10 @@
 
+--[[
+    ███  Nova  ███
+    this isnt the full source so gl skidding..
+    have fun using nova :D
+]]
+
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))()
 
