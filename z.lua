@@ -326,8 +326,22 @@ function RayFilter.Refresh()
             list[#list + 1] = model
         end
     end
-    if Workspace.CurrentCamera then
-        list[#list + 1] = Workspace.CurrentCamera
+    local cam = Workspace.CurrentCamera
+    if cam then
+        list[#list + 1] = cam
+        -- Your own first-person weapon model ("Viewmodule") rides along with the camera and sits
+        -- right in front of it, so an un-filtered wall-check ray clips through it first and reports
+        -- a target you can clearly see as "behind a wall". Only shows up in first person, since that
+        -- model isn't rendered in third person.
+        local ok, descendants = pcall(cam.GetDescendants, cam)
+        if ok then
+            for _, inst in ipairs(descendants) do
+                local lname = inst.Name:lower()
+                if lname:find("viewmodule", 1, true) or lname:find("viewmodel", 1, true) then
+                    list[#list + 1] = inst
+                end
+            end
+        end
     end
     RayFilter.Params.FilterDescendantsInstances = list
 end
@@ -4601,27 +4615,17 @@ do
             return false, "target is on top of you"
         end
 
-        -- Spoof selfPosition so the server sees a distance ≤ ReachLimit (~14.4)
-        -- while still hitting the real target (same method Vape / CatVape use)
-        local limit = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0)
-            and (Bedwars.ReachLimit - 0.05)
-            or 14.35
-        local reportedSelf = selfPos
-        if offset.Magnitude > limit then
-            reportedSelf = targetPos - offset.Unit * limit
-        end
-
         local payload = {
             weapon = weapon,
             chargedAttack = { chargeRatio = 0 },
             entityInstance = targetChar,
             validate = {
                 raycast = {
-                    cameraPosition = { value = reportedSelf },
-                    cursorDirection = { value = (targetPos - reportedSelf).Unit },
+                    cameraPosition = { value = selfPos },
+                    cursorDirection = { value = offset.Unit },
                 },
                 targetPosition = { value = targetPos },
-                selfPosition = { value = reportedSelf },
+                selfPosition = { value = selfPos },
             },
         }
 
@@ -5004,9 +5008,14 @@ do
                     return
                 end
 
-                -- Use the user's configured Range (spoofing in SendHit handles the server check)
-                local reachable = targets
-                local lead = targets[1]
+                -- Split by what the server will actually accept from your real position
+                local reachable = {}
+                for _, candidate in ipairs(targets) do
+                    if candidate.Distance <= Bedwars.ReachLimit then
+                        reachable[#reachable + 1] = candidate
+                    end
+                end
+                local lead = reachable[1] or targets[1]
                 local leadEntry = lead.Entry
                 local leadText = string.format("%s (%.1f studs)", tostring(leadEntry.Name), lead.Distance)
                 local now = os.clock()
@@ -5054,8 +5063,14 @@ do
                     return
                 end
 
+                -- Everyone in Range is past the server's reach: swing animation only, no hit packet
                 if #reachable == 0 then
-                    idle("no target in range")
+                    if cfg.SwingAnimation and not cfg.SwingOnly then
+                        playSwing(meta)
+                    end
+                    lastSend = now
+                    nextInterval = interval
+                    setStatus(cfg.StatusLine, string.format("%s is past the server's %.1f stud reach - swinging only", leadText, Bedwars.ReachLimit))
                     return
                 end
 
