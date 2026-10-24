@@ -5576,7 +5576,7 @@ do
                     end
                 end
 
-                if lastTarget and os.clock() - lastTargetAt < 1.2
+                if cfg.ShowTarget and lastTarget and os.clock() - lastTargetAt < 1.2
                     and lastTarget.Root and lastTarget.Root.Parent then
                     box.Adornee = lastTarget.Root
                 else
@@ -5591,16 +5591,16 @@ do
                             installed = true
                             Nova.Notify("Projectile Aim", "Hooked. Shoot a bow near a target.", 3, "success")
                         else
-                            setStatus(true, "unavailable - " .. tostring(why))
+                            setStatus(cfg.StatusLine, "unavailable - " .. tostring(why))
                         end
                     end
                     return
                 end
 
                 if os.clock() - lastTargetAt < 1.2 and lastTarget then
-                    setStatus(true, "aimed at " .. tostring(lastTarget.Name))
+                    setStatus(cfg.StatusLine, "aimed at " .. tostring(lastTarget.Name))
                 elseif cam then
-                    setStatus(true, "ready (" .. (Util.IsFirstPerson() and "first" or "third") .. " person)")
+                    setStatus(cfg.StatusLine, "ready (" .. (Util.IsFirstPerson() and "first" or "third") .. " person)")
                 end
             end))
 
@@ -5624,6 +5624,8 @@ do
     aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
     aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction." })
     aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead vertical movement (jumps/falls). 100% = full prediction." })
+    aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
+    aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
     aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing. Wall check, ping compensation, and measured velocity are still tuned automatically.")
 end
 
