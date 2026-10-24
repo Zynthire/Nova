@@ -1,10 +1,9 @@
-
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))()
 
+local __nova = [====[
 print("testing......")
 
-local __nova = [====[
 local NOVA_SOURCE = ...
 
 local function NovaMain()
@@ -5285,8 +5284,9 @@ do
             local installed = false
             local lastTryAt = 0
             local lastTarget, lastTargetAt = nil, 0
-            local blacklist, blacklistText = parseList(cfg.Ignore), cfg.Ignore
-            local randomPick = setmetatable({}, { __mode = "k" })   -- model -> { part, at }
+            -- Everything that used to be a user-facing toggle here is now just locked to its most
+            -- accurate setting - one less thing to configure, nothing to get wrong.
+            local blacklist = { telepearl = true }
 
             local setStatus = makeStatusLabel(mod, "Projectile Aim", -130)
 
@@ -5300,99 +5300,31 @@ do
                 Parent = UI.Gui,
             }))
 
-            local circle
-            if HAS_DRAWING then
-                circle = mod.Maid:Give(Drawing.new("Circle"))
-                circle.Thickness = 1
-                circle.NumSides = 64
-                circle.Filled = false
-                circle.Color = Theme.Accent
-                circle.Transparency = 0.8
-                circle.Visible = false
-            end
-
-            local function bodyPart(entry, name)
-                local part = entry.Model:FindFirstChild(name)
-                if part and part:IsA("BasePart") then
-                    return part
-                end
-                return nil
-            end
-
-            -- Which body part to aim at for this target
-            local function partFor(entry, cam, mouse, projmeta, origin)
-                local mode = cfg.AimPart
-                local head = bodyPart(entry, "Head")
-                if mode == "Head" then
-                    return head or entry.Root
-                elseif mode == "Dynamic" then
-                    local text = string.lower(tostring(origin and origin.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
-                    if string.find(text, "headhunter", 1, true) then
-                        return head or entry.Root
-                    end
-                    return entry.Root
-                elseif mode == "Closest" and cam and mouse then
-                    local best, bestDistance = entry.Root, math.huge
-                    for _, name in ipairs(BODY_PARTS) do
-                        local part = bodyPart(entry, name)
-                        if part then
-                            local point, onScreen = cam:WorldToViewportPoint(part.Position)
-                            if onScreen and point.Z > 0 then
-                                local distance = (Vector2.new(point.X, point.Y) - mouse).Magnitude
-                                if distance < bestDistance then
-                                    best, bestDistance = part, distance
-                                end
-                            end
-                        end
-                    end
-                    return best
-                elseif mode == "Randomize" then
-                    local memory = randomPick[entry.Model]
-                    if not memory or os.clock() - memory.at > 3 or not memory.part.Parent then
-                        local pick = (math.random() * 100 < (cfg.HeadChance or 50)) and head or nil
-                        memory = { part = pick or bodyPart(entry, "UpperTorso") or entry.Root, at = os.clock() }
-                        randomPick[entry.Model] = memory
-                    end
-                    return memory.part
-                end
-                return entry.Root
-            end
-
-            -- Best target near the crosshair; returns entry, aimPart
+            -- Best target near the crosshair; returns entry, aimPart (always centre-mass)
             local function pickTarget(origin, cam, projmeta, tool)
                 local mouse = aimReference(cam)
                 local best, bestPart, bestScore = nil, nil, math.huge
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
                     local ok = true
                     if entry.Player then
-                        if cfg.TeamCheck and Util.IsTeammate(entry.Player) then
+                        if Util.IsTeammate(entry.Player) then
                             ok = false
                         elseif entry.Player:GetAttribute("Spectator") then
                             ok = false
                         end
                     end
                     if ok then
-                        local part = partFor(entry, cam, mouse, projmeta, tool)
+                        local part = entry.Root
                         local distance = (part.Position - origin).Magnitude
-                        if distance <= cfg.Range then
+                        if distance <= 120 then
                             local point, onScreen = cam:WorldToViewportPoint(part.Position)
                             local screen = (Vector2.new(point.X, point.Y) - mouse).Magnitude
                             -- the target you were just aiming at gets a small head start, so two players
                             -- close together don't make the aim flip back and forth
                             local sticky = (entry == lastTarget and os.clock() - lastTargetAt < 0.8) and 1.3 or 1
-                            if onScreen and point.Z > 0 and screen <= cfg.FOV * sticky
-                                and (not cfg.WallCheck or Util.HasLineOfSight(cam.CFrame.Position, part.Position)) then
-                                local score
-                                if cfg.Sort == "Distance" then
-                                    score = distance
-                                elseif cfg.Sort == "Health" then
-                                    score = entry.Humanoid and entry.Humanoid.Health or 100
-                                else
-                                    score = screen
-                                end
-                                if sticky > 1 then
-                                    score = score * 0.65
-                                end
+                            if onScreen and point.Z > 0 and screen <= 300 * sticky
+                                and Util.HasLineOfSight(cam.CFrame.Position, part.Position) then
+                                local score = (sticky > 1) and screen * 0.65 or screen
                                 if score < bestScore then
                                     best, bestPart, bestScore = entry, part, score
                                 end
@@ -5410,12 +5342,6 @@ do
                     return nil
                 end
                 local firstPerson = Util.IsFirstPerson()
-                if (cfg.WorkMode == "First Person" and not firstPerson) or (cfg.WorkMode == "Third Person" and firstPerson) then
-                    return nil
-                end
-                if cfg.Ignore ~= blacklistText then
-                    blacklist, blacklistText = parseList(cfg.Ignore), cfg.Ignore
-                end
                 local projectileName = tostring(projmeta and projmeta.projectile or ""):lower()
                 if blacklist[projectileName] then
                     return nil
@@ -5454,28 +5380,26 @@ do
                 local root, hum = entry.Root, entry.Humanoid
                 local now = os.clock()
                 local velocity = root.AssemblyLinearVelocity
-                if cfg.MeasuredVelocity then
-                    sample(entry, now)
-                    local measured = measuredVelocity(entry, now)
-                    if measured then
-                        local replicated = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-                        local moved = Vector3.new(measured.X, 0, measured.Z).Magnitude
-                        -- trust the measured movement when the replicated velocity clearly under-reports it
-                        if moved > replicated * 1.3 + 2 then
-                            velocity = Vector3.new(measured.X, velocity.Y, measured.Z)
-                        end
+                sample(entry, now)
+                local measured = measuredVelocity(entry, now)
+                if measured then
+                    local replicated = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+                    local moved = Vector3.new(measured.X, 0, measured.Z).Magnitude
+                    -- trust the measured movement when the replicated velocity clearly under-reports it
+                    if moved > replicated * 1.3 + 2 then
+                        velocity = Vector3.new(measured.X, velocity.Y, measured.Z)
                     end
                 end
                 if projectileName == "telepearl" then
                     velocity = Vector3.zero
                 end
 
-                local horizontalLead = cfg.HorizontalLead / 100
-                local verticalLead = cfg.VerticalLead / 100
+                local horizontalLead = cfg.XPredict / 100
+                local verticalLead = cfg.YPredict / 100
                 local vx, vz = velocity.X * horizontalLead, velocity.Z * horizontalLead
                 local airborne = hum.FloorMaterial == Enum.Material.Air
                 local vy = airborne and velocity.Y * verticalLead or 0
-                if cfg.JumpPrediction and not airborne and velocity.Y < 20 then
+                if not airborne and velocity.Y < 20 then
                     local okState, state = pcall(function()
                         return hum:GetState()
                     end)
@@ -5503,7 +5427,7 @@ do
                     end
                 end
 
-                local lead = cfg.PingCompensation and pingLead() or 0
+                local lead = pingLead()
                 local base = part.Position
 
                 -- Don't predict a falling target through the floor
@@ -5521,7 +5445,7 @@ do
                 local runSpeed = Vector3.new(vx, 0, vz).Magnitude
                 local runDirection = runSpeed > 0.5 and Vector3.new(vx, 0, vz).Unit or nil
                 local runLimit = math.huge
-                if cfg.WallAwareLead and runDirection then
+                if runDirection then
                     RayFilter.Refresh()
                     local reach = runSpeed * (lifetime + lead) + 2
                     local hit = Workspace:Raycast(root.Position, runDirection * reach, RayFilter.Params)
@@ -5558,7 +5482,7 @@ do
                     relX, relY, relZ = bow.RelX, bow.RelY or 0, bow.RelZ or 0
                 end
                 -- The offset only applies to the third person arrow spawn; first person fires from the camera
-                local useOffset = cfg.OffsetFix and relX ~= nil and not firstPerson
+                local useOffset = relX ~= nil and not firstPerson
 
                 local chosen, chosenTime
                 for _, dy in ipairs({ 0, 0.8, -0.8, 1.6, -1.6 }) do
@@ -5572,7 +5496,7 @@ do
                                 v, flight = v2, flight2
                             end
                         end
-                        if worldmeta or not cfg.WallCheck or arcIsClear(from, v, gravity, flight) then
+                        if worldmeta or arcIsClear(from, v, gravity, flight) then
                             chosen, chosenTime = v, flight
                             break
                         end
@@ -5638,27 +5562,21 @@ do
             local lastSampleAt = 0
             mod.Maid:Give(RunService.Heartbeat:Connect(function()
                 local cam = Workspace.CurrentCamera
-                -- keep a short movement history of nearby targets (used by Measured Velocity)
+                -- keep a short movement history of nearby targets (used for measured velocity)
                 local now = os.clock()
-                if cfg.MeasuredVelocity and installed and now - lastSampleAt >= 0.05 then
+                if installed and now - lastSampleAt >= 0.05 then
                     lastSampleAt = now
                     local _, _, myRoot = Util.GetCharacter(LocalPlayer)
                     if myRoot then
                         for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                            if (entry.Root.Position - myRoot.Position).Magnitude <= cfg.Range * 1.5 then
+                            if (entry.Root.Position - myRoot.Position).Magnitude <= 180 then
                                 sample(entry, now)
                             end
                         end
                     end
                 end
-                if circle then
-                    local mouse = cam and aimReference(cam) or UserInputService:GetMouseLocation()
-                    circle.Visible = cfg.ShowFOV and installed
-                    circle.Position = mouse
-                    circle.Radius = cfg.FOV
-                end
 
-                if cfg.ShowTarget and lastTarget and os.clock() - lastTargetAt < 1.2
+                if lastTarget and os.clock() - lastTargetAt < 1.2
                     and lastTarget.Root and lastTarget.Root.Parent then
                     box.Adornee = lastTarget.Root
                 else
@@ -5673,16 +5591,16 @@ do
                             installed = true
                             Nova.Notify("Projectile Aim", "Hooked. Shoot a bow near a target.", 3, "success")
                         else
-                            setStatus(cfg.StatusLine, "unavailable - " .. tostring(why))
+                            setStatus(true, "unavailable - " .. tostring(why))
                         end
                     end
                     return
                 end
 
                 if os.clock() - lastTargetAt < 1.2 and lastTarget then
-                    setStatus(cfg.StatusLine, "aimed at " .. tostring(lastTarget.Name))
+                    setStatus(true, "aimed at " .. tostring(lastTarget.Name))
                 elseif cam then
-                    setStatus(cfg.StatusLine, "ready (" .. (Util.IsFirstPerson() and "first" or "third") .. " person)")
+                    setStatus(true, "ready (" .. (Util.IsFirstPerson() and "first" or "third") .. " person)")
                 end
             end))
 
@@ -5701,37 +5619,10 @@ do
         end,
     })
 
-    aim:AddSection("Targeting")
-    aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players" })
-    aim:AddOption({
-        Label = "Aim Part", Key = "AimPart", Options = { "Body", "Head", "Dynamic", "Closest", "Randomize" }, Default = "Body",
-        Tip = "Dynamic aims at the head only for head-hunter style weapons. Closest picks the part nearest your crosshair. Randomize rolls head or body for each target.",
-    })
-    aim:AddSlider({
-        Label = "Head Chance", Key = "HeadChance", Min = 0, Max = 100, Default = 50, Step = 5, Suffix = "%",
-        ShowIf = function(c) return c.AimPart == "Randomize" end,
-    })
-    aim:AddOption({ Label = "Sort", Key = "Sort", Options = { "Cursor", "Distance", "Health" }, Default = "Cursor", Tip = "Cursor picks whoever is closest to your crosshair. Health picks the weakest." })
-    aim:AddOption({ Label = "Work Mode", Key = "WorkMode", Options = { "Both", "First Person", "Third Person" }, Default = "Both", Tip = "Only redirect shots in this camera view." })
-    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
-    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 250, Default = 120, Step = 5, Suffix = " studs" })
-    aim:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
-    aim:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
-    aim:AddTextBox({ Label = "Ignore Projectiles", Key = "Ignore", Default = "telepearl", Placeholder = "comma separated names", Tip = "Projectile names that should never be redirected." })
-    aim:AddSection("Lead")
-    aim:AddSlider({ Label = "Horizontal Lead", Key = "HorizontalLead", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "100% = full prediction of sideways movement." })
-    aim:AddSlider({ Label = "Vertical Lead", Key = "VerticalLead", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "100% = full prediction of vertical movement." })
-    aim:AddToggle({ Label = "Bow Offset Fix", Key = "OffsetFix", Default = true })
-    aim:AddSection("Prediction")
-    aim:AddToggle({ Label = "Measured Velocity", Key = "MeasuredVelocity", Default = true, Tip = "Also measures how far a target actually moves, so speed hackers and laggy players are led correctly." })
-    aim:AddToggle({ Label = "Wall Aware Lead", Key = "WallAwareLead", Default = true, Tip = "Stops the predicted path at walls instead of leading through them." })
-    aim:AddToggle({ Label = "Jump Prediction", Key = "JumpPrediction", Default = true, Tip = "Leads targets that are just leaving the ground." })
-    aim:AddToggle({ Label = "Ping Compensation", Key = "PingCompensation", Default = true, Tip = "Adds half your ping to the lead." })
-    aim:AddSection("Visuals")
-    aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
-    aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
-    aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
-    aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing.")
+    aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
+    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction." })
+    aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead vertical movement (jumps/falls). 100% = full prediction." })
+    aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing. Everything else (targeting, range, wall check, ping compensation, etc.) is tuned automatically.")
 end
 
 -- ====================== MODULE: AUTO CAITLYN ======================
