@@ -1112,16 +1112,6 @@ function Controls.Slider(host, o)
         apply(default)
         host:Changed(key, cfg[key], o.Callback)
     end)
-    -- Scroll wheel over the bar nudges the value by one Step
-    hit.MouseWheelForward:Connect(function()
-        apply(cfg[key] + step)
-        host:Changed(key, cfg[key], o.Callback)
-    end)
-    hit.MouseWheelBackward:Connect(function()
-        apply(cfg[key] - step)
-        host:Changed(key, cfg[key], o.Callback)
-    end)
-
     -- Click the number to type an exact value
     valueBox.Focused:Connect(function()
         valueStroke.Color = Theme.Accent
@@ -5220,6 +5210,35 @@ do
     local History = setmetatable({}, { __mode = "k" })
     local HISTORY_SPAN = 0.4
 
+    -- The actual upward speed a target left the ground with, caught the instant they jump, so
+    -- air prediction uses what really happened instead of always assuming a fixed jump speed
+    -- (movement-affecting mods, bounce pads, etc. all jump at different speeds than the default).
+    local JumpVelocity = setmetatable({}, { __mode = "k" })
+    local WasGrounded = setmetatable({}, { __mode = "k" })
+    local JUMP_OBSERVATION_TTL = 1.5
+
+    local function watchForJump(entry, now)
+        local root, hum = entry.Root, entry.Humanoid
+        if not root or not root.Parent or not hum then
+            return
+        end
+        local grounded = hum.FloorMaterial ~= Enum.Material.Air
+        local was = WasGrounded[entry.Model]
+        if was == nil then
+            was = grounded
+        end
+        if was and not grounded then
+            local okState, state = pcall(hum.GetState, hum)
+            if okState and state == Enum.HumanoidStateType.Jumping then
+                local vy = root.AssemblyLinearVelocity.Y
+                if vy > 1 then
+                    JumpVelocity[entry.Model] = { vy = vy, at = now }
+                end
+            end
+        end
+        WasGrounded[entry.Model] = grounded
+    end
+
     local function sample(entry, now)
         local root = entry.Root
         if not root or not root.Parent then
@@ -5300,7 +5319,34 @@ do
                 Parent = UI.Gui,
             }))
 
-            -- Best target near the crosshair; returns entry, aimPart (always centre-mass)
+            local circle
+            if HAS_DRAWING then
+                circle = mod.Maid:Give(Drawing.new("Circle"))
+                circle.Thickness = 1
+                circle.NumSides = 64
+                circle.Filled = false
+                circle.Color = Theme.Accent
+                circle.Transparency = 0.8
+                circle.Visible = false
+            end
+
+            -- Headshot-style weapons (e.g. Headhunter) should aim the head, not the torso
+            local function headhunterWeapon(projmeta, tool)
+                local text = string.lower(tostring(tool and tool.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
+                return string.find(text, "headhunter", 1, true) ~= nil
+            end
+
+            local function aimPartFor(entry, projmeta, tool)
+                if headhunterWeapon(projmeta, tool) then
+                    local head = entry.Model:FindFirstChild("Head")
+                    if head and head:IsA("BasePart") then
+                        return head
+                    end
+                end
+                return entry.Root
+            end
+
+            -- Best target near the crosshair; returns entry, aimPart
             local function pickTarget(origin, cam, projmeta, tool)
                 local mouse = aimReference(cam)
                 local best, bestPart, bestScore = nil, nil, math.huge
@@ -5314,7 +5360,7 @@ do
                         end
                     end
                     if ok then
-                        local part = entry.Root
+                        local part = aimPartFor(entry, projmeta, tool)
                         local distance = (part.Position - origin).Magnitude
                         if distance <= cfg.Range then
                             local point, onScreen = cam:WorldToViewportPoint(part.Position)
@@ -5381,6 +5427,7 @@ do
                 local now = os.clock()
                 local velocity = root.AssemblyLinearVelocity
                 sample(entry, now)
+                watchForJump(entry, now)
                 local measured = measuredVelocity(entry, now)
                 if measured then
                     local replicated = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
@@ -5405,7 +5452,12 @@ do
                     end)
                     if okState and state == Enum.HumanoidStateType.Jumping then
                         airborne = true
-                        vy = JUMP_SPEED * verticalLead
+                        -- Prefer the speed this specific target actually left the ground with
+                        -- (caught live in the Heartbeat loop); fall back to the default jump speed
+                        -- if we didn't happen to catch the takeoff frame.
+                        local observed = JumpVelocity[entry.Model]
+                        local jumpSpeed = (observed and now - observed.at < JUMP_OBSERVATION_TTL) and observed.vy or JUMP_SPEED
+                        vy = jumpSpeed * verticalLead
                     end
                 end
 
@@ -5571,9 +5623,17 @@ do
                         for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
                             if (entry.Root.Position - myRoot.Position).Magnitude <= cfg.Range * 1.5 then
                                 sample(entry, now)
+                                watchForJump(entry, now)
                             end
                         end
                     end
+                end
+
+                if circle then
+                    local mouse = cam and aimReference(cam) or UserInputService:GetMouseLocation()
+                    circle.Visible = cfg.ShowFOV and installed
+                    circle.Position = mouse
+                    circle.Radius = cfg.FOV
                 end
 
                 if cfg.ShowTarget and lastTarget and os.clock() - lastTargetAt < 1.2
@@ -5624,6 +5684,7 @@ do
     aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
     aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction." })
     aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead vertical movement (jumps/falls). 100% = full prediction." })
+    aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
     aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
     aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing. Wall check, ping compensation, and measured velocity are still tuned automatically.")
