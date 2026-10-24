@@ -5316,13 +5316,13 @@ do
                     if ok then
                         local part = entry.Root
                         local distance = (part.Position - origin).Magnitude
-                        if distance <= 120 then
+                        if distance <= cfg.Range then
                             local point, onScreen = cam:WorldToViewportPoint(part.Position)
                             local screen = (Vector2.new(point.X, point.Y) - mouse).Magnitude
                             -- the target you were just aiming at gets a small head start, so two players
                             -- close together don't make the aim flip back and forth
                             local sticky = (entry == lastTarget and os.clock() - lastTargetAt < 0.8) and 1.3 or 1
-                            if onScreen and point.Z > 0 and screen <= 300 * sticky
+                            if onScreen and point.Z > 0 and screen <= cfg.FOV * sticky
                                 and Util.HasLineOfSight(cam.CFrame.Position, part.Position) then
                                 local score = (sticky > 1) and screen * 0.65 or screen
                                 if score < bestScore then
@@ -5569,7 +5569,7 @@ do
                     local _, _, myRoot = Util.GetCharacter(LocalPlayer)
                     if myRoot then
                         for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                            if (entry.Root.Position - myRoot.Position).Magnitude <= 180 then
+                            if (entry.Root.Position - myRoot.Position).Magnitude <= cfg.Range * 1.5 then
                                 sample(entry, now)
                             end
                         end
@@ -5620,9 +5620,11 @@ do
     })
 
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
+    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 120, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
+    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
     aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction." })
     aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead vertical movement (jumps/falls). 100% = full prediction." })
-    aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing. Everything else (targeting, range, wall check, ping compensation, etc.) is tuned automatically.")
+    aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing. Wall check, ping compensation, and measured velocity are still tuned automatically.")
 end
 
 -- ====================== MODULE: AUTO CAITLYN ======================
