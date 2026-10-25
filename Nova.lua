@@ -1,4 +1,3 @@
-
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))()
 
@@ -79,7 +78,12 @@ function Maid:Clean()
             elseif kind == "thread" then
                 task.cancel(item)
             else
-                -- Drawing objects and misc userdata/tables
+                -- Drawing objects and misc userdata/tables. Visible = false goes first and in its
+                -- own pcall: on some executors Remove() silently no-ops instead of erroring, which
+                -- used to leave a stray Drawing frozen on screen with nothing telling us it failed.
+                pcall(function()
+                    item.Visible = false
+                end)
                 if item.Remove then
                     item:Remove()
                 elseif item.Destroy then
@@ -6438,6 +6442,13 @@ do
                 local set = objects[entry]
                 if set then
                     for _, drawing in pairs(set) do
+                        -- Visible = false first: on some executors :Remove() silently no-ops
+                        -- instead of erroring, which used to leave the box frozen on screen with
+                        -- nothing telling us it failed. Hiding it first means it disappears even
+                        -- if the Remove() right after does nothing.
+                        pcall(function()
+                            drawing.Visible = false
+                        end)
                         pcall(function()
                             drawing:Remove()
                         end)
@@ -6569,6 +6580,305 @@ do
     esp:AddOption({ Label = "Color", Key = "Color", Options = { "Purple", "White", "Red", "Cyan", "Green" }, Default = "Purple", Swatches = PALETTE })
 
     Tabs.Render:CreatePlaceholder("More render features coming soon...")
+end
+
+-- ====================== MODULE: BED PLATES ======================
+-- Overhead tag on every bed (through walls, via BillboardGui + AlwaysOnTop) showing its team and
+-- a row of real item-icon chips for whatever is defending it, each badged with how many COMPLETE
+-- layers (full 360 rings, not just "some blocks nearby") of that material surround the bed. A
+-- chip with no number means that material is present but hasn't closed a full ring yet.
+do
+    local CollectionService = service("CollectionService")
+    local PLACEHOLDER_ICON = "rbxassetid://6031075931"
+    local BUCKETS = 16  -- angular slices a ring is checked against; all 16 filled = complete
+
+    local TEAM_COLORS = {
+        [1] = Color3.fromRGB(255, 90, 90),  [2] = Color3.fromRGB(90, 140, 255),
+        [3] = Color3.fromRGB(255, 230, 90), [4] = Color3.fromRGB(110, 255, 140),
+        [5] = Color3.fromRGB(255, 150, 230),[6] = Color3.fromRGB(120, 255, 240),
+        [7] = Color3.fromRGB(255, 160, 80), [8] = Color3.fromRGB(220, 220, 220),
+    }
+    local DEFAULT_PLATE_COLOR = Color3.fromRGB(200, 200, 210)
+
+    local function plateTeamColor(team)
+        return TEAM_COLORS[tonumber(team)] or DEFAULT_PLATE_COLOR
+    end
+
+    local function plateIcon(material)
+        local image = Bedwars.GetItemImage and Bedwars.GetItemImage(material) or ""
+        return image ~= "" and image or PLACEHOLDER_ICON
+    end
+
+    local bedPlates = Tabs.Render:CreateModule({
+        Name = "Bed Plates",
+        Description = "Tag over every bed showing its team and how many full layers of each block defend it.",
+        OnEnable = function(mod)
+            pcall(Bedwars.Resolve)
+            local cfg = mod.Config
+
+            local folder = New("Folder", { Name = "NovaBedPlates", Parent = UI.Gui })
+            mod.Maid:Give(folder)
+
+            -- Live-tracked bed/block lists, same tag-based discovery as the rest of Nova's bed code
+            local beds, blocks = {}, {}
+            local function addBed(inst)
+                local part = inst and inst:IsA("BasePart") and inst or nil
+                if part and not table.find(beds, part) then
+                    beds[#beds + 1] = part
+                end
+            end
+            local function removeBed(inst)
+                local index = table.find(beds, inst)
+                if index then
+                    table.remove(beds, index)
+                end
+            end
+            local function addBlock(inst)
+                local part = inst and inst:IsA("BasePart") and inst or nil
+                -- Beds are tagged BOTH "bed" and "block" (same dual-tag the Nuker module already
+                -- accounts for), so without this a bed counted itself as its own one-item defense -
+                -- the lone leftover chip once terrain stopped drowning it out.
+                if part and not CollectionService:HasTag(part, "bed") and not table.find(blocks, part) then
+                    blocks[#blocks + 1] = part
+                end
+            end
+            local function removeBlock(inst)
+                local index = table.find(blocks, inst)
+                if index then
+                    table.remove(blocks, index)
+                end
+            end
+            mod.Maid:Give(CollectionService:GetInstanceAddedSignal("bed"):Connect(addBed))
+            mod.Maid:Give(CollectionService:GetInstanceRemovedSignal("bed"):Connect(removeBed))
+            for _, inst in ipairs(CollectionService:GetTagged("bed")) do
+                addBed(inst)
+            end
+            mod.Maid:Give(CollectionService:GetInstanceAddedSignal("block"):Connect(addBlock))
+            mod.Maid:Give(CollectionService:GetInstanceRemovedSignal("block"):Connect(removeBlock))
+            for _, inst in ipairs(CollectionService:GetTagged("block")) do
+                addBlock(inst)
+            end
+
+            -- Tag GUIs ---------------------------------------------------------------------
+            local tags = {}  -- bed -> { Gui, Header, Row, Chips = {material -> {Icon, Amount}}, Order }
+            local function buildTag(bed)
+                local gui = New("BillboardGui", {
+                    Name = "NovaBedPlate",
+                    Size = UDim2.fromOffset(280, 70),
+                    StudsOffsetWorldSpace = Vector3.new(0, 2.6, 0),
+                    AlwaysOnTop = true,
+                    LightInfluence = 0,
+                    ResetOnSpawn = false,
+                    Adornee = bed,
+                    Parent = folder,
+                })
+                local stack = New("Frame", {
+                    AnchorPoint = Vector2.new(0.5, 1),
+                    Position = UDim2.fromScale(0.5, 1),
+                    Size = UDim2.fromOffset(0, 0),
+                    AutomaticSize = Enum.AutomaticSize.XY,
+                    BackgroundTransparency = 1,
+                    Parent = gui,
+                }, {
+                    New("UIListLayout", {
+                        Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder,
+                        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                        VerticalAlignment = Enum.VerticalAlignment.Bottom,
+                    }),
+                })
+                local header = New("TextLabel", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromOffset(0, 16),
+                    AutomaticSize = Enum.AutomaticSize.X,
+                    Font = FONT.Bold,
+                    TextSize = 13,
+                    TextColor3 = Color3.new(1, 1, 1),
+                    TextStrokeTransparency = 0,
+                    LayoutOrder = 1,
+                    Parent = stack,
+                })
+                local row = New("Frame", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromOffset(0, 0),
+                    AutomaticSize = Enum.AutomaticSize.XY,
+                    LayoutOrder = 2,
+                    Parent = stack,
+                }, {
+                    New("UIListLayout", {
+                        FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4),
+                        SortOrder = Enum.SortOrder.LayoutOrder,
+                        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                        VerticalAlignment = Enum.VerticalAlignment.Center,
+                    }),
+                })
+                local tag = { Gui = gui, Header = header, Row = row, Chips = {}, Order = 0 }
+                tags[bed] = tag
+                return tag
+            end
+
+            local function chipFor(tag, material)
+                local chip = tag.Chips[material]
+                if chip then
+                    return chip
+                end
+                tag.Order = tag.Order + 1
+                local icon = New("ImageLabel", {
+                    Name = material,
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromOffset(22, 22),
+                    LayoutOrder = tag.Order,
+                    Image = "",
+                    Parent = tag.Row,
+                })
+                local amount = New("TextLabel", {
+                    Name = "Amt",
+                    BackgroundTransparency = 1,
+                    AnchorPoint = Vector2.new(0.5, 1),
+                    Position = UDim2.new(0.5, 0, 1, 4),
+                    Size = UDim2.fromOffset(30, 11),
+                    Font = FONT.Bold,
+                    TextSize = 11,
+                    TextColor3 = Color3.new(1, 1, 1),
+                    TextStrokeTransparency = 0,
+                    TextXAlignment = Enum.TextXAlignment.Center,
+                    TextYAlignment = Enum.TextYAlignment.Bottom,
+                    Text = "",
+                    ZIndex = 2,
+                    Parent = icon,
+                })
+                chip = { Icon = icon, Amount = amount }
+                tag.Chips[material] = chip
+                return chip
+            end
+
+            local function destroyTag(bed)
+                local tag = tags[bed]
+                if tag then
+                    pcall(function() tag.Gui:Destroy() end)
+                    tags[bed] = nil
+                end
+            end
+            mod.Maid:Give(function()
+                for bed in pairs(tags) do
+                    destroyTag(bed)
+                end
+            end)
+
+            -- Layer analysis -----------------------------------------------------------------
+            -- Buckets every nearby block by material + 3-stud Y band, each band split into 16
+            -- angular slices around the bed. A band is a "complete layer" for a material only
+            -- when every slice has at least one block of that material in it (a full ring, not
+            -- just a pile on one side) - gaps an attacker could walk through don't count.
+            -- The "block" tag covers every voxel in the map, including pre-built terrain - and it
+            -- turns out a Team/PlacedByUserId attribute alone doesn't separate placed defense from
+            -- terrain either: the whole island a team spawns on carries that team's Team attribute
+            -- too, not just blocks someone actually placed. So this leans on geometry instead,
+            -- which is reliable regardless of attributes: a defense cage is built starting at the
+            -- bed's own height and going UP from there - nothing that actually protects a bed is
+            -- more than a hair below it. Ground the bed happens to be resting on sits well below
+            -- bed-centre once its own height is accounted for, so a floor just under the bed
+            -- filters terrain out without needing to know what any particular block is tagged.
+            local Y_FLOOR = -1.5
+
+            local function analyzeLayers(bedPart, radius)
+                local center = bedPart.Position
+                local bands, present = {}, {}
+                for _, block in ipairs(blocks) do
+                    if block.Parent then
+                        local offset = block.Position - center
+                        -- full 3D distance (not just flat/horizontal) plus the height floor above -
+                        -- a block far above/below that's merely horizontally close, or ground the
+                        -- bed is sitting on, shouldn't count as "defending" it
+                        if offset.Magnitude <= radius and offset.Y >= Y_FLOOR then
+                            local material = block.Name
+                            present[material] = true
+                            local yband = math.floor(block.Position.Y / 3 + 0.5)
+                            local angle = math.atan2(offset.Z, offset.X)
+                            if angle < 0 then
+                                angle = angle + math.pi * 2
+                            end
+                            local bucket = math.floor(angle / (math.pi * 2 / BUCKETS))
+                            bands[material] = bands[material] or {}
+                            bands[material][yband] = bands[material][yband] or {}
+                            bands[material][yband][bucket] = true
+                        end
+                    end
+                end
+                local complete = {}
+                for material, byBand in pairs(bands) do
+                    local count = 0
+                    for _, bucketSet in pairs(byBand) do
+                        local full = true
+                        for b = 0, BUCKETS - 1 do
+                            if not bucketSet[b] then
+                                full = false
+                                break
+                            end
+                        end
+                        if full then
+                            count = count + 1
+                        end
+                    end
+                    complete[material] = count
+                end
+                return complete, present
+            end
+
+            local function refreshBed(bed)
+                if not bed.Parent then
+                    destroyTag(bed)
+                    return
+                end
+                local myTeam = LocalPlayer:GetAttribute("Team")
+                local team = bed:GetAttribute("Team")
+                if cfg.HideMyTeam and myTeam ~= nil and tostring(team) == tostring(myTeam) then
+                    destroyTag(bed)
+                    return
+                end
+                local tag = tags[bed] or buildTag(bed)
+                tag.Gui.MaxDistance = cfg.MaxDistance
+                tag.Header.Text = "Team " .. tostring(team ~= nil and team or "?")
+                tag.Header.TextColor3 = plateTeamColor(team)
+                tag.Row.Visible = cfg.Defense
+                if cfg.Defense then
+                    local complete, present = analyzeLayers(bed, cfg.DefenseRadius)
+                    local seenChip = {}
+                    for material in pairs(present) do
+                        seenChip[material] = true
+                        local chip = chipFor(tag, material)
+                        chip.Icon.Image = plateIcon(material)
+                        chip.Icon.Visible = true
+                        local count = complete[material] or 0
+                        chip.Amount.Text = count > 0 and tostring(count) or ""
+                    end
+                    for material, chip in pairs(tag.Chips) do
+                        if not seenChip[material] then
+                            chip.Icon.Visible = false
+                        end
+                    end
+                end
+            end
+
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    for _, bed in ipairs(beds) do
+                        pcall(refreshBed, bed)
+                    end
+                    for bed in pairs(tags) do
+                        if not bed.Parent then
+                            destroyTag(bed)
+                        end
+                    end
+                    task.wait(0.4)
+                end
+            end))
+        end,
+    })
+
+    bedPlates:AddToggle({ Label = "Hide My Team", Key = "HideMyTeam", Default = true, Tip = "Don't show a plate over your own bed or teammates' beds." })
+    bedPlates:AddToggle({ Label = "Defense", Key = "Defense", Default = true, Tip = "Shows an icon for each block type defending the bed, badged with its number of complete layers." })
+    bedPlates:AddSlider({ Label = "Defense Radius", Key = "DefenseRadius", Min = 3, Max = 20, Default = 9, Step = 1, Suffix = " studs", ShowIf = function(c) return c.Defense end })
+    bedPlates:AddSlider({ Label = "Max Distance", Key = "MaxDistance", Min = 100, Max = 5000, Default = 2000, Step = 50, Suffix = " studs" })
 end
 
 -- ====================== MODULE: SPRINT ======================
@@ -11653,12 +11963,10 @@ do
     local function removeDrawing(key)
         local drawn = drawings[key]
         if drawn then
-            pcall(function()
-                drawn.Text.Visible = false
-                drawn.BG.Visible = false
-                drawn.Text:Remove()
-                drawn.BG:Remove()
-            end)
+            pcall(function() drawn.Text.Visible = false end)
+            pcall(function() drawn.BG.Visible = false end)
+            pcall(function() drawn.Text:Remove() end)
+            pcall(function() drawn.BG:Remove() end)
             drawings[key] = nil
         end
     end
