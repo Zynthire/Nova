@@ -1,8 +1,9 @@
+
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))()
 
-local __nova = [====[
 print("testing......")
+local __nova = [====[
 
 local NOVA_SOURCE = ...
 
@@ -235,6 +236,10 @@ end
 -- Target registry: every Humanoid in the workspace (players AND NPCs)
 local TARGET_MODES = { "Players", "Players + NPCs", "NPCs Only" }
 local TargetRegistry = { Entries = {} }
+
+-- Kill Aura publishes whatever it's currently locked onto here, so Aim Assist can optionally
+-- follow the exact same target instead of picking its own (see "Use Kill Aura Target").
+local SharedAimTarget = { Entry = nil, At = 0 }
 
 local function registerHumanoid(inst)
     if inst:IsA("Humanoid") and not TargetRegistry.Entries[inst] then
@@ -525,38 +530,50 @@ do
     end
 end
 
+-- Deep obsidian base (not just "dark purple panel") with a two-tone accent gradient
+-- (Accent -> AccentAlt) used everywhere a flat accent fill used to be - tabs, sliders, the
+-- window border glow, module cards - so the whole thing reads as one deliberate gradient
+-- language instead of a single flat colour repeated everywhere.
 local Theme = {
-    Background  = Color3.fromRGB(8, 7, 14),
-    Panel       = Color3.fromRGB(14, 12, 23),
-    Card        = Color3.fromRGB(26, 22, 40),
-    CardHi      = Color3.fromRGB(32, 28, 49),
+    Background  = Color3.fromRGB(5, 5, 9),
+    Panel       = Color3.fromRGB(11, 10, 18),
+    Card        = Color3.fromRGB(18, 16, 29),
+    CardHi      = Color3.fromRGB(24, 22, 37),
     Accent      = Color3.fromRGB(152, 98, 255),
+    AccentAlt   = Color3.fromRGB(90, 200, 255),
     AccentDark  = Color3.fromRGB(104, 62, 205),
     AccentLight = Color3.fromRGB(198, 164, 255),
-    Text        = Color3.fromRGB(242, 238, 253),
-    TextDim     = Color3.fromRGB(150, 142, 178),
-    TextFaint   = Color3.fromRGB(100, 94, 128),
-    Stroke      = Color3.fromRGB(38, 33, 58),
-    StrokeHover = Color3.fromRGB(70, 62, 108),
-    Track       = Color3.fromRGB(46, 40, 72),
+    Text        = Color3.fromRGB(245, 243, 252),
+    TextDim     = Color3.fromRGB(154, 148, 180),
+    TextFaint   = Color3.fromRGB(98, 93, 124),
+    Stroke      = Color3.fromRGB(34, 31, 52),
+    StrokeHover = Color3.fromRGB(72, 64, 112),
+    Track       = Color3.fromRGB(40, 36, 64),
     Good        = Color3.fromRGB(110, 224, 150),
     Bad         = Color3.fromRGB(255, 96, 118),
     Warn        = Color3.fromRGB(255, 198, 96),
 }
 
+-- Each accent carries a paired "Alt" colour for the gradient's second stop, hand-picked per
+-- accent rather than computed, so the pairing always looks intentional (violet -> sky, pink ->
+-- sunset orange, etc.) instead of an auto hue-shift landing somewhere muddy.
 local ACCENTS = {
-    { Name = "Purple", Color = Color3.fromRGB(152, 98, 255) },
-    { Name = "Blue",   Color = Color3.fromRGB(86, 148, 255) },
-    { Name = "Cyan",   Color = Color3.fromRGB(64, 208, 232) },
-    { Name = "Green",  Color = Color3.fromRGB(84, 214, 148) },
-    { Name = "Pink",   Color = Color3.fromRGB(255, 104, 176) },
-    { Name = "Orange", Color = Color3.fromRGB(255, 156, 80) },
+    { Name = "Purple", Color = Color3.fromRGB(152, 98, 255), Alt = Color3.fromRGB(90, 200, 255) },
+    { Name = "Blue",   Color = Color3.fromRGB(86, 148, 255), Alt = Color3.fromRGB(64, 208, 232) },
+    { Name = "Cyan",   Color = Color3.fromRGB(64, 208, 232), Alt = Color3.fromRGB(120, 130, 255) },
+    { Name = "Green",  Color = Color3.fromRGB(84, 214, 148), Alt = Color3.fromRGB(64, 208, 232) },
+    { Name = "Pink",   Color = Color3.fromRGB(255, 104, 176), Alt = Color3.fromRGB(255, 156, 80) },
+    { Name = "Orange", Color = Color3.fromRGB(255, 156, 80), Alt = Color3.fromRGB(255, 104, 176) },
 }
 local ACCENT_NAMES, ACCENT_SWATCHES = {}, {}
 for _, accent in ipairs(ACCENTS) do
     ACCENT_NAMES[#ACCENT_NAMES + 1] = accent.Name
     ACCENT_SWATCHES[accent.Name] = accent.Color
 end
+-- No separate ACCENT_ALTS table or helper function here - every one of those is one more
+-- permanent top-level local in a script that's already brushing against Lua's 200-local-per-
+-- function ceiling. The couple of call sites that need an accent's Alt colour just loop over
+-- ACCENTS (already a local) inline instead.
 
 -- Anything that shows the accent colour registers a repaint function here, so changing the
 -- accent in settings recolours the whole interface live.
@@ -567,8 +584,9 @@ local function onTheme(fn)
     return fn
 end
 
-local function applyAccent(color)
+local function applyAccent(color, alt)
     Theme.Accent = color
+    Theme.AccentAlt = alt or color:Lerp(Color3.new(1, 1, 1), 0.3)
     Theme.AccentDark = color:Lerp(Color3.new(0, 0, 0), 0.32)
     Theme.AccentLight = color:Lerp(Color3.new(1, 1, 1), 0.45)
     for _, hook in ipairs(ThemeHooks) do
@@ -582,10 +600,15 @@ local FONT = {
     Bold    = Enum.Font.GothamBold,
 }
 
-local WINDOW_W, WINDOW_H = 780, 520
-local SIDEBAR_W, TOPBAR_H, FOOTER_H = 176, 60, 0
-local PAGE_PAD, BODY_PAD, HEADER_H = 24, 18, 56
-local CONTENT_W = WINDOW_W - SIDEBAR_W - 1 - PAGE_PAD * 2
+-- Scaled up from the original 960x560 (~1.14x both axes, not just wider) so module names and
+-- the detail panel's longer hints have room to breathe without truncating to "...".
+local WINDOW_W, WINDOW_H = 1100, 640
+local SIDEBAR_W, TOPBAR_H, FOOTER_H = 200, 64, 30
+local PAGE_PAD, BODY_PAD, HEADER_H = 24, 20, 64
+-- The content area right of the sidebar is split into two columns: a module LIST (left) and a
+-- persistent settings DETAIL panel (right) - replacing the old single-column accordion list.
+local LIST_W = 320
+local CONTENT_W = WINDOW_W - SIDEBAR_W - 1 - LIST_W - 1
 local BODY_INNER_W = CONTENT_W - BODY_PAD * 2
 local ROW_GAP, BODY_TOP, BODY_BOTTOM = 8, 6, 16
 
@@ -630,10 +653,12 @@ local function Pad(left, top, right, bottom)
     })
 end
 
+-- Quint instead of Quad as the fallback curve - every Animate() call that doesn't pick its own
+-- easing (most hover/press feedback in the file) gets a snappier, more "premium" settle for free.
 local function Tween(inst, duration, props, style, direction)
     local tween = TweenService:Create(
         inst,
-        TweenInfo.new(duration, style or Enum.EasingStyle.Quad, direction or Enum.EasingDirection.Out),
+        TweenInfo.new(duration, style or Enum.EasingStyle.Quint, direction or Enum.EasingDirection.Out),
         props
     )
     tween:Play()
@@ -725,6 +750,11 @@ local function createSwitch(parent, width, height)
         BorderSizePixel = 0,
         Parent = parent,
     }, { Round(height / 2) })
+    -- Two-tone wash that only shows once the switch is on, layered over the flat track colour.
+    local trackGradient = New("UIGradient", { Rotation = 20, Enabled = false, Parent = track })
+    -- A soft ring that fades in around the track when it's on, standing in for a real glow.
+    local haloRing = Stroke(Theme.Accent, 3, 1)
+    haloRing.Parent = track
     local knob = New("Frame", {
         Size = UDim2.fromOffset(knobSize, knobSize),
         Position = UDim2.fromOffset(3, 3),
@@ -741,10 +771,14 @@ local function createSwitch(parent, width, height)
 
     local function paint(instant)
         local position = UDim2.fromOffset(state and (width - knobSize - 3) or 3, 3)
+        trackGradient.Enabled = state
         Animate(track, { BackgroundColor3 = state and Theme.Accent or Theme.Track }, instant, 0.18)
         Animate(knob, { Position = position, BackgroundColor3 = state and Color3.new(1, 1, 1) or Theme.TextDim }, instant, 0.18)
+        Animate(haloRing, { Transparency = state and 0.6 or 1 }, instant, 0.18)
     end
     onTheme(function()
+        trackGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
+        haloRing.Color = Theme.Accent
         paint(true)
     end)
 
@@ -1055,7 +1089,7 @@ function Controls.Slider(host, o)
     })
     onTheme(function()
         fill.BackgroundColor3 = Color3.new(1, 1, 1)
-        fillGradient.Color = ColorSequence.new(Theme.AccentDark, Theme.AccentLight)
+        fillGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
         knobRing.Color = Theme.Accent
         valueBox.TextColor3 = Theme.AccentLight
     end)
@@ -1180,13 +1214,14 @@ function Controls.Option(host, o)
             BorderSizePixel = 0,
             Parent = row,
         }, { Round(9), Stroke(Theme.Stroke, 1) })
+        local highlightGradient = New("UIGradient", { Rotation = 20 })
         local highlight = New("Frame", {
             Position = UDim2.fromOffset(2, 2),
             Size = UDim2.fromOffset(widths[1], 22),
             BackgroundColor3 = Theme.Accent,
             BorderSizePixel = 0,
             Parent = segment,
-        }, { Round(7) })
+        }, { Round(7), highlightGradient })
         local buttons = {}
         local x = 2
         for index, item in ipairs(list) do
@@ -1221,6 +1256,7 @@ function Controls.Option(host, o)
         end
         onTheme(function()
             highlight.BackgroundColor3 = Theme.Accent
+            highlightGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
         end)
     elseif style == "swatches" then
         local size, gap = 20, 8
@@ -1503,34 +1539,42 @@ local BrandArea = New("Frame", {
     BackgroundTransparency = 1,
     Parent = Sidebar,
 })
-local brandGlow = New("Frame", {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromOffset(16 + 17, 17 + 17),
-    Size = UDim2.fromOffset(48, 48),
-    BackgroundColor3 = Color3.new(1, 1, 1),
-    BackgroundTransparency = 0.88,
-    BorderSizePixel = 0,
-    ZIndex = 0,
-    Parent = BrandArea,
-}, { Round(16) })
-local brandTile = New("Frame", {
-    Position = UDim2.fromOffset(16, 17),
-    Size = UDim2.fromOffset(34, 34),
-    BackgroundColor3 = Color3.new(1, 1, 1),
-    BorderSizePixel = 0,
-    Parent = BrandArea,
-}, { Round(12) })
-local brandGradient = New("UIGradient", { Rotation = 45, Parent = brandTile })
-Stroke(Color3.new(1, 1, 1), 1, 0.7).Parent = brandTile
-New("TextLabel", {
-    Size = UDim2.fromScale(1, 1),
-    BackgroundTransparency = 1,
-    Text = "N",
-    Font = FONT.Bold,
-    TextSize = 19,
-    TextColor3 = Color3.new(1, 1, 1),
-    Parent = brandTile,
-})
+-- brandGlow/brandTile/brandGradient are only ever touched in here - scoped to its own block
+-- instead of living as permanent top-level locals for the rest of the script.
+do
+    local brandGlow = New("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromOffset(16 + 17, 17 + 17),
+        Size = UDim2.fromOffset(48, 48),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0.88,
+        BorderSizePixel = 0,
+        ZIndex = 0,
+        Parent = BrandArea,
+    }, { Round(16) })
+    local brandTile = New("Frame", {
+        Position = UDim2.fromOffset(16, 17),
+        Size = UDim2.fromOffset(34, 34),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        Parent = BrandArea,
+    }, { Round(12) })
+    local brandGradient = New("UIGradient", { Rotation = 45, Parent = brandTile })
+    Stroke(Color3.new(1, 1, 1), 1, 0.7).Parent = brandTile
+    New("TextLabel", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Text = "N",
+        Font = FONT.Bold,
+        TextSize = 19,
+        TextColor3 = Color3.new(1, 1, 1),
+        Parent = brandTile,
+    })
+    onTheme(function()
+        brandGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
+        brandGlow.BackgroundColor3 = Theme.Accent
+    end)
+end
 New("TextLabel", {
     Position = UDim2.fromOffset(58, 15),
     Size = UDim2.fromOffset(100, 22),
@@ -1553,10 +1597,6 @@ New("TextLabel", {
     TextXAlignment = Enum.TextXAlignment.Left,
     Parent = BrandArea,
 })
-onTheme(function()
-    brandGradient.Color = ColorSequence.new(Theme.AccentLight, Theme.AccentDark)
-    brandGlow.BackgroundColor3 = Theme.Accent
-end)
 
 local TAB = { X = 12, Y = 84, H = 38, GAP = 4 }
 local TabHolder = New("Frame", {
@@ -1587,7 +1627,7 @@ local TabIndicator = New("Frame", {
     Parent = Sidebar,
 }, { Round(11), tabIndicatorGradient })
 onTheme(function()
-    tabIndicatorGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentDark)
+    tabIndicatorGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
 end)
 
 -- Top bar --------------------------------------------------------------
@@ -1607,17 +1647,19 @@ New("Frame", {
     BorderSizePixel = 0,
     Parent = TopBar,
 })
-local titleBar = New("Frame", {
-    AnchorPoint = Vector2.new(0, 0.5),
-    Position = UDim2.fromOffset(PAGE_PAD, 23),
-    Size = UDim2.fromOffset(3, 16),
-    BackgroundColor3 = Theme.Accent,
-    BorderSizePixel = 0,
-    Parent = TopBar,
-}, { Round(2) })
-onTheme(function()
-    titleBar.BackgroundColor3 = Theme.Accent
-end)
+do
+    local titleBar = New("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.fromOffset(PAGE_PAD, 23),
+        Size = UDim2.fromOffset(3, 16),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+        Parent = TopBar,
+    }, { Round(2) })
+    onTheme(function()
+        titleBar.BackgroundColor3 = Theme.Accent
+    end)
+end
 UI.TitleLabel = New("TextLabel", {
     Position = UDim2.fromOffset(PAGE_PAD + 11, 11),
     Size = UDim2.fromOffset(230, 22),
@@ -1654,6 +1696,9 @@ local closeButton = iconButton("×", 20, PAGE_PAD)
 local gearButton = iconButton("⚙", 16, PAGE_PAD + 38)
 
 -- Search
+-- Everything the search box needs (searchStroke, SearchFrame, searchClear, the "Active" chip)
+-- stays local to this block - nothing outside the Search section ever touches them by name.
+do
 local searchStroke = Stroke(Theme.Stroke, 1, 1)
 local SearchFrame = New("Frame", {
     AnchorPoint = Vector2.new(1, 0.5),
@@ -1663,6 +1708,9 @@ local SearchFrame = New("Frame", {
     BorderSizePixel = 0,
     Parent = TopBar,
 }, { Round(15), searchStroke })
+-- No search-icon glyph here on purpose: "⌕" isn't in Roblox's default UI font, so it was
+-- rendering as a missing-glyph box instead of a magnifying glass. The placeholder text alone
+-- carries the hint now.
 UI.SearchBox = New("TextBox", {
     Position = UDim2.fromOffset(12, 0),
     Size = UDim2.new(1, -38, 1, 0),
@@ -1752,6 +1800,7 @@ end)
 searchClear.MouseButton1Click:Connect(function()
     UI.SearchBox.Text = ""
 end)
+end
 
 -- Profile card (bottom of the sidebar): avatar, name, and an online dot. Also carries the
 -- enabled-module count as a small badge instead of a bare line of text.
@@ -1807,15 +1856,347 @@ New("Frame", {
     }),
 })
 
--- Pages ----------------------------------------------------------------
+-- Pages (module LIST column) --------------------------------------------
 local Pages = New("Frame", {
     Name = "Pages",
     Position = UDim2.fromOffset(RIGHT_X, TOPBAR_H),
-    Size = UDim2.fromOffset(RIGHT_W, WINDOW_H - TOPBAR_H - FOOTER_H),
+    Size = UDim2.fromOffset(LIST_W, WINDOW_H - TOPBAR_H - FOOTER_H),
     BackgroundTransparency = 1,
     ClipsDescendants = true,
     Parent = UI.Main,
 })
+
+-- Detail panel (settings for whichever module is selected) --------------
+-- A single shared panel, not one per module: each module's settings body is built once (same
+-- Controls/host system as always) and lives in a hidden Storage frame until that module is
+-- selected, at which point it's reparented in here. Nothing outside this block touches the
+-- panel's pieces directly - everything else goes through UI.Detail.* or UI:SelectModule.
+UI.Detail = {}
+do
+    local panel = New("Frame", {
+        Name = "DetailPanel",
+        Position = UDim2.fromOffset(RIGHT_X + LIST_W + 1, TOPBAR_H),
+        Size = UDim2.fromOffset(CONTENT_W, WINDOW_H - TOPBAR_H - FOOTER_H),
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+        Parent = UI.Main,
+    })
+    New("Frame", {
+        Size = UDim2.new(0, 1, 1, 0),
+        BackgroundColor3 = Theme.Stroke,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        Parent = panel,
+    })
+
+    local empty = New("TextLabel", {
+        Position = UDim2.fromOffset(PAGE_PAD, 28),
+        Size = UDim2.new(1, -(PAGE_PAD * 2), 0, 20),
+        BackgroundTransparency = 1,
+        Text = "Select a module on the left",
+        Font = FONT.Regular,
+        TextSize = 12,
+        TextColor3 = Theme.TextFaint,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = panel,
+    })
+
+    local header = New("Frame", {
+        Name = "Header",
+        Position = UDim2.fromOffset(PAGE_PAD, 20),
+        Size = UDim2.new(1, -(PAGE_PAD * 2), 0, 46),
+        BackgroundTransparency = 1,
+        Visible = false,
+        Parent = panel,
+    })
+    local iconTile = New("Frame", {
+        Size = UDim2.fromOffset(40, 40),
+        BackgroundColor3 = Theme.Panel,
+        BorderSizePixel = 0,
+        Parent = header,
+    }, { Round(10), Stroke(Theme.Stroke, 1, 0.3) })
+    local iconGradient = New("UIGradient", {
+        Rotation = 45,
+        Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt),
+        Parent = iconTile,
+    })
+    local iconGlyph = New("TextLabel", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Text = "",
+        Font = FONT.Medium,
+        TextSize = 17,
+        TextColor3 = Color3.new(1, 1, 1),
+        Parent = iconTile,
+    })
+    local nameLabel = New("TextLabel", {
+        Position = UDim2.fromOffset(52, 0),
+        Size = UDim2.new(1, -(52 + 160), 0, 22),
+        BackgroundTransparency = 1,
+        Text = "",
+        Font = FONT.Bold,
+        TextSize = 16,
+        TextColor3 = Theme.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = header,
+    })
+    local descLabel = New("TextLabel", {
+        Position = UDim2.fromOffset(52, 23),
+        Size = UDim2.new(1, -(52 + 160), 0, 18),
+        BackgroundTransparency = 1,
+        Text = "",
+        Font = FONT.Regular,
+        TextSize = 11,
+        TextColor3 = Theme.TextDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = header,
+    })
+
+    local switchTrack, setSwitch, switchClick = createSwitch(header, 46, 24)
+    switchTrack.AnchorPoint = Vector2.new(1, 0)
+    switchTrack.Position = UDim2.new(1, 0, 0, 1)
+
+    local chipStroke = Stroke(Theme.Stroke, 1)
+    local keyBox = New("TextButton", {
+        Name = "KeyBind",
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 29),
+        Size = UDim2.fromOffset(76, 24),
+        BackgroundColor3 = Theme.Panel,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+        Text = "None",
+        Font = FONT.Medium,
+        TextSize = 11,
+        TextColor3 = Theme.TextFaint,
+        Parent = header,
+    }, { Round(12), chipStroke })
+    -- Tooltip attached below, once UI:AttachTip exists (this block runs before that's defined).
+
+    local divider = New("Frame", {
+        Position = UDim2.fromOffset(PAGE_PAD, 74),
+        Size = UDim2.new(1, -(PAGE_PAD * 2), 0, 1),
+        BackgroundColor3 = Theme.Stroke,
+        BackgroundTransparency = 0.3,
+        BorderSizePixel = 0,
+        Visible = false,
+        Parent = panel,
+    })
+
+    local scroller = New("ScrollingFrame", {
+        Name = "Settings",
+        Position = UDim2.fromOffset(0, 84),
+        Size = UDim2.new(1, 0, 1, -84),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Theme.Accent,
+        ScrollBarImageTransparency = 0.25,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+        CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false,
+        Parent = panel,
+    })
+    pcall(function()
+        scroller.ElasticBehavior = Enum.ElasticBehavior.Never
+    end)
+    onTheme(function()
+        scroller.ScrollBarImageColor3 = Theme.Accent
+        iconGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
+    end)
+    scroller:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+        UI:CloseDropdown()
+        UI:HideTip()
+    end)
+
+    -- Holds every module's settings content while it ISN'T the selected one - never rendered.
+    local storage = New("Frame", { Name = "Storage", Visible = false, Parent = UI.Gui })
+
+    UI.Detail.Panel, UI.Detail.Empty, UI.Detail.Header = panel, empty, header
+    UI.Detail.IconGlyph, UI.Detail.NameLabel, UI.Detail.DescLabel = iconGlyph, nameLabel, descLabel
+    UI.Detail.SetSwitch, UI.Detail.SwitchClick = setSwitch, switchClick
+    UI.Detail.KeyBox, UI.Detail.ChipStroke = keyBox, chipStroke
+    UI.Detail.Divider, UI.Detail.Scroller, UI.Detail.Storage = divider, scroller, storage
+
+    -- The chip is shared across every module - its click/hover handlers read whichever module
+    -- is currently selected instead of being baked into one module's closure.
+    local lastChipClick = 0
+    local function stopListening()
+        if not UI.Detail.Listening then
+            return
+        end
+        UI.Detail.Listening = false
+        UI:StopKeyListen()
+        chipStroke.Color = UI.Detail.ChipHover and Theme.StrokeHover or Theme.Stroke
+        UI:RefreshDetailKey()
+    end
+    local function startListening()
+        local mod = UI.SelectedModule
+        if UI.Detail.Listening or not mod then
+            return
+        end
+        UI.Detail.Listening = true
+        keyBox.Text = "Click a key…"
+        keyBox.TextColor3 = Theme.AccentLight
+        chipStroke.Color = Theme.Accent
+        UI:StartKeyListen({
+            Cancel = stopListening,
+            Apply = function(keyCode)
+                local cfg = mod.Config
+                if keyCode == Enum.KeyCode.RightShift then
+                    Nova.Notify(mod.Name, "RightShift is reserved for the window", 3, "error")
+                elseif keyCode.Name == cfg.Key then
+                    cfg.Key = "None"
+                    Nova.Notify(mod.Name, "Keybind cleared", 2)
+                else
+                    cfg.Key = keyCode.Name
+                    Nova.Notify(mod.Name, "Bound to " .. keyText(keyCode.Name), 2)
+                end
+                stopListening()
+            end,
+        })
+    end
+    keyBox.MouseButton1Click:Connect(function()
+        UI:HideTip()
+        local now = os.clock()
+        local isDouble = (now - lastChipClick) < 0.3
+        lastChipClick = now
+        local mod = UI.SelectedModule
+        if isDouble then
+            stopListening()
+            if mod and mod.Config.Key ~= nil and mod.Config.Key ~= "None" then
+                mod.Config.Key = "None"
+                UI:RefreshDetailKey()
+                Nova.Notify(mod.Name, "Keybind cleared", 2)
+            end
+        elseif UI.Detail.Listening then
+            stopListening()
+        else
+            startListening()
+        end
+    end)
+    keyBox.MouseEnter:Connect(function()
+        UI.Detail.ChipHover = true
+        if not UI.Detail.Listening then
+            chipStroke.Color = Theme.StrokeHover
+        end
+    end)
+    keyBox.MouseLeave:Connect(function()
+        UI.Detail.ChipHover = false
+        if not UI.Detail.Listening then
+            chipStroke.Color = Theme.Stroke
+        end
+    end)
+    switchClick.MouseButton1Click:Connect(function()
+        if UI.SelectedModule then
+            UI.SelectedModule:Toggle()
+        end
+    end)
+end
+
+-- Paints the shared keybind chip from whichever module is currently selected.
+function UI:RefreshDetailKey()
+    local mod = UI.SelectedModule
+    if not mod or UI.Detail.Listening then
+        return
+    end
+    local unbound = (mod.Config.Key == nil or mod.Config.Key == "None")
+    UI.Detail.KeyBox.Text = keyText(mod.Config.Key)
+    UI.Detail.KeyBox.TextColor3 = unbound and Theme.TextFaint or Theme.AccentLight
+end
+
+-- Shows `mod`'s settings in the detail panel, parking whichever module was shown before.
+function UI:SelectModule(mod)
+    if not mod or UI.SelectedModule == mod then
+        return
+    end
+    local prev = UI.SelectedModule
+    if prev then
+        prev.Content.Parent = UI.Detail.Storage
+        prev.Content.Visible = false
+        if prev.PaintRow then
+            prev.PaintRow(false)
+        end
+    end
+    UI.SelectedModule = mod
+    if mod.PaintRow then
+        mod.PaintRow(false)
+    end
+
+    local d = UI.Detail
+    d.Empty.Visible = false
+    d.Header.Visible = true
+    d.Divider.Visible = true
+    d.Scroller.Visible = true
+    d.IconGlyph.Text = (mod.Tab and mod.Tab.Icon) or "•"
+    d.NameLabel.Text = mod.Name
+    if mod.StatusText then
+        d.DescLabel.Text = mod.StatusText
+        d.DescLabel.TextColor3 = (mod.StatusKind == "error") and Theme.Bad or (mod.StatusKind == "warn" and Theme.Warn or Theme.AccentLight)
+    else
+        d.DescLabel.Text = (mod.Definition and mod.Definition.Description) or ""
+        d.DescLabel.TextColor3 = Theme.TextDim
+    end
+    d.SetSwitch(mod.Enabled, true)
+    UI:RefreshDetailKey()
+
+    mod.Content.Parent = d.Scroller
+    mod.Content.Visible = true
+end
+
+-- Footer status bar: a thin strip along the bottom of the content pane (RightShift hint, live
+-- FPS). Everything it needs is scoped in here - nothing outside this block ever touches it.
+do
+    local footer = New("Frame", {
+        Name = "Footer",
+        Position = UDim2.fromOffset(RIGHT_X, WINDOW_H - FOOTER_H),
+        Size = UDim2.fromOffset(RIGHT_W, FOOTER_H),
+        BackgroundTransparency = 1,
+        Parent = UI.Main,
+    })
+    New("Frame", {
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = Theme.Stroke,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        Parent = footer,
+    })
+    local fpsLabel = New("TextLabel", {
+        Position = UDim2.fromOffset(PAGE_PAD, 0),
+        Size = UDim2.fromOffset(90, FOOTER_H),
+        BackgroundTransparency = 1,
+        Text = "-- FPS",
+        Font = FONT.Medium,
+        TextSize = 11,
+        TextColor3 = Theme.TextFaint,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = footer,
+    })
+    New("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -PAGE_PAD, 0, 0),
+        Size = UDim2.fromOffset(170, FOOTER_H),
+        BackgroundTransparency = 1,
+        Text = "RightShift to hide",
+        Font = FONT.Medium,
+        TextSize = 11,
+        TextColor3 = Theme.TextFaint,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Parent = footer,
+    })
+    local frames, elapsed = 0, 0
+    RunService.RenderStepped:Connect(function(dt)
+        frames = frames + 1
+        elapsed = elapsed + dt
+        if elapsed >= 0.5 then
+            fpsLabel.Text = tostring(math.floor(frames / elapsed + 0.5)) .. " FPS"
+            frames, elapsed = 0, 0
+        end
+    end)
+end
 
 -- ---------------------------------------------------------------------
 -- Tabs
@@ -1837,10 +2218,15 @@ function UI:SelectTab(selected)
     UI.CurrentTab = selected
     UI.TitleLabel.Text = selected.Name
     UI.SubtitleLabel.Text = selected.Subtitle or ""
+    -- Jump the detail panel to this tab's first module unless it's already showing one of
+    -- this tab's own modules (keeps whatever was selected while you're still on its tab).
+    if (not UI.SelectedModule or UI.SelectedModule.Tab ~= selected) and selected.Modules[1] then
+        UI:SelectModule(selected.Modules[1])
+    end
 end
 
-function UI:CreateTab(name, subtitle)
-    local tab = { Name = name, Subtitle = subtitle, Modules = {}, Active = false, Matches = 0, Index = #UI.TabList + 1 }
+function UI:CreateTab(name, subtitle, icon)
+    local tab = { Name = name, Subtitle = subtitle, Icon = icon, Modules = {}, Active = false, Matches = 0, Index = #UI.TabList + 1 }
 
     tab.Button = New("TextButton", {
         Name = name,
@@ -1853,9 +2239,21 @@ function UI:CreateTab(name, subtitle)
         Parent = TabHolder,
     }, { Round(9) })
 
+    local tabIcon = New("TextLabel", {
+        Position = UDim2.fromOffset(10, 0),
+        Size = UDim2.fromOffset(22, TAB.H),
+        BackgroundTransparency = 1,
+        Text = icon or "•",
+        Font = FONT.Medium,
+        TextSize = 13,
+        TextColor3 = Theme.TextDim,
+        ZIndex = 1,
+        Parent = tab.Button,
+    })
+
     tab.Label = New("TextLabel", {
-        Position = UDim2.fromOffset(16, 0),
-        Size = UDim2.new(1, -26, 1, 0),
+        Position = UDim2.fromOffset(36, 0),
+        Size = UDim2.new(1, -66, 1, 0),
         BackgroundTransparency = 1,
         Text = name,
         Font = FONT.Medium,
@@ -1866,11 +2264,28 @@ function UI:CreateTab(name, subtitle)
         Parent = tab.Button,
     })
 
+    tab.CountLabel = New("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -12, 0.5, 0),
+        Size = UDim2.fromOffset(20, 16),
+        BackgroundTransparency = 1,
+        Text = "0",
+        Font = FONT.Medium,
+        TextSize = 11,
+        TextColor3 = Theme.TextFaint,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        ZIndex = 1,
+        Parent = tab.Button,
+    })
+
     tab.Hovered = false
     tab.Paint = function(instant)
         local active = tab.Active
         Animate(tab.Button, { BackgroundTransparency = (not active and tab.Hovered) and 0.6 or 1 }, instant, 0.15)
-        Animate(tab.Label, { TextColor3 = active and Color3.new(1, 1, 1) or (tab.Hovered and Theme.Text or Theme.TextDim) }, instant, 0.15)
+        local fg = active and Color3.new(1, 1, 1) or (tab.Hovered and Theme.Text or Theme.TextDim)
+        Animate(tab.Label, { TextColor3 = fg }, instant, 0.15)
+        Animate(tabIcon, { TextColor3 = active and Theme.AccentLight or Theme.TextFaint }, instant, 0.15)
+        Animate(tab.CountLabel, { TextColor3 = active and Theme.TextDim or Theme.TextFaint }, instant, 0.15)
         tab.Label.Font = active and FONT.Bold or FONT.Medium
     end
     onTheme(function()
@@ -1964,17 +2379,22 @@ function UI:CreateTab(name, subtitle)
         if cfg.Key == nil then
             cfg.Key = def.Key or "None"
         end
+        function mod.SetKey(name)
+            cfg.Key = name or "None"
+            if UI.SelectedModule == mod then
+                UI:RefreshDetailKey()
+            end
+        end
 
-        local expanded, expandable, hovered = false, false, false
-        local bodyHeight = 0
+        local hovered = false
 
+        -- Row (module list) -------------------------------------------------------------
         local cardStroke = Stroke(Theme.Stroke, 1, 1)
         local card = New("Frame", {
             Name = def.Name,
             Size = UDim2.new(1, 0, 0, HEADER_H),
             BackgroundColor3 = Theme.Card,
             BorderSizePixel = 0,
-            ClipsDescendants = true,
             LayoutOrder = #tab.Modules + 1,
             Parent = tab.Page,
         }, { Round(16), cardStroke })
@@ -1984,7 +2404,7 @@ function UI:CreateTab(name, subtitle)
         -- that fades out across the card, switched on only while the module is enabled.
         local cardGlow = New("UIGradient", {
             Rotation = 115,
-            Color = ColorSequence.new(Theme.Accent, Theme.Card),
+            Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt),
             Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 0.74),
                 NumberSequenceKeypoint.new(0.55, 0.97),
@@ -1994,37 +2414,49 @@ function UI:CreateTab(name, subtitle)
             Parent = card,
         })
         onTheme(function()
-            cardGlow.Color = ColorSequence.new(Theme.Accent, Theme.Card)
+            cardGlow.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
         end)
 
-        local header = New("Frame", {
-            Name = "Header",
-            Size = UDim2.new(1, 0, 0, HEADER_H),
-            BackgroundTransparency = 1,
-            Parent = card,
-        })
         local headerButton = New("TextButton", {
             Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,
             AutoButtonColor = false,
             Text = "",
-            Parent = header,
+            Parent = card,
         })
-        local arrow = New("TextLabel", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromOffset(24, HEADER_H / 2),
-            Size = UDim2.fromOffset(16, 16),
-            BackgroundTransparency = 1,
-            Text = "",
-            Font = FONT.Bold,
-            TextSize = 12,
-            TextColor3 = Theme.TextDim,
+
+        -- Icon tile: carries this module's TAB icon (not per-module letters), filled with the
+        -- accent gradient while the module is on and a plain outline while it's off.
+        local iconTile = New("Frame", {
+            Position = UDim2.fromOffset(12, (HEADER_H - 26) / 2),
+            Size = UDim2.fromOffset(26, 26),
+            BackgroundColor3 = Theme.Panel,
+            BorderSizePixel = 0,
             Parent = headerButton,
+        }, { Round(8), Stroke(Theme.Stroke, 1, 0.3) })
+        local iconGradient = New("UIGradient", {
+            Rotation = 45,
+            Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt),
+            Enabled = false,
+            Parent = iconTile,
         })
-        local textInset = 44
-        local rightReserve = 14 + 42 + 10 + 66 + 14
+        local iconGlyph = New("TextLabel", {
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            Text = tab.Icon or "•",
+            Font = FONT.Medium,
+            TextSize = 13,
+            TextColor3 = Theme.TextDim,
+            Parent = iconTile,
+        })
+        onTheme(function()
+            iconGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
+        end)
+
+        local textInset = 50
+        local rightReserve = 14 + 42 + 10
         New("TextLabel", {
-            Position = UDim2.fromOffset(textInset, 10),
+            Position = UDim2.fromOffset(textInset, 14),
             Size = UDim2.new(1, -(textInset + rightReserve), 0, 18),
             BackgroundTransparency = 1,
             Text = def.Name,
@@ -2036,7 +2468,7 @@ function UI:CreateTab(name, subtitle)
             Parent = headerButton,
         })
         local descLabel = New("TextLabel", {
-            Position = UDim2.fromOffset(textInset, 30),
+            Position = UDim2.fromOffset(textInset, 34),
             Size = UDim2.new(1, -(textInset + rightReserve), 0, 16),
             BackgroundTransparency = 1,
             Text = def.Description or "",
@@ -2048,211 +2480,53 @@ function UI:CreateTab(name, subtitle)
             Parent = headerButton,
         })
 
-        -- Master switch
-        local switchTrack, setSwitch, switchClick = createSwitch(header, 42, 22)
+        -- Master switch (the row's own - the detail panel has a second one that mirrors it)
+        local switchTrack, setSwitch, switchClick = createSwitch(card, 42, 22)
         switchTrack.AnchorPoint = Vector2.new(1, 0.5)
         switchTrack.Position = UDim2.new(1, -14, 0.5, 0)
         switchTrack.ZIndex = 2
         switchClick.ZIndex = 3
 
-        -- Keybind chip: click it, then press the key you want. Press the key it's already bound
-        -- to (or double-click the chip) to clear it.
-        local chipStroke = Stroke(Theme.Stroke, 1)
-        local keyBox = New("TextButton", {
-            Name = "KeyBind",
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -66, 0.5, 0),
-            Size = UDim2.fromOffset(66, 24),
-            BackgroundColor3 = Theme.Panel,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Text = keyText(cfg.Key),
-            Font = FONT.Medium,
-            TextSize = 11,
-            TextColor3 = Theme.TextFaint,
-            ZIndex = 2,
-            Parent = header,
-        }, { Round(12), chipStroke })
-
-        -- An unbound chip stays out of sight until the card is hovered or it's being edited
-        local chipHover, listening = false, false
-        local function refreshChip()
-            local unbound = (cfg.Key == nil or cfg.Key == "None")
-            local show = (not unbound) or hovered or chipHover or listening
-            keyBox.BackgroundTransparency = show and 0 or 1
-            chipStroke.Transparency = show and 0 or 1
+        local function paintRow(instant)
+            local selected = (UI.SelectedModule == mod)
+            local bg = Theme.Card
+            if selected then
+                bg = Theme.Card:Lerp(Theme.Accent, 0.1)
+            elseif hovered then
+                bg = Theme.Card:Lerp(Theme.Text, 0.035)
+            end
+            Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
+            -- a clear glowing outline while selected or on - the corner wash carries the rest
+            local strokeColor = (selected or mod.Enabled) and Theme.Accent or Theme.Stroke
+            local strokeTrans = selected and 0.15 or (mod.Enabled and (hovered and 0.2 or 0.35) or 1)
+            Animate(cardStroke, { Color = strokeColor, Transparency = strokeTrans }, instant, 0.15)
+            cardGlow.Enabled = mod.Enabled
+            iconGradient.Enabled = mod.Enabled
+            Animate(iconGlyph, { TextColor3 = mod.Enabled and Color3.new(1, 1, 1) or Theme.TextDim }, instant, 0.15)
         end
-        local function paintChip()
-            if not listening then
-                local unbound = (cfg.Key == nil or cfg.Key == "None")
-                keyBox.Text = keyText(cfg.Key)
-                keyBox.TextColor3 = unbound and Theme.TextFaint or Theme.AccentLight
-            end
-            refreshChip()
-        end
-        paintChip()
-        onTheme(paintChip)
-
-        function mod.SetKey(name)
-            cfg.Key = name or "None"
-            paintChip()
-        end
-
-        local function stopListening()
-            if not listening then
-                return
-            end
-            listening = false
-            UI:StopKeyListen()
-            chipStroke.Color = chipHover and Theme.StrokeHover or Theme.Stroke
-            paintChip()
-        end
-
-        local function startListening()
-            if listening then
-                return
-            end
-            listening = true
-            keyBox.Text = "Click a key…"
-            keyBox.TextColor3 = Theme.AccentLight
-            chipStroke.Color = Theme.Accent
-            refreshChip()
-            UI:StartKeyListen({
-                Cancel = stopListening,
-                Apply = function(keyCode)
-                    if keyCode == Enum.KeyCode.RightShift then
-                        Nova.Notify(def.Name, "RightShift is reserved for the window", 3, "error")
-                    elseif keyCode.Name == cfg.Key then
-                        cfg.Key = "None"
-                        Nova.Notify(def.Name, "Keybind cleared", 2)
-                    else
-                        cfg.Key = keyCode.Name
-                        Nova.Notify(def.Name, "Bound to " .. keyText(keyCode.Name), 2)
-                    end
-                    stopListening()
-                end,
-            })
-        end
-
-        local lastChipClick = 0
-        keyBox.MouseButton1Click:Connect(function()
-            UI:HideTip()
-            local now = os.clock()
-            local isDouble = (now - lastChipClick) < 0.3
-            lastChipClick = now
-            if isDouble then
-                stopListening()
-                if cfg.Key ~= nil and cfg.Key ~= "None" then
-                    cfg.Key = "None"
-                    paintChip()
-                    Nova.Notify(def.Name, "Keybind cleared", 2)
-                end
-            elseif listening then
-                stopListening()
-            else
-                startListening()
-            end
-        end)
-        keyBox.MouseEnter:Connect(function()
-            chipHover = true
-            refreshChip()
-            if not listening then
-                chipStroke.Color = Theme.StrokeHover
-            end
-        end)
-        keyBox.MouseLeave:Connect(function()
-            chipHover = false
-            refreshChip()
-            if not listening then
-                chipStroke.Color = Theme.Stroke
-            end
-        end)
-        UI:AttachTip(keyBox, function()
-            if listening then
-                return "Press any key to bind it. Press the current key again to clear it. Esc cancels."
-            end
-            return "Keybind. Click, then press a key. Double-click to clear."
+        mod.PaintRow = paintRow
+        onTheme(function()
+            paintRow(true)
         end)
 
-        -- Body (rows live here)
-        local divider = New("Frame", {
-            Position = UDim2.fromOffset(BODY_PAD, HEADER_H),
-            Size = UDim2.new(1, -BODY_PAD * 2, 0, 1),
-            BackgroundColor3 = Theme.Stroke,
-            BorderSizePixel = 0,
-            Visible = false,
-            Parent = card,
-        })
-        local body = New("Frame", {
-            Name = "Body",
-            Position = UDim2.fromOffset(0, HEADER_H + 1),
-            Size = UDim2.new(1, 0, 0, 0),
-            BackgroundTransparency = 1,
-            Visible = false,
-            Parent = card,
-        })
+        -- Settings content - built once here (same Controls/host system as always). It lives in
+        -- the shared hidden Storage frame until this module is the one selected in the detail
+        -- panel, at which point UI:SelectModule reparents it there.
         local content = New("Frame", {
             Name = "Content",
-            Size = UDim2.fromScale(1, 1),
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
-            Parent = body,
+            Parent = UI.Detail.Storage,
         }, {
             New("UIListLayout", { Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder }),
             Pad(BODY_PAD, BODY_TOP, BODY_PAD, BODY_BOTTOM),
         })
+        mod.Content = content
 
         local host = newHost(content, cfg, nil)
+        host.InnerWidth = BODY_INNER_W
         mod.Host = host
-
-        local function applyHeight(instant)
-            bodyHeight = host:ContentHeight()
-            body.Size = UDim2.new(1, 0, 0, bodyHeight)
-            local target = HEADER_H + (expanded and (1 + bodyHeight) or 0)
-            Animate(card, { Size = UDim2.new(1, 0, 0, target) }, instant, 0.24, Enum.EasingStyle.Quint)
-        end
-        host.OnLayout = function()
-            applyHeight(not expanded)
-        end
-
-        local function paintCard(instant)
-            local bg = hovered and Theme.Card:Lerp(Theme.Text, 0.035) or Theme.Card
-            Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
-            -- a clear glowing outline while the module is on - the corner wash carries the rest
-            Animate(cardStroke, { Color = Theme.Accent, Transparency = mod.Enabled and (hovered and 0.2 or 0.35) or 1 }, instant, 0.15)
-            cardGlow.Enabled = mod.Enabled
-        end
-        onTheme(function()
-            paintCard(true)
-        end)
-
-        local function setExpanded(state, instant)
-            expanded = state and true or false
-            if expanded then
-                body.Visible = true
-                divider.Visible = true
-            end
-            Animate(arrow, { Rotation = expanded and 90 or 0, TextColor3 = expanded and Theme.AccentLight or Theme.TextDim }, instant, 0.2)
-            applyHeight(instant)
-            if not expanded then
-                task.delay(0.26, function()
-                    if not expanded and body.Parent then
-                        body.Visible = false
-                        divider.Visible = false
-                    end
-                end)
-            end
-        end
-        mod.SetExpanded = setExpanded
-        mod.IsExpanded = function()
-            return expanded
-        end
-
-        local function ensureExpandable()
-            if not expandable then
-                expandable = true
-                arrow.Text = ">"
-            end
-        end
 
         local function ensureFooter()
             if host.FooterRow then
@@ -2285,7 +2559,8 @@ function UI:CreateTab(name, subtitle)
             Nova.Notify(def.Name, "Settings reset to defaults", 2)
         end
 
-        -- One-line status shown under the module name (used to explain why a module failed to start)
+        -- One-line status (explains why a module failed to start) - shown under its name in the
+        -- row, and synced live into the detail panel header when this module is selected.
         function mod:SetStatus(text, kind)
             mod.StatusText, mod.StatusKind = text, kind
             if text and text ~= "" then
@@ -2296,6 +2571,10 @@ function UI:CreateTab(name, subtitle)
                 descLabel.Text = def.Description or ""
                 descLabel.TextColor3 = Theme.TextDim
             end
+            if UI.SelectedModule == mod then
+                UI.Detail.DescLabel.Text = descLabel.Text
+                UI.Detail.DescLabel.TextColor3 = descLabel.TextColor3
+            end
         end
         onTheme(function()
             mod:SetStatus(mod.StatusText, mod.StatusKind)
@@ -2303,20 +2582,14 @@ function UI:CreateTab(name, subtitle)
 
         headerButton.MouseEnter:Connect(function()
             hovered = true
-            paintCard(false)
-            refreshChip()
+            paintRow(false)
         end)
         headerButton.MouseLeave:Connect(function()
             hovered = false
-            paintCard(false)
-            task.defer(refreshChip)
+            paintRow(false)
         end)
         headerButton.MouseButton1Click:Connect(function()
-            if expandable then
-                setExpanded(not expanded, false)
-            else
-                mod:Toggle()
-            end
+            UI:SelectModule(mod)
         end)
         headerButton.MouseButton2Click:Connect(function()
             mod:Toggle()
@@ -2325,10 +2598,7 @@ function UI:CreateTab(name, subtitle)
             if mod.StatusKind == "error" and mod.StatusText then
                 return mod.StatusText .. "  (click to retry after fixing it)"
             end
-            if expandable then
-                return "Click to open settings. Right-click to toggle."
-            end
-            return "Click to toggle."
+            return "Click to view settings. Right-click to toggle."
         end)
 
         -- Controls --------------------------------------------------
@@ -2336,7 +2606,6 @@ function UI:CreateTab(name, subtitle)
             if label then
                 mod.SearchText = mod.SearchText .. " " .. string.lower(label)
             end
-            ensureExpandable()
             ensureFooter()
         end
 
@@ -2411,12 +2680,15 @@ function UI:CreateTab(name, subtitle)
                     end
                     self:SetStatus("Couldn't start: " .. reason, "error")
                     setSwitch(false, true)
-                    paintCard(false)
+                    if UI.SelectedModule == mod then
+                        UI.Detail.SetSwitch(false, true)
+                    end
+                    paintRow(false)
                     cardStroke.Color = Theme.Bad
                     cardStroke.Transparency = 0.2
                     task.delay(1.4, function()
                         if card.Parent then
-                            paintCard(false)
+                            paintRow(false)
                         end
                     end)
                     UI:RefreshCounts()
@@ -2433,7 +2705,10 @@ function UI:CreateTab(name, subtitle)
             end
 
             setSwitch(self.Enabled, silent)
-            paintCard(silent)
+            if UI.SelectedModule == mod then
+                UI.Detail.SetSwitch(self.Enabled, silent)
+            end
+            paintRow(silent)
             UI:RefreshCounts()
             if UI.OnlyActive and UI.ApplySearch then
                 UI:ApplySearch(UI.Query)
@@ -2451,12 +2726,14 @@ function UI:CreateTab(name, subtitle)
         end
 
         switchClick.MouseButton1Click:Connect(function()
+            UI:SelectModule(mod)
             mod:Toggle()
         end)
 
         setSwitch(false, true)
-        paintCard(true)
+        paintRow(true)
         tab.Modules[#tab.Modules + 1] = mod
+        tab.CountLabel.Text = tostring(#tab.Modules)
         Nova.ModuleList[#Nova.ModuleList + 1] = mod
         UI:RefreshCounts()
         return mod
@@ -2598,6 +2875,13 @@ function UI:AttachTip(obj, text)
         UI:HideTip()
     end)
 end
+
+UI:AttachTip(UI.Detail.KeyBox, function()
+    if UI.Detail.Listening then
+        return "Press any key to bind it. Press the current key again to clear it. Esc cancels."
+    end
+    return "Keybind. Click, then press a key. Double-click to clear."
+end)
 
 -- ---------------------------------------------------------------------
 -- Dropdown overlay
@@ -2741,6 +3025,9 @@ end)
 -- ---------------------------------------------------------------------
 -- Notifications
 -- ---------------------------------------------------------------------
+-- Nova.Notify is a field on the already-shared Nova table, so it stays callable from anywhere
+-- even though everything it depends on here is scoped to this block.
+do
 local NotifHolder = New("Frame", {
     Name = "Notifications",
     AnchorPoint = Vector2.new(1, 1),
@@ -2950,6 +3237,7 @@ function Nova.Notify(title, text, duration, kind, force)
         end)
     end)
 end
+end
 
 -- ---------------------------------------------------------------------
 -- Module list (HUD)
@@ -3062,19 +3350,19 @@ local function sanitize(value, depth)
     return nil
 end
 
--- Remembers what is on screen right now (enabled modules, tab, open cards, window position)
+-- Remembers what is on screen right now (enabled modules, tab, selected module, window position)
 function Nova.CaptureState()
-    local state = { Enabled = {}, Open = {} }
+    local state = { Enabled = {} }
     for _, mod in ipairs(Nova.ModuleList) do
         if mod.Enabled or (Nova.Wanted and Nova.Wanted[mod.Name]) then
             state.Enabled[mod.Name] = true
         end
-        if mod.IsExpanded and mod.IsExpanded() then
-            state.Open[mod.Name] = true
-        end
     end
     if UI.CurrentTab then
         state.Tab = UI.CurrentTab.Name
+    end
+    if UI.SelectedModule then
+        state.Selected = UI.SelectedModule.Name
     end
     local pos = UI.Holder and UI.Holder.Position
     if pos then
@@ -3194,17 +3482,18 @@ function Nova.LoadConfig(profile, startup)
 
     local state = data.State
     if startup and type(state) == "table" then
-        if type(state.Open) == "table" then
-            for _, mod in ipairs(Nova.ModuleList) do
-                if state.Open[mod.Name] and mod.SetExpanded then
-                    pcall(mod.SetExpanded, true, true)
-                end
-            end
-        end
         if type(state.Tab) == "string" then
             for _, tab in ipairs(UI.TabList) do
                 if tab.Name == state.Tab then
                     UI:SelectTab(tab)
+                end
+            end
+        end
+        if type(state.Selected) == "string" then
+            for _, mod in ipairs(Nova.ModuleList) do
+                if mod.Name == state.Selected then
+                    UI:SelectModule(mod)
+                    break
                 end
             end
         end
@@ -3502,7 +3791,14 @@ do
     Controls.Option(host, {
         Label = "Accent", Key = "Accent", Options = ACCENT_NAMES, Swatches = ACCENT_SWATCHES, Default = "Purple",
         Callback = function(value)
-            applyAccent(ACCENT_SWATCHES[value] or ACCENT_SWATCHES.Purple)
+            local alt = ACCENTS[1].Alt
+            for _, accent in ipairs(ACCENTS) do
+                if accent.Name == value then
+                    alt = accent.Alt
+                    break
+                end
+            end
+            applyAccent(ACCENT_SWATCHES[value] or ACCENT_SWATCHES.Purple, alt)
         end,
     })
     Controls.Slider(host, {
@@ -3641,20 +3937,22 @@ function UI:SetVisible(state)
 end
 
 -- Drag the window by the top bar or the brand block. Double-click to re-centre.
-local lastDragClick = 0
-local function beginDrag(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        UI.WindowDrag = { StartMouse = input.Position, StartPos = UI.Holder.Position }
-        local now = os.clock()
-        if now - lastDragClick < 0.35 then
-            UI.WindowDrag = nil
-            Tween(UI.Holder, 0.25, { Position = UDim2.fromScale(0.5, 0.5) }, Enum.EasingStyle.Quint)
+do
+    local lastDragClick = 0
+    local function beginDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            UI.WindowDrag = { StartMouse = input.Position, StartPos = UI.Holder.Position }
+            local now = os.clock()
+            if now - lastDragClick < 0.35 then
+                UI.WindowDrag = nil
+                Tween(UI.Holder, 0.25, { Position = UDim2.fromScale(0.5, 0.5) }, Enum.EasingStyle.Quint)
+            end
+            lastDragClick = now
         end
-        lastDragClick = now
     end
+    TopBar.InputBegan:Connect(beginDrag)
+    BrandArea.InputBegan:Connect(beginDrag)
 end
-TopBar.InputBegan:Connect(beginDrag)
-BrandArea.InputBegan:Connect(beginDrag)
 
 Nova.Maid:Give(UserInputService.InputChanged:Connect(function(input)
     local moved = input.UserInputType == Enum.UserInputType.MouseMovement
@@ -4020,21 +4318,36 @@ end
 
 -- ====================== TABS ======================
 local Tabs = {
-    Combat  = UI:CreateTab("Combat", "Aim, hitboxes and melee"),
-    Render  = UI:CreateTab("Render", "See players and NPCs through walls"),
-    Blatant = UI:CreateTab("Blatant", "Obvious movement changes"),
-    Utility = UI:CreateTab("Utility", "Safety and quality-of-life tools"),
-    Kits    = UI:CreateTab("Kits", "Bedwars kit helpers"),
-    World   = UI:CreateTab("World", "Camera, sky and lighting"),
-    FPS     = UI:CreateTab("FPS", "Performance and frame rate"),
+    -- Placeholder glyph for every tab until real icon images (uploaded to Roblox, see the note
+    -- where the sidebar icon tile is painted) replace these - no font has a real sword/eye/gear
+    -- character that isn't an emoji, so a single neutral mark beats a mismatched one.
+    Combat  = UI:CreateTab("Combat", "Aim, hitboxes and melee", "≡"),
+    Render  = UI:CreateTab("Render", "See players and NPCs through walls", "≡"),
+    Blatant = UI:CreateTab("Blatant", "Obvious movement changes", "≡"),
+    Utility = UI:CreateTab("Utility", "Safety and quality-of-life tools", "≡"),
+    Kits    = UI:CreateTab("Kits", "Bedwars kit helpers", "≡"),
+    World   = UI:CreateTab("World", "Camera, sky and lighting", "≡"),
+    FPS     = UI:CreateTab("FPS", "Performance and frame rate", "≡"),
 }
 
 -- ====================== MODULE: AIMBOT ======================
 do
-    local MOUSE_BUTTONS = { "Left", "Right" }
+    local SORT_MODES = { "Cursor", "Distance", "Health" }
     local gate = {}
     local currentTarget = nil
     local acquireAt = 0
+    local ignoreSet, ignoreText = {}, ""
+
+    local function parseList(text)
+        local set = {}
+        for word in tostring(text or ""):gmatch("[^,]+") do
+            word = word:lower():match("^%s*(.-)%s*$")
+            if word ~= "" then
+                set[word] = true
+            end
+        end
+        return set
+    end
 
     local function asPart(inst)
         if inst and inst:IsA("BasePart") then
@@ -4078,21 +4391,42 @@ do
             and entry.Root ~= nil and entry.Root.Parent ~= nil
     end
 
-    local function evaluate(cfg, entry, cam, mousePos)
+    -- FOV (screen-space, around your cursor) only makes sense when this module is picking its own
+    -- target. "Use Kill Aura Target" means always follow whatever Kill Aura is attacking, including
+    -- when that's off-screen or behind you, so FOV is skipped entirely in that mode.
+    local function evaluate(cfg, entry, cam, mousePos, myRoot)
         if not isValid(entry) then
             return nil
         end
         if cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player) then
             return nil
         end
+        if next(ignoreSet) and ignoreSet[tostring(entry.Name):lower()] then
+            return nil
+        end
+        if myRoot and entry.Root and (entry.Root.Position - myRoot.Position).Magnitude > cfg.Range then
+            return nil
+        end
         local part, distance = getAimPart(entry, cfg.AimPart, cam, mousePos)
-        if not part or distance > cfg.FOV then
+        if not part then
+            return nil
+        end
+        if not cfg.UseKillAuraTarget and distance > cfg.FOV then
             return nil
         end
         if cfg.WallCheck and not Util.HasLineOfSight(cam.CFrame.Position, part.Position) then
             return nil
         end
         return part, distance
+    end
+
+    local function scoreFor(cfg, entry, screenDist, myRoot)
+        if cfg.Sort == "Distance" and myRoot and entry.Root then
+            return (entry.Root.Position - myRoot.Position).Magnitude
+        elseif cfg.Sort == "Health" then
+            return entry.Humanoid and entry.Humanoid.Health or 100
+        end
+        return screenDist
     end
 
     local aim = Tabs.Combat:CreateModule({
@@ -4102,6 +4436,7 @@ do
             local cfg = mod.Config
             currentTarget = nil
             acquireAt = 0
+            gate.LastActive = 0
 
             local circle
             if HAS_DRAWING then
@@ -4114,6 +4449,31 @@ do
                 circle.Visible = false
             end
 
+            local statusText
+            if HAS_DRAWING then
+                statusText = mod.Maid:Give(Drawing.new("Text"))
+                statusText.Center = true
+                statusText.Outline = true
+                statusText.OutlineColor = Color3.new(0, 0, 0)
+                statusText.Font = 2
+                statusText.Size = 16
+                statusText.Color = Theme.Text
+                statusText.Visible = false
+            end
+            local function setStatus(cam, text)
+                if not statusText then
+                    return
+                end
+                if not cfg.StatusLine then
+                    statusText.Visible = false
+                    return
+                end
+                statusText.Visible = true
+                statusText.Text = "Aim Assist: " .. tostring(text)
+                local vp = cam.ViewportSize
+                statusText.Position = Vector2.new(vp.X / 2, vp.Y - 70)
+            end
+
             local stepName = "Nova_Aim_" .. Util.RandomName(6)
             RunService:BindToRenderStep(stepName, Enum.RenderPriority.Camera.Value + 1, function(dt)
                 local cam = Workspace.CurrentCamera
@@ -4122,50 +4482,110 @@ do
                 end
                 local mousePos = UserInputService:GetMouseLocation()
 
+                if cfg.Ignore ~= ignoreText then
+                    ignoreSet, ignoreText = parseList(cfg.Ignore), cfg.Ignore
+                end
+
                 if circle then
                     circle.Visible = cfg.ShowFOV
                     circle.Position = mousePos
                     circle.Radius = cfg.FOV
                 end
 
-                local _, myHum = Util.GetCharacter(LocalPlayer)
+                local _, myHum, myRoot = Util.GetCharacter(LocalPlayer)
                 if not myHum or myHum.Health <= 0 then
                     currentTarget = nil
+                    setStatus(cam, "dead")
                     return
                 end
-                if not Util.PassesGate(cfg, gate, 0.1) then
-                    currentTarget = nil
+
+                -- Any mouse button held counts, and a click keeps counting as "held" for Hold Grace
+                -- seconds afterward - that's what makes an autoclicker or fast manual spam-clicking
+                -- register the same as actually holding the button down.
+                if Util.IsMouseDown(false) or Util.IsMouseDown(true) then
+                    gate.LastActive = os.clock()
+                end
+                local sinceActive = os.clock() - (gate.LastActive or 0)
+                if sinceActive > cfg.HoldGrace then
+                    -- A brief gap just past Hold Grace (an autoclicker's own jitter, or the space
+                    -- between manual spam-clicks) only pauses aiming for this frame - it does NOT
+                    -- forget the current target. Clearing currentTarget here used to force a full
+                    -- re-acquire (plus Legit Mode's human-like delay/jitter) on every tiny gap,
+                    -- which is what read as aim assist "stuttering" while autoclicking. Only a real
+                    -- release - well past Hold Grace - actually drops the lock, so a genuinely fresh
+                    -- engagement still gets that natural acquire delay.
+                    if sinceActive > cfg.HoldGrace + 0.6 then
+                        currentTarget = nil
+                    end
+                    setStatus(cam, "waiting for click")
                     return
+                end
+                if cfg.LimitToItems and not Util.MatchesHeld(cfg.ItemNames) then
+                    currentTarget = nil
+                    setStatus(cam, "wrong item equipped")
+                    return
+                end
+
+                -- When following Kill Aura, drop the lock the instant KA's own target changes or
+                -- goes stale, instead of sticking with whoever we last had.
+                if cfg.UseKillAuraTarget and currentTarget then
+                    local fresh = SharedAimTarget.Entry == currentTarget and os.clock() - SharedAimTarget.At < 0.3
+                    if not fresh then
+                        currentTarget = nil
+                    end
                 end
 
                 -- Keep the current target unless someone is clearly closer to the crosshair
                 local part, distance
                 if currentTarget then
-                    part, distance = evaluate(cfg, currentTarget, cam, mousePos)
+                    part, distance = evaluate(cfg, currentTarget, cam, mousePos, myRoot)
                     if not part then
                         currentTarget = nil
                     end
                 end
 
-                local bestEntry, bestPart, bestDistance = nil, nil, math.huge
-                for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                    local candidatePart, candidateDistance = evaluate(cfg, entry, cam, mousePos)
-                    if candidatePart and candidateDistance < bestDistance then
-                        bestEntry, bestPart, bestDistance = entry, candidatePart, candidateDistance
+                local bestEntry, bestPart, bestScore, bestScreenDistance = nil, nil, math.huge, math.huge
+                if cfg.UseKillAuraTarget then
+                    if SharedAimTarget.Entry and os.clock() - SharedAimTarget.At < 0.3 then
+                        local kaPart, kaScreenDist = evaluate(cfg, SharedAimTarget.Entry, cam, mousePos, myRoot)
+                        if kaPart then
+                            bestEntry, bestPart, bestScreenDistance = SharedAimTarget.Entry, kaPart, kaScreenDist
+                            bestScore = 0
+                        end
+                    end
+                else
+                    for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
+                        local candidatePart, candidateScreenDist = evaluate(cfg, entry, cam, mousePos, myRoot)
+                        if candidatePart then
+                            local candidateScore = scoreFor(cfg, entry, candidateScreenDist, myRoot)
+                            if candidateScore < bestScore then
+                                bestEntry, bestPart, bestScore, bestScreenDistance = entry, candidatePart, candidateScore, candidateScreenDist
+                            end
+                        end
                     end
                 end
 
-                if bestEntry and (not currentTarget or (bestEntry ~= currentTarget and bestDistance + 30 < distance)) then
-                    currentTarget, part, distance = bestEntry, bestPart, bestDistance
-                    acquireAt = os.clock() + (cfg.LegitMode and (0.06 + math.random() * 0.1) or 0)
+                local switch = false
+                if bestEntry and not currentTarget then
+                    switch = true
+                elseif bestEntry and bestEntry ~= currentTarget then
+                    switch = cfg.UseKillAuraTarget or (bestScreenDistance + cfg.SwitchThreshold < distance)
+                end
+                if switch then
+                    currentTarget, part, distance = bestEntry, bestPart, bestScreenDistance
+                    local delaySpan = math.max(cfg.AcquireDelayMax - cfg.AcquireDelayMin, 0)
+                    acquireAt = os.clock() + (cfg.LegitMode and (cfg.AcquireDelayMin + math.random() * delaySpan) or 0)
                 end
 
                 if not currentTarget or not part then
+                    setStatus(cam, "no target")
                     return
                 end
                 if os.clock() < acquireAt then
+                    setStatus(cam, "acquiring " .. tostring(currentTarget.Name) .. "...")
                     return
                 end
+                setStatus(cam, "locked on " .. tostring(currentTarget.Name))
 
                 -- Prediction (X = horizontal, Y = vertical)
                 local velocity = Vector3.zero
@@ -4184,14 +4604,14 @@ do
                 if cfg.LegitMode then
                     rate = rate * 0.6
                     local t = os.clock()
-                    local noiseX = math.noise(t * 1.3, 0, 0) * 0.45
-                    local noiseY = math.noise(0, t * 1.1, 0) * 0.45
+                    local noiseX = math.noise(t * 1.3, 0, 0) * cfg.Humanize
+                    local noiseY = math.noise(0, t * 1.1, 0) * cfg.Humanize
                     aimPos = aimPos + camCFrame.RightVector * noiseX + camCFrame.UpVector * noiseY
 
                     local toTarget = (aimPos - camCFrame.Position)
                     if toTarget.Magnitude > 0.01 then
                         local angle = math.acos(math.clamp(camCFrame.LookVector:Dot(toTarget.Unit), -1, 1))
-                        if angle < math.rad(0.35) then
+                        if angle < math.rad(cfg.DeadZone) then
                             return
                         end
                     end
@@ -4213,22 +4633,35 @@ do
 
     aim:AddSection("Targeting")
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players", Tip = "Who the aim assist can lock onto." })
+    aim:AddToggle({ Label = "Use Kill Aura Target", Key = "UseKillAuraTarget", Default = false, Tip = "Always follow whoever Kill Aura is currently attacking instead of picking independently. Range, Wall Check, Team Check and Ignore still apply." })
+    aim:AddOption({ Label = "Sort", Key = "Sort", Options = SORT_MODES, Default = "Cursor", ShowIf = function(c) return not c.UseKillAuraTarget end, Tip = "Cursor picks whoever is closest to your crosshair. Distance picks the nearest in the world. Health picks the weakest." })
     aim:AddOption({ Label = "Aim Part", Key = "AimPart", Options = { "Head", "Torso", "Closest" }, Default = "Closest", Tip = "Closest picks whichever part is nearer to your cursor." })
-    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 20, Max = 600, Default = 150, Step = 5, Suffix = " px", Tip = "Only targets inside this radius around your cursor are considered." })
+    aim:AddSlider({ Label = "Range", Key = "Range", Min = 5, Max = 30, Default = 25, Step = 1, Suffix = " studs", Tip = "Only targets this close in the world are considered, regardless of how they look on screen." })
+    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 20, Max = 600, Default = 150, Step = 5, Suffix = " px", ShowIf = function(c) return not c.UseKillAuraTarget end, Tip = "Only targets inside this radius around your cursor are considered." })
+    aim:AddSlider({ Label = "Switch Threshold", Key = "SwitchThreshold", Min = 0, Max = 150, Default = 30, Step = 5, Suffix = " px", ShowIf = function(c) return not c.UseKillAuraTarget end, Tip = "How much closer to your cursor a new target needs to be before it steals the lock from your current one." })
     aim:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, Tip = "Ignore targets you can't see." })
     aim:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, Tip = "Ignore your teammates." })
-    aim:AddSection("Feel")
-    aim:AddSlider({ Label = "Smoothing", Key = "Smoothing", Min = 1, Max = 100, Default = 35, Step = 1, Tip = "Higher is slower and softer." })
-    aim:AddToggle({ Label = "Legit Mode", Key = "LegitMode", Default = true, Tip = "Adds a small human-like delay before locking on." })
-    aim:AddSlider({ Label = "Prediction X", Key = "PredictionX", Min = 0, Max = 0.5, Default = 0.1, Step = 0.01, Tip = "How far ahead to aim horizontally for moving targets." })
-    aim:AddSlider({ Label = "Prediction Y", Key = "PredictionY", Min = 0, Max = 0.5, Default = 0.05, Step = 0.01, Tip = "How far ahead to aim vertically for moving targets." })
+    aim:AddTextBox({ Label = "Ignore", Key = "Ignore", Default = "", Placeholder = "comma separated names", Tip = "Names that should never be targeted." })
+
     aim:AddSection("Activation")
-    aim:AddToggle({ Label = "Require Mouse Down", Key = "RequireMouseDown", Default = true, Tip = "Only aim while you hold a mouse button." })
-    aim:AddOption({ Label = "Mouse Button", Key = "MouseButton", Options = MOUSE_BUTTONS, Default = "Right", ShowIf = function(c) return c.RequireMouseDown end })
+    aim:AddSlider({ Label = "Hold Grace", Key = "HoldGrace", Min = 0, Max = 1, Default = 0.25, Step = 0.01, Suffix = " s", Tip = "Holding either mouse button engages Aim Assist. This is how long after releasing it still counts as held - turn it up if you're spam-clicking or using an autoclicker so the gaps between clicks don't drop the lock." })
     aim:AddToggle({ Label = "Limit to Items", Key = "LimitToItems", Default = false, Tip = "Only aim while holding a matching item." })
     aim:AddTextBox({ Label = "Item Names", Key = "ItemNames", Default = "", Placeholder = "blank = any tool", ShowIf = function(c) return c.LimitToItems end, Tip = "Comma separated, partial names work (bow, gun)." })
+
+    aim:AddSection("Feel")
+    aim:AddSlider({ Label = "Smoothing", Key = "Smoothing", Min = 1, Max = 100, Default = 35, Step = 1, Tip = "Higher is slower and softer." })
+    aim:AddSlider({ Label = "Prediction X", Key = "PredictionX", Min = 0, Max = 0.5, Default = 0.1, Step = 0.01, Tip = "How far ahead to aim horizontally for moving targets." })
+    aim:AddSlider({ Label = "Prediction Y", Key = "PredictionY", Min = 0, Max = 0.5, Default = 0.05, Step = 0.01, Tip = "How far ahead to aim vertically for moving targets." })
+    aim:AddToggle({ Label = "Legit Mode", Key = "LegitMode", Default = true, Tip = "Adds a small human-like delay and jitter before/while locking on." })
+    aim:AddSlider({ Label = "Acquire Delay Min", Key = "AcquireDelayMin", Min = 0, Max = 0.5, Default = 0.06, Step = 0.01, Suffix = " s", ShowIf = function(c) return c.LegitMode end, Tip = "Shortest possible delay before locking onto a new target." })
+    aim:AddSlider({ Label = "Acquire Delay Max", Key = "AcquireDelayMax", Min = 0, Max = 0.5, Default = 0.16, Step = 0.01, Suffix = " s", ShowIf = function(c) return c.LegitMode end, Tip = "Longest possible delay before locking onto a new target." })
+    aim:AddSlider({ Label = "Humanize", Key = "Humanize", Min = 0, Max = 2, Default = 0.45, Step = 0.05, ShowIf = function(c) return c.LegitMode end, Tip = "How much natural wobble to add around the target point." })
+    aim:AddSlider({ Label = "Dead Zone", Key = "DeadZone", Min = 0, Max = 5, Default = 0.35, Step = 0.05, Suffix = "°", ShowIf = function(c) return c.LegitMode end, Tip = "Stops micro-adjusting once you're already aimed this close." })
+
     aim:AddSection("Display")
-    aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false, Tip = "Draw the FOV radius on screen." })
+    aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false, ShowIf = function(c) return not c.UseKillAuraTarget end, Tip = "Draw the FOV radius on screen." })
+    aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true, Tip = "Small readout showing what Aim Assist is currently doing." })
+    aim:AddNote("Hold either mouse button (or spam-click / autoclick) to engage - there's no separate on/off toggle for that anymore.")
 end
 
 -- ====================== MODULE: HITBOX EXPANDER ======================
@@ -4331,8 +4764,14 @@ do
                         if root.Size ~= sizeVector then
                             root.Size = sizeVector
                         end
-                        if root.Transparency ~= cfg.Transparency then
-                            root.Transparency = cfg.Transparency
+                        -- Only override the hitbox's transparency (making the expanded volume
+                        -- actually visible) when the user asked to see it. Otherwise leave it at
+                        -- whatever it originally was (normally fully invisible) - the expanded
+                        -- size/CanCollide still does its job either way, so there's no reason for
+                        -- a translucent box to appear over every target by default.
+                        local wantTransparency = cfg.ShowHitbox and cfg.Transparency or saved.Transparency
+                        if root.Transparency ~= wantTransparency then
+                            root.Transparency = wantTransparency
                         end
                         if root.CanCollide then
                             root.CanCollide = false
@@ -4360,7 +4799,8 @@ do
     hitbox:AddSection("Size")
     hitbox:AddSlider({ Label = "Size", Key = "Size", Min = 1, Max = 14, Default = 6, Step = 0.5, Suffix = " studs" })
     hitbox:AddLabel("Sizes above 10.5 have no extra effect.")
-    hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.85, Step = 0.05, Tip = "How visible the expanded box is." })
+    hitbox:AddToggle({ Label = "Show Hitbox", Key = "ShowHitbox", Default = false, Tip = "Makes the expanded hitbox visible on targets. Off by default - the expansion still works either way, this is just a preview." })
+    hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.85, Step = 0.05, ShowIf = function(c) return c.ShowHitbox end, Tip = "How visible the expanded box is." })
     hitbox:AddToggle({ Label = "Inside Fix", Key = "InsideFix", Default = true })
 end
 
@@ -4821,7 +5261,8 @@ do
             local setStatus = makeStatusLabel(mod, "Kill Aura", -100)
 
             local box = mod.Maid:Give(New("BoxHandleAdornment", {
-                Size = Vector3.new(3.6, 5.8, 3.6),
+                Size = Vector3.new(3.6, 5.2, 3.6),
+                CFrame = CFrame.new(0, -0.55, 0),
                 Transparency = 0.7,
                 Color3 = Theme.Accent,
                 AlwaysOnTop = true,
@@ -5008,6 +5449,7 @@ do
                 local leadEntry = lead.Entry
                 local leadText = string.format("%s (%.1f studs)", tostring(leadEntry.Name), lead.Distance)
                 local now = os.clock()
+                SharedAimTarget.Entry, SharedAimTarget.At = leadEntry, now
 
                 if cfg.ShowTarget then
                     box.Adornee = leadEntry.Root
@@ -5294,7 +5736,7 @@ do
     end
 
     local aim = Tabs.Combat:CreateModule({
-        Name = "Bedwars Projectile Aim",
+        Name = "Projectile Aimbot",
         Description = "Leads moving targets with bows and projectiles (Bedwars).",
         OnEnable = function(mod)
             local cfg = mod.Config
@@ -5307,10 +5749,11 @@ do
             -- accurate setting - one less thing to configure, nothing to get wrong.
             local blacklist = { telepearl = true }
 
-            local setStatus = makeStatusLabel(mod, "Projectile Aim", -130)
+            local setStatus = makeStatusLabel(mod, "Projectile Aimbot", -130)
 
             local box = mod.Maid:Give(New("BoxHandleAdornment", {
-                Size = Vector3.new(3.6, 5.8, 3.6),
+                Size = Vector3.new(3.6, 5.2, 3.6),
+                CFrame = CFrame.new(0, -0.55, 0),
                 Transparency = 0.7,
                 Color3 = Theme.Accent,
                 AlwaysOnTop = true,
@@ -5649,7 +6092,7 @@ do
                         local ok, why = install()
                         if ok then
                             installed = true
-                            Nova.Notify("Projectile Aim", "Hooked. Shoot a bow near a target.", 3, "success")
+                            Nova.Notify("Projectile Aimbot", "Hooked. Shoot a bow near a target.", 3, "success")
                         else
                             setStatus(cfg.StatusLine, "unavailable - " .. tostring(why))
                         end
@@ -5872,7 +6315,7 @@ do
         Label = "Fire Delay", Key = "FireDelay", Min = 0.2, Max = 2, Default = 0.6, Step = 0.1, Suffix = "s",
         Tip = "Minimum time between shots.",
     })
-    caitlyn:AddNote("Bedwars only. Hold a bow or crossbow. Pair with Projectile Aim for guaranteed hits - this module only decides when to fire, not how the shot lands.")
+    caitlyn:AddNote("Bedwars only. Hold a bow or crossbow. Pair with Projectile Aimbot for guaranteed hits - this module only decides when to fire, not how the shot lands.")
 end
 
 -- ====================== MODULE: ESP ======================
@@ -11999,7 +12442,14 @@ pcall(Nova.AutoInject.Refresh)
 do
     local savedAccent = Nova.Config.UI.Accent
     if ACCENT_SWATCHES[savedAccent] then
-        applyAccent(ACCENT_SWATCHES[savedAccent])
+        local alt = ACCENTS[1].Alt
+        for _, accent in ipairs(ACCENTS) do
+            if accent.Name == savedAccent then
+                alt = accent.Alt
+                break
+            end
+        end
+        applyAccent(ACCENT_SWATCHES[savedAccent], alt)
     end
 end
 UI:FitScale()
@@ -12016,8 +12466,8 @@ end -- NovaMain
 NovaMain()
 
 ]====]
-local __run = loadstring(__nova, "=Nova")
+local __run, __err = loadstring(__nova, "=Nova")
 if not __run then
-    error("Nova could not be compiled by this executor")
+    error("Nova could not be compiled by this executor: " .. tostring(__err))
 end
 return __run(__nova)
