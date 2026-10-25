@@ -1,4 +1,3 @@
-
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))()
 
@@ -5835,6 +5834,16 @@ do
                 if blacklist[projectileName] then
                     return nil
                 end
+                -- User-chosen items this module should never touch - shoot those normally
+                if tool and typeof(tool) == "Instance" and cfg.ExcludeItems and cfg.ExcludeItems:match("%S") then
+                    local toolName = tool.Name:lower()
+                    for word in cfg.ExcludeItems:gmatch("[^,]+") do
+                        word = word:lower():match("^%s*(.-)%s*$")
+                        if word ~= "" and toolName:find(word, 1, true) then
+                            return nil
+                        end
+                    end
+                end
 
                 local from = native.positionFrom
                 local speed = native.initialVelocity.Magnitude
@@ -6123,6 +6132,7 @@ do
     })
 
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
+    aim:AddTextBox({ Label = "Exclude Items", Key = "ExcludeItems", Default = "", Placeholder = "comma separated names", Tip = "Shots fired with these items (partial names work) are left alone - this module won't aim them." })
     aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 120, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
     aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
     aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction." })
