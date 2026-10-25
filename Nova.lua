@@ -1,3 +1,4 @@
+
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))()
 
@@ -5834,13 +5835,33 @@ do
                 if blacklist[projectileName] then
                     return nil
                 end
-                -- User-chosen items this module should never touch - shoot those normally
-                if tool and typeof(tool) == "Instance" and cfg.ExcludeItems and cfg.ExcludeItems:match("%S") then
-                    local toolName = tool.Name:lower()
+                -- User-chosen items this module should never touch - shoot those normally.
+                -- Some items (e.g. Fireball) don't come through as a real `tool` argument here,
+                -- or their internal Name doesn't match what's printed on the item, so this checks
+                -- every name we can get our hands on (projectile id, tool name, currently-held
+                -- item) and ignores spaces/case/punctuation so "fireball", "Fire Ball" and
+                -- "FireBall" all match each other.
+                if cfg.ExcludeItems and cfg.ExcludeItems:match("%S") then
+                    local function squash(s)
+                        local r = tostring(s or ""):lower():gsub("[^%a%d]", "")
+                        return r
+                    end
+                    local candidates = { squash(projectileName) }
+                    if tool and typeof(tool) == "Instance" then
+                        candidates[#candidates + 1] = squash(tool.Name)
+                    end
+                    local held = Util.GetHeldName()
+                    if held then
+                        candidates[#candidates + 1] = squash(held)
+                    end
                     for word in cfg.ExcludeItems:gmatch("[^,]+") do
-                        word = word:lower():match("^%s*(.-)%s*$")
-                        if word ~= "" and toolName:find(word, 1, true) then
-                            return nil
+                        word = squash(word:match("^%s*(.-)%s*$"))
+                        if word ~= "" then
+                            for _, candidate in ipairs(candidates) do
+                                if candidate ~= "" and candidate:find(word, 1, true) then
+                                    return nil
+                                end
+                            end
                         end
                     end
                 end
