@@ -5584,21 +5584,31 @@ do
 
     -- Finds the lowest flight time t at which a projectile launched at `speed` can meet
     -- the target. targetAt(t) gives the predicted target position after t seconds.
+    -- CatVape-style: fine scan + binary search + Newton polish.
     -- Returns velocity, time or nil.
     local function solveLaunch(from, speed, gravity, targetAt, maxTime)
+        if speed < 1 or maxTime < 0.05 then
+            return nil
+        end
         local function need(t)
+            if t < 1e-4 then
+                t = 1e-4
+            end
             local point = targetAt(t)
             return (point - from + Vector3.new(0, 0.5 * gravity * t * t, 0)) / t
         end
+        local function excess(t)
+            return need(t).Magnitude - speed
+        end
 
-        local step = 0.02
-        local t = 0.04
+        local step = 0.012
+        local t = 0.03
         local previous = nil
         local low, high = nil, nil
         while t <= maxTime do
-            if need(t).Magnitude - speed <= 0 then
+            if excess(t) <= 0 then
                 high = t
-                low = previous or math.max(t - step, 0.01)
+                low = previous or math.max(t - step, 0.02)
                 break
             end
             previous = t
@@ -5607,19 +5617,36 @@ do
         if not high then
             return nil
         end
-        for _ = 1, 24 do
-            local mid = (low + high) / 2
-            if need(mid).Magnitude - speed > 0 then
+        for _ = 1, 28 do
+            local mid = (low + high) * 0.5
+            if excess(mid) > 0 then
                 low = mid
             else
                 high = mid
             end
         end
-        local velocity = need(high)
+        local bestT = high
+        for _ = 1, 6 do
+            local e0 = excess(bestT)
+            local e1 = excess(bestT + 1e-3)
+            local deriv = (e1 - e0) / 1e-3
+            if math.abs(deriv) < 1e-6 then
+                break
+            end
+            local nextT = bestT - e0 / deriv
+            if nextT < 0.02 or nextT > maxTime then
+                break
+            end
+            bestT = nextT
+            if math.abs(e0) < 0.05 then
+                break
+            end
+        end
+        local velocity = need(bestT)
         if velocity.Magnitude < 0.001 then
             return nil
         end
-        return velocity.Unit * speed, high
+        return velocity.Unit * speed, bestT
     end
 
     -- Samples the arc and checks nothing solid is in the way (characters are ignored)
@@ -5654,7 +5681,7 @@ do
     -- Target movement history. The replicated velocity can read zero for players that move by
     -- teleporting their position (speed hacks), so movement is also measured from position samples.
     local History = setmetatable({}, { __mode = "k" })
-    local HISTORY_SPAN = 0.4
+    local HISTORY_SPAN = 0.55
 
     -- The actual upward speed a target left the ground with, caught the instant they jump, so
     -- air prediction uses what really happened instead of always assuming a fixed jump speed
@@ -5696,7 +5723,7 @@ do
             History[entry.Model] = list
         end
         local last = list[#list]
-        if last and now - last.t < 0.03 then
+        if last and now - last.t < 0.02 then
             return
         end
         list[#list + 1] = { t = now, p = root.Position }
@@ -5902,39 +5929,64 @@ do
 
                 local root, hum = entry.Root, entry.Humanoid
                 local now = os.clock()
-                local velocity = root.AssemblyLinearVelocity
                 sample(entry, now)
                 watchForJump(entry, now)
+
+                -- Prefer position-sampled velocity (CatVape-style): replicated ALV often lags or zeros
+                local velocity = root.AssemblyLinearVelocity
                 local measured = measuredVelocity(entry, now)
                 if measured then
-                    local replicated = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-                    local moved = Vector3.new(measured.X, 0, measured.Z).Magnitude
-                    -- trust the measured movement when the replicated velocity clearly under-reports it
-                    if moved > replicated * 1.3 + 2 then
-                        velocity = Vector3.new(measured.X, velocity.Y, measured.Z)
+                    local repH = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+                    local movH = Vector3.new(measured.X, 0, measured.Z).Magnitude
+                    if movH > 1 then
+                        local w = (movH > repH * 1.15 + 1.5) and 1 or 0.75
+                        velocity = Vector3.new(
+                            measured.X * w + velocity.X * (1 - w),
+                            (math.abs(measured.Y) > math.abs(velocity.Y) + 2) and measured.Y or velocity.Y,
+                            measured.Z * w + velocity.Z * (1 - w)
+                        )
                     end
                 end
                 if projectileName == "telepearl" then
                     velocity = Vector3.zero
                 end
 
-                local horizontalLead = cfg.XPredict / 100
-                local verticalLead = cfg.YPredict / 100
+                -- Meta speed/gravity when more accurate than native
+                local metaSpeed = tonumber(meta.launchVelocity)
+                local metaGrav = tonumber(meta.gravitationalAcceleration)
+                local mult = tonumber(projmeta and projmeta.gravityMultiplier) or 1
+                local velMult = tonumber(projmeta and projmeta.velocityMultiplier) or 1
+                if metaSpeed and metaSpeed > 10 then
+                    local boosted = metaSpeed * math.max(velMult, 0.25)
+                    if math.abs(speed - metaSpeed) < 3 then
+                        speed = boosted
+                    elseif speed < metaSpeed * 0.4 then
+                        speed = math.max(speed, boosted * 0.85)
+                    end
+                end
+                if metaGrav and metaGrav > 0 then
+                    gravity = metaGrav * mult
+                end
+
+                local horizontalLead = (cfg.XPredict or 100) / 100
+                local verticalLead = (cfg.YPredict or 100) / 100
                 local vx, vz = velocity.X * horizontalLead, velocity.Z * horizontalLead
-                local airborne = hum.FloorMaterial == Enum.Material.Air
+                local airborne = hum.FloorMaterial == Enum.Material.Air or math.abs(velocity.Y) > 1.5
                 local vy = airborne and velocity.Y * verticalLead or 0
-                if not airborne and velocity.Y < 20 then
+                if not airborne then
                     local okState, state = pcall(function()
                         return hum:GetState()
                     end)
                     if okState and state == Enum.HumanoidStateType.Jumping then
                         airborne = true
-                        -- Prefer the speed this specific target actually left the ground with
-                        -- (caught live in the Heartbeat loop); fall back to the default jump speed
-                        -- if we didn't happen to catch the takeoff frame.
                         local observed = JumpVelocity[entry.Model]
                         local jumpSpeed = (observed and now - observed.at < JUMP_OBSERVATION_TTL) and observed.vy or JUMP_SPEED
                         vy = jumpSpeed * verticalLead
+                    end
+                elseif math.abs(vy) < 2 then
+                    local observed = JumpVelocity[entry.Model]
+                    if observed and now - observed.at < JUMP_OBSERVATION_TTL then
+                        vy = observed.vy * verticalLead
                     end
                 end
 
@@ -5957,29 +6009,27 @@ do
                 end
 
                 local lead = pingLead()
-                local base = part.Position
+                local base = part.Position + Vector3.new(0, (part.Name == "Head") and 0 or 0.35, 0)
 
-                -- Don't predict a falling target through the floor
                 local floorY = nil
                 if airborne then
                     RayFilter.Refresh()
                     local down = Workspace:Raycast(root.Position, Vector3.new(0, -300, 0), RayFilter.Params)
                     if down then
-                        floorY = down.Position.Y + hum.HipHeight + root.Size.Y / 2 + (base.Y - root.Position.Y)
-                        floorY = math.min(floorY, base.Y)
+                        floorY = down.Position.Y + (hum.HipHeight or 2) + root.Size.Y * 0.5 + (base.Y - root.Position.Y)
+                        floorY = math.min(floorY, base.Y + 0.5)
                     end
                 end
 
-                -- Don't predict a runner through a wall: movement stops where the path is blocked
                 local runSpeed = Vector3.new(vx, 0, vz).Magnitude
                 local runDirection = runSpeed > 0.5 and Vector3.new(vx, 0, vz).Unit or nil
                 local runLimit = math.huge
                 if runDirection then
                     RayFilter.Refresh()
                     local reach = runSpeed * (lifetime + lead) + 2
-                    local hit = Workspace:Raycast(root.Position, runDirection * reach, RayFilter.Params)
+                    local hit = Workspace:Raycast(root.Position + Vector3.new(0, 1, 0), runDirection * reach, RayFilter.Params)
                     if hit then
-                        runLimit = math.max(hit.Distance - 1.8, 0)
+                        runLimit = math.max(hit.Distance - 1.5, 0)
                     end
                 end
 
@@ -5987,21 +6037,23 @@ do
                 local function targetAt(t)
                     local tt = t + lead
                     local y = base.Y + yOffsetNow
-                    if airborne then
+                    if airborne and targetGravity > 0 then
                         y = y + vy * tt - 0.5 * targetGravity * tt * tt
                         if floorY and y < floorY + yOffsetNow then
                             y = floorY + yOffsetNow
                         end
+                    elseif airborne and targetGravity <= 0 then
+                        y = y + vy * tt
                     end
                     local x, z = base.X + vx * tt, base.Z + vz * tt
                     if runDirection and runSpeed * tt > runLimit then
-                        x, z = base.X + runDirection.X * runLimit, base.Z + runDirection.Z * runLimit
+                        x = base.X + runDirection.X * runLimit
+                        z = base.Z + runDirection.Z * runLimit
                     end
                     return Vector3.new(x, y, z)
                 end
 
                 local bow = Bedwars.BowConstants
-                -- Where the arrow spawns relative to the camera. A weapon can define its own offset.
                 local relX, relY, relZ
                 local toolMeta = tool and Bedwars.ItemMeta and Bedwars.ItemMeta[tool.Name]
                 local relative = toolMeta and toolMeta.projectileSource and toolMeta.projectileSource.relativeOverride
@@ -6010,11 +6062,10 @@ do
                 elseif bow and tonumber(bow.RelX) ~= nil then
                     relX, relY, relZ = bow.RelX, bow.RelY or 0, bow.RelZ or 0
                 end
-                -- The offset only applies to the third person arrow spawn; first person fires from the camera
                 local useOffset = relX ~= nil and not firstPerson
 
                 local chosen, chosenTime
-                for _, dy in ipairs({ 0, 0.8, -0.8, 1.6, -1.6 }) do
+                for _, dy in ipairs({ 0, 0.55, -0.4, 1.1, -0.9, 1.8 }) do
                     yOffsetNow = dy
                     local v, flight = solveLaunch(from, speed, gravity, targetAt, lifetime)
                     if v then
@@ -6025,18 +6076,32 @@ do
                                 v, flight = v2, flight2
                             end
                         end
-                        if worldmeta or arcIsClear(from, v, gravity, flight) then
+                        -- CatVape second pass when predict scale != 100%
+                        if horizontalLead ~= 1 or verticalLead ~= 1 then
+                            local rise = (vy * flight) - (targetGravity * flight * flight * 0.5)
+                            local adjLead = Vector3.new(
+                                velocity.X * flight * (horizontalLead - 1),
+                                rise * (verticalLead - 1),
+                                velocity.Z * flight * (horizontalLead - 1)
+                            )
+                            local savedBase = base
+                            base = part.Position + Vector3.new(0, (part.Name == "Head") and 0 or 0.35, 0) + adjLead
+                            local v3, f3 = solveLaunch(from, speed, gravity, targetAt, lifetime)
+                            base = savedBase
+                            if v3 then
+                                v, flight = v3, f3
+                            end
+                        end
+                        local closeShot = (part.Position - from).Magnitude < 28
+                        if worldmeta or closeShot or arcIsClear(from, v, gravity, flight) then
                             chosen, chosenTime = v, flight
                             break
                         end
-                    elseif dy == 0 then
-                        break -- out of range for this projectile speed; extra offsets won't help
                     end
                 end
                 if not chosen then
                     return nil
                 end
-                -- boomerang-style projectiles turn around at a fixed distance
                 if returnDistance and speed * chosenTime > returnDistance - 2 then
                     return nil
                 end
@@ -6158,9 +6223,9 @@ do
 
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
     aim:AddTextBox({ Label = "Exclude Items", Key = "ExcludeItems", Default = "", Placeholder = "comma separated names", Tip = "Shots fired with these items (partial names work) are left alone - this module won't aim them." })
-    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 120, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
-    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 800, Default = 300, Step = 5, Suffix = " px" })
-    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction." })
+    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 250, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
+    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 1000, Default = 500, Step = 5, Suffix = " px" })
+    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways movement. 100% = full prediction (CatVape default)." })
     aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead vertical movement (jumps/falls). 100% = full prediction." })
     aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
