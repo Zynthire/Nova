@@ -4120,12 +4120,29 @@ function Nova.Unload(keepSaved)
             end
         end
         for _, root in ipairs(roots) do
+            -- Direct children first (ScreenGuis like NovaInventoryESP)
+            for _, inst in ipairs(root:GetChildren()) do
+                if type(inst.Name) == "string" and inst.Name:sub(1, 4) == "Nova" then
+                    pcall(inst.Destroy, inst)
+                end
+            end
             for _, inst in ipairs(root:GetDescendants()) do
                 if type(inst.Name) == "string" and inst.Name:sub(1, 4) == "Nova" then
                     pcall(inst.Destroy, inst)
                 end
             end
         end
+        -- Explicit known overlays that live outside UI.Gui
+        pcall(function()
+            for _, name in ipairs({ "NovaInventoryESP", "NovaInventoryEsp", "NovaNameTags" }) do
+                for _, root in ipairs(roots) do
+                    local inst = root:FindFirstChild(name, true)
+                    if inst then
+                        pcall(inst.Destroy, inst)
+                    end
+                end
+            end
+        end)
     end)
 
     if keepSaved then
@@ -5890,8 +5907,8 @@ do
                 return (b.p - a.p) / dt
             end
 
-            -- Classic ballistic interception (CatVape Prediction.SolveTrajectory shape)
-            -- Returns aimPoint (origin + launchVel), impact, travelTime
+            -- CatVape-style ballistic solve: light lead, gravity compensate, no over-prediction
+            -- Returns aimPoint, impact, travelTime, launchVel
             local function SolveTrajectory(origin, speed, gravity, targetPos, targetVel, playerGravity, hipHeight, jumpVel, _params, airborne, rootPos, _root)
                 if typeof(origin) ~= "Vector3" or typeof(targetPos) ~= "Vector3" then
                     return nil
@@ -5904,76 +5921,58 @@ do
                     return nil
                 end
 
-                -- slight aim lift on torso/root shots (CatVape AimLift behaviour)
-                local aimPos = targetPos
-                if rootPos and (targetPos - rootPos).Magnitude < 0.15 then
-                    aimPos = targetPos + Vector3.new(0, 0.5, 0)
-                end
-
                 if type(airborne) ~= "boolean" then
-                    airborne = math.abs(targetVel.Y) > 0.01
+                    airborne = math.abs(targetVel.Y) > 0.5
                 end
-
-                -- If jumping from ground, inject jump velocity
-                if jumpVel and not airborne then
-                    targetVel = Vector3.new(targetVel.X, math.max(targetVel.Y, jumpVel), targetVel.Z)
+                -- Grounded: ignore vertical velocity (stops "sky lead")
+                local tv = airborne and targetVel or Vector3.new(targetVel.X, 0, targetVel.Z)
+                if jumpVel and jumpVel > 0 and not airborne then
+                    tv = Vector3.new(tv.X, jumpVel, tv.Z)
                     airborne = true
                 end
 
-                local floorY = aimPos.Y - (tonumber(hipHeight) or 2)
-                if not airborne then
-                    -- horizontal motion only when grounded
-                    targetVel = Vector3.new(targetVel.X, 0, targetVel.Z)
+                local aimPos = targetPos
+                if rootPos and (targetPos - rootPos).Magnitude < 0.2 then
+                    aimPos = targetPos + Vector3.new(0, 0.35, 0) -- small CatVape-like AimLift
                 end
+                local floorY = aimPos.Y - (tonumber(hipHeight) or 2.5)
 
-                local function predict(t)
-                    local p = aimPos + targetVel * t
+                -- Iterate predicted intercept (subtle — 4 passes, clamp lead)
+                local impact = aimPos
+                local t = math.clamp((aimPos - origin).Magnitude / speed, 0.05, 3.5)
+                for _ = 1, 5 do
+                    local pred = aimPos + tv * t
                     if airborne and playerGravity > 0 then
-                        p = Vector3.new(p.X, p.Y - 0.5 * playerGravity * t * t, p.Z)
-                        if p.Y < floorY then
-                            p = Vector3.new(p.X, floorY, p.Z)
+                        pred = Vector3.new(pred.X, pred.Y - 0.5 * playerGravity * t * t, pred.Z)
+                        if pred.Y < floorY then
+                            pred = Vector3.new(pred.X, floorY, pred.Z)
                         end
                     end
-                    return p
+                    -- Cap horizontal lead so we don't aim miles ahead of fast targets
+                    local lead = pred - aimPos
+                    local leadH = Vector3.new(lead.X, 0, lead.Z)
+                    if leadH.Magnitude > 28 then
+                        leadH = leadH.Unit * 28
+                        pred = Vector3.new(aimPos.X + leadH.X, pred.Y, aimPos.Z + leadH.Z)
+                    end
+                    impact = pred
+                    local to = impact - origin
+                    local dist = to.Magnitude
+                    -- time accounting for arc length approx
+                    t = math.clamp(dist / speed, 0.05, 3.5)
                 end
 
-                -- Estimate travel time then Newton-refine so |lead - 0.5*g*t^2| = speed*t
-                local bestT, bestVel
-                local dist0 = (aimPos - origin).Magnitude
-                local t = math.clamp(dist0 / speed, 0.05, 4)
-                for _ = 1, 10 do
-                    local impact = predict(t)
-                    local to = impact - origin
-                    -- account for projectile gravity drop: effective horizontal+vertical need
-                    local drop = 0.5 * gravity * t * t
-                    local adjusted = to + Vector3.new(0, drop, 0)
-                    local need = adjusted.Magnitude
-                    local err = need - speed * t
-                    -- derivative approx
-                    local dt = 0.01
-                    local impact2 = predict(t + dt)
-                    local to2 = impact2 - origin
-                    local drop2 = 0.5 * gravity * (t + dt) * (t + dt)
-                    local need2 = (to2 + Vector3.new(0, drop2, 0)).Magnitude
-                    local derr = (need2 - speed * (t + dt)) - err
-                    if math.abs(derr) < 1e-6 then
-                        break
-                    end
-                    t = t - err / derr
-                    if t < 0.03 or t > 5 then
-                        break
-                    end
-                end
-                t = math.clamp(t, 0.04, 4.5)
-                local impact = predict(t)
                 local to = impact - origin
-                local drop = 0.5 * gravity * t * t
-                local launch = (to + Vector3.new(0, drop, 0))
-                if launch.Magnitude < 0.01 then
+                if to.Magnitude < 0.05 then
                     return nil
                 end
-                local launchVel = launch.Unit * speed
-                -- verify roughly hits
+                -- Aim higher to counter projectile gravity (CatVape: built into SolveTrajectory)
+                local drop = 0.5 * gravity * t * t
+                local adjusted = to + Vector3.new(0, drop, 0)
+                if adjusted.Magnitude < 0.05 then
+                    return nil
+                end
+                local launchVel = adjusted.Unit * speed
                 local aimPoint = origin + launchVel
                 return aimPoint, impact, t, launchVel
             end
@@ -6038,21 +6037,30 @@ do
                 if blacklist[projectileName] then
                     return nil
                 end
+                -- Exclude list: only skips matching PROJECTILE IDS (e.g. fireball, telepearl).
+                -- Never matches tool names ("bow", "wood") — that used to disable every shot.
+                -- Match is exact (squashed) or exclude-word is a clear id fragment of the projectile.
                 if cfg.ExcludeItems and cfg.ExcludeItems:match("%S") then
                     local function squash(s)
                         return tostring(s or ""):lower():gsub("[^%a%d]", "")
                     end
-                    local candidates = { squash(projectileName) }
-                    if tool and typeof(tool) == "Instance" then
-                        candidates[#candidates + 1] = squash(tool.Name)
-                    end
-                    local held = Util.GetHeldName()
-                    if held then candidates[#candidates + 1] = squash(held) end
-                    for word in cfg.ExcludeItems:gmatch("[^,]+") do
-                        word = squash(word:match("^%s*(.-)%s*$"))
-                        if word ~= "" then
-                            for _, cand in ipairs(candidates) do
-                                if cand ~= "" and cand:find(word, 1, true) then
+                    local proj = squash(projectileName)
+                    if proj ~= "" then
+                        for raw in cfg.ExcludeItems:gmatch("[^,;]+") do
+                            local word = squash(raw:match("^%s*(.-)%s*$") or "")
+                            if #word >= 3 then
+                                local hit = false
+                                if proj == word then
+                                    hit = true
+                                elseif #word >= 4 and #proj >= 4 then
+                                    -- fragment match only when the word is a real chunk of the id
+                                    -- (fireball → fireball / splashfireball), not a tiny accidental substring
+                                    local at = proj:find(word, 1, true)
+                                    if at and (#word >= math.min(6, #proj) or #word / #proj >= 0.5) then
+                                        hit = true
+                                    end
+                                end
+                                if hit then
                                     return nil
                                 end
                             end
@@ -6107,8 +6115,14 @@ do
                 else
                     local measured = measuredVelocity(root)
                     if measured then
-                        local w = 0.65
-                        velocity = velocity:Lerp(measured, w)
+                        -- Light blend only when ALV is clearly lagging (CatVape relies on ALV first)
+                        local alvH = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+                        local mH = Vector3.new(measured.X, 0, measured.Z).Magnitude
+                        if mH > alvH + 3 then
+                            velocity = velocity:Lerp(measured, 0.45)
+                        elseif alvH < 1 and mH > 2 then
+                            velocity = measured
+                        end
                     end
                 end
 
@@ -6136,15 +6150,16 @@ do
                 local jumpVel = jumping and JUMP_SPEED or nil
                 local hip = hum.HipHeight or 2
 
-                local hx = (cfg.XPredict or 100) / 100
-                local hy = (cfg.YPredict or 100) / 100
-                local scaledVel = Vector3.new(velocity.X * hx, velocity.Y * hy, velocity.Z * hx)
+                local hx = (cfg.XPredict or 85) / 100
+                local hy = (cfg.YPredict or 85) / 100
+                -- CatVape Horizontal/Vertical = 1 means "use solver as-is". Values below 1 reduce lead.
+                local scaledVel = Vector3.new(velocity.X * hx, (airborne and velocity.Y or 0) * hy, velocity.Z * hx)
 
                 local aimPoint, impact, travel, launchVel = SolveTrajectory(
                     from, speed, gravity, part.Position, scaledVel, playerGravity, hip, jumpVel, nil, airborne, root.Position, root
                 )
-                -- Second pass with lead scale (CatVape Horizontal/Vertical adjust)
-                if aimPoint and travel and (hx ~= 1 or hy ~= 1) then
+                -- Optional second pass only when user asks for EXTRA lead (>100%)
+                if aimPoint and travel and (hx > 1.01 or hy > 1.01) then
                     local rise = (velocity.Y * travel) - (playerGravity * travel * travel * 0.5)
                     local lead = Vector3.new(velocity.X * travel * (hx - 1), rise * (hy - 1), velocity.Z * travel * (hx - 1))
                     local a2, _, t2, lv2 = SolveTrajectory(
@@ -6283,11 +6298,13 @@ do
     })
 
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
-    aim:AddTextBox({ Label = "Exclude Items", Key = "ExcludeItems", Default = "", Placeholder = "comma separated names", Tip = "Shots fired with these items (partial names work) are left alone - this module won't aim them." })
+    aim:AddTextBox({ Label = "Exclude Items", Key = "ExcludeItems", Default = "", Placeholder = "fireball, telepearl", Tip = "Comma-separated projectile ids only (not tool names). Example: fireball skips fireballs; arrows still aim." })
     aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 1000, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
     aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 1000, Default = 1000, Step = 5, Suffix = " px" })
-    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways. ~90% often tracks better than full 100%." })
-    aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead jumps/falls. ~90% often tracks better than full 100%." })
+    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 85, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways. ~90% often tracks better than full 100%." })
+    aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 85, Step = 5, Suffix = "%", Tip = "How far ahead to lead jumps/falls. ~90% often tracks better than full 100%." })
+    aim:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, Tip = "Only lock targets you can see (line of sight)." })
+    aim:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
     aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
     aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
@@ -12934,156 +12951,320 @@ do
     }
 
     -- ====================== INVENTORY ESP ======================
+    -- CatVape Inventory Overlay data path: InventoryUtil.getInventory(player)
     local invEsp
+    local invGui          -- dedicated ScreenGui (not nested under main UI)
     local panel
+    local statusLabel
     local rows = {}
     local COLUMNS = 6
 
-    local function inventoriesFolder()
-        return ReplicatedStorage:FindFirstChild("Inventories")
+    local function cellSize()
+        return (invEsp and invEsp.Config and invEsp.Config.Size) or 28
     end
 
-    -- Reads one replicated inventory folder into a flat list of { name, amount, group, order }
-    local function readItems(folder, list)
-        if not folder then
-            return
-        end
-        local cfg = invEsp.Config
-        for _, child in ipairs(folder:GetChildren()) do
-            local amount = child:GetAttribute("Amount")
-            if amount == nil and child:IsA("ValueBase") then
-                amount = child.Value
+    local function panelWidth()
+        return COLUMNS * cellSize() + (COLUMNS - 1) * 3 + 20
+    end
+
+    local function resolveInventoryUtil()
+        local util
+        local function try(path)
+            local ok, mod = pcall(function()
+                if setthreadidentity then
+                    pcall(setthreadidentity, 8)
+                end
+                return require(path)
+            end)
+            if ok and mod then
+                return mod.InventoryUtil or mod
             end
-            amount = tonumber(amount) or 1
-            if amount > 0 then
-                local group, order = classify(child.Name)
-                if cfg[GROUP_KEYS[group]] ~= false then
-                    list[#list + 1] = { name = child.Name, amount = amount, group = group, order = order }
+            return nil
+        end
+        util = try(ReplicatedStorage.TS.inventory["inventory-util"])
+        if not util then
+            local ts = ReplicatedStorage:FindFirstChild("TS")
+            local inv = ts and ts:FindFirstChild("inventory")
+            local mod = inv and inv:FindFirstChild("inventory-util")
+            if mod then
+                util = try(mod)
+            end
+        end
+        return util
+    end
+
+    -- Exact CatVape Collect → flat list of {name, amount}
+    local function collectCatVape(plr)
+        local list = {}
+        local util = resolveInventoryUtil()
+        if not util or type(util.getInventory) ~= "function" then
+            return list
+        end
+        if setthreadidentity then
+            pcall(setthreadidentity, 8)
+        end
+        local ok, inv = pcall(util.getInventory, plr)
+        if not ok or type(inv) ~= "table" then
+            return list
+        end
+        local worn = {}
+        if type(inv.armor) == "table" then
+            for _, v in pairs(inv.armor) do
+                if type(v) == "table" and v.tool then
+                    worn[v.tool] = true
                 end
             end
         end
+        if type(inv.backpack) == "table" and inv.backpack.tool then
+            worn[inv.backpack.tool] = true
+        end
+        local items = {}
+        if type(inv.items) == "table" then
+            for _, v in pairs(inv.items) do
+                if type(v) == "table" and (v.tool or v.itemType) and not (v.tool and worn[v.tool]) then
+                    items[#items + 1] = v
+                end
+            end
+        end
+        table.sort(items, function(a, b)
+            local at, bt = a.addedToBackpackTime or 0, b.addedToBackpackTime or 0
+            if at ~= bt then return at < bt end
+            return tostring(a.itemType or "") < tostring(b.itemType or "")
+        end)
+        local cfg = invEsp.Config
+        local function add(name, amount)
+            if not name or name == "" then return end
+            amount = tonumber(amount) or 1
+            if amount <= 0 then return end
+            local group = select(1, classify(tostring(name)))
+            local key = GROUP_KEYS[group]
+            if key and cfg[key] == false then return end
+            list[#list + 1] = { name = tostring(name), amount = amount }
+        end
+        -- armor first
+        if type(inv.armor) == "table" then
+            for _, v in pairs(inv.armor) do
+                if type(v) == "table" then
+                    add(v.itemType or (v.tool and v.tool.Name), v.amount or 1)
+                end
+            end
+        end
+        for _, v in ipairs(items) do
+            add(v.itemType or (v.tool and v.tool.Name), v.amount or 1)
+        end
+        return list
+    end
+
+    local function collectFolder(plr)
+        local list = {}
+        local root = ReplicatedStorage:FindFirstChild("Inventories")
+        if not root then return list end
+        local folder = root:FindFirstChild(plr.Name) or root:FindFirstChild(tostring(plr.UserId))
+        if not folder then return list end
+        local cfg = invEsp.Config
+        local function walk(node, depth)
+            if not node or depth > 5 then return end
+            for _, child in ipairs(node:GetChildren()) do
+                local amount = child:GetAttribute("Amount") or child:GetAttribute("amount")
+                if amount == nil and child:IsA("ValueBase") then amount = child.Value end
+                if amount ~= nil or child:IsA("Tool") then
+                    local group = select(1, classify(child.Name))
+                    local key = GROUP_KEYS[group]
+                    if not (key and cfg[key] == false) then
+                        list[#list + 1] = { name = child.Name, amount = tonumber(amount) or 1 }
+                    end
+                end
+                if #child:GetChildren() > 0 then
+                    walk(child, depth + 1)
+                end
+            end
+        end
+        walk(folder, 0)
+        if cfg.Personal then
+            walk(root:FindFirstChild(plr.Name .. "_personal"), 0)
+        end
+        return list
+    end
+
+    local function collectCharacter(plr)
+        local list = {}
+        local char = plr.Character
+        if not char then return list end
+        local cfg = invEsp.Config
+        local function add(name)
+            if not name then return end
+            local group = select(1, classify(name))
+            local key = GROUP_KEYS[group]
+            if key and cfg[key] == false then return end
+            list[#list + 1] = { name = name, amount = 1 }
+        end
+        local hand = char:FindFirstChild("HandInvItem")
+        if hand and hand.Value then add(hand.Value.Name) end
+        for slot = 0, 3 do
+            local a = char:FindFirstChild("ArmorInvItem_" .. slot)
+            if a and a.Value then add(a.Value.Name) end
+        end
+        return list
     end
 
     local function collect(plr)
-        local list = {}
-        local folder = inventoriesFolder()
-        if not folder then
-            return list, ""
-        end
-        readItems(folder:FindFirstChild(plr.Name), list)
-        if invEsp.Config.Personal then
-            readItems(folder:FindFirstChild(plr.Name .. "_personal"), list)
-        end
-        table.sort(list, function(a, b)
-            if a.order ~= b.order then
-                return a.order < b.order
-            end
-            return a.name < b.name
-        end)
+        local list = collectCatVape(plr)
+        if #list == 0 then list = collectFolder(plr) end
+        if #list == 0 then list = collectCharacter(plr) end
         local parts = {}
-        for _, item in ipairs(list) do
-            parts[#parts + 1] = item.name .. ":" .. item.amount
+        for _, it in ipairs(list) do
+            parts[#parts + 1] = it.name .. ":" .. it.amount
         end
         return list, table.concat(parts, ",")
     end
 
-    local function cellSize()
-        return invEsp.Config.Size or 28
-    end
-
-    local function panelWidth()
-        return COLUMNS * cellSize() + (COLUMNS - 1) * 3 + 16
-    end
-
-    local function placePanel()
-        if not panel then
-            return
+    local function destroyInvGui()
+        for plr in pairs(rows) do
+            local r = rows[plr]
+            if r and r.frame then pcall(function() r.frame:Destroy() end) end
+            rows[plr] = nil
         end
-        local left = invEsp.Config.Side == "Left"
-        panel.AnchorPoint = Vector2.new(left and 0 or 1, 0)
-        panel.Position = left and UDim2.new(0, 12, 0, 90) or UDim2.new(1, -12, 0, 90)
+        if invGui then
+            pcall(function() invGui:Destroy() end)
+            invGui = nil
+            panel = nil
+            statusLabel = nil
+        end
+    end
+
+    local function ensureGui()
+        if Nova.Unloaded then
+            return nil
+        end
+        if invGui and invGui.Parent then
+            return panel
+        end
+        destroyInvGui()
+        invGui = Instance.new("ScreenGui")
+        invGui.Name = "NovaInventoryESP"
+        invGui.ResetOnSpawn = false
+        invGui.IgnoreGuiInset = true
+        invGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        invGui.DisplayOrder = 99999
+        pcall(function()
+            invGui.Parent = getGuiParent()
+        end)
+        if not invGui.Parent then
+            invGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        end
+
+        panel = Instance.new("Frame")
+        panel.Name = "Panel"
+        panel.BackgroundTransparency = 1
+        panel.AutomaticSize = Enum.AutomaticSize.Y
         panel.Size = UDim2.fromOffset(panelWidth(), 0)
-        for _, row in pairs(rows) do
-            row.frame.Parent = panel
-            row.grid.CellSize = UDim2.fromOffset(cellSize(), cellSize())
-            row.signature = nil
+        panel.Parent = invGui
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 6)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        layout.Parent = panel
+
+        statusLabel = Instance.new("TextLabel")
+        statusLabel.Name = "Status"
+        statusLabel.BackgroundColor3 = Theme.Panel
+        statusLabel.BackgroundTransparency = 0.2
+        statusLabel.Size = UDim2.new(1, 0, 0, 22)
+        statusLabel.Font = Enum.Font.GothamBold
+        statusLabel.TextSize = 12
+        statusLabel.TextColor3 = Theme.Text
+        statusLabel.Text = "Inventory ESP…"
+        statusLabel.LayoutOrder = 0
+        statusLabel.Parent = panel
+        local sc = Instance.new("UICorner")
+        sc.CornerRadius = UDim.new(0, 6)
+        sc.Parent = statusLabel
+
+        placePanel()
+        return panel
+    end
+
+    function placePanel()
+        if not panel then return end
+        local left = invEsp and invEsp.Config and invEsp.Config.Side == "Left"
+        panel.AnchorPoint = Vector2.new(left and 0 or 1, 0)
+        panel.Position = left and UDim2.new(0, 14, 0, 100) or UDim2.new(1, -14, 0, 100)
+        panel.Size = UDim2.fromOffset(panelWidth(), 0)
+    end
+
+    local function removeRow(plr)
+        local row = rows[plr]
+        if row then
+            pcall(function() row.frame:Destroy() end)
+            rows[plr] = nil
         end
     end
 
     local function buildRow(plr)
-        local frame = New("Frame", {
-            Name = plr.Name,
-            BackgroundColor3 = Theme.Panel,
-            BackgroundTransparency = 0.1,
-            BorderSizePixel = 0,
-            Size = UDim2.fromScale(1, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = panel,
-        }, {
-            Round(8),
-            Stroke(Theme.Stroke, 1, 0),
-            Pad(8, 6, 8, 8),
-            New("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }),
-        })
+        local size = cellSize()
+        local frame = Instance.new("Frame")
+        frame.Name = plr.Name
+        frame.BackgroundColor3 = Theme.Panel
+        frame.BackgroundTransparency = 0.12
+        frame.BorderSizePixel = 0
+        frame.Size = UDim2.new(1, 0, 0, 0)
+        frame.AutomaticSize = Enum.AutomaticSize.Y
+        frame.Parent = panel
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = frame
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 8)
+        pad.PaddingRight = UDim.new(0, 8)
+        pad.PaddingTop = UDim.new(0, 6)
+        pad.PaddingBottom = UDim.new(0, 8)
+        pad.Parent = frame
+        local list = Instance.new("UIListLayout")
+        list.Padding = UDim.new(0, 5)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Parent = frame
 
-        local header = New("Frame", {
-            Name = "Header",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 22),
-            LayoutOrder = 1,
-            Parent = frame,
-        })
-        local avatar = New("ImageLabel", {
-            Name = "Avatar",
-            BackgroundColor3 = Theme.Card,
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(22, 22),
-            Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(plr.UserId) .. "&w=48&h=48",
-            Parent = header,
-        }, { Round(11) })
-        local avatarStroke = Stroke(Theme.AccentLight, 2, 0)
-        avatarStroke.Parent = avatar
-        local name = New("TextLabel", {
-            Name = "Name",
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(28, 0),
-            Size = UDim2.new(1, -52, 1, 0),
-            Font = FONT.Bold,
-            TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            TextColor3 = Theme.Text,
-            Text = plr.DisplayName,
-            Parent = header,
-        })
-        local kit = New("ImageLabel", {
-            Name = "Kit",
-            BackgroundTransparency = 1,
-            AnchorPoint = Vector2.new(1, 0),
-            Position = UDim2.new(1, 0, 0, 0),
-            Size = UDim2.fromOffset(22, 22),
-            Image = "",
-            Visible = false,
-            Parent = header,
-        })
-        local grid = New("UIGridLayout", {
-            CellSize = UDim2.fromOffset(cellSize(), cellSize()),
-            CellPadding = UDim2.fromOffset(3, 3),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-        New("Frame", {
-            Name = "Items",
-            BackgroundTransparency = 1,
-            Size = UDim2.fromScale(1, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            LayoutOrder = 2,
-            Parent = frame,
-        }, { grid })
+        local header = Instance.new("Frame")
+        header.BackgroundTransparency = 1
+        header.Size = UDim2.new(1, 0, 0, 22)
+        header.LayoutOrder = 1
+        header.Parent = frame
 
-        return {
-            frame = frame, name = name, avatarStroke = avatarStroke, kit = kit, grid = grid,
-            items = frame.Items, signature = nil,
-        }
+        local avatar = Instance.new("ImageLabel")
+        avatar.Size = UDim2.fromOffset(22, 22)
+        avatar.BackgroundColor3 = Theme.Card
+        avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. plr.UserId .. "&w=48&h=48"
+        avatar.Parent = header
+        local ac = Instance.new("UICorner")
+        ac.CornerRadius = UDim.new(1, 0)
+        ac.Parent = avatar
+
+        local name = Instance.new("TextLabel")
+        name.BackgroundTransparency = 1
+        name.Position = UDim2.fromOffset(28, 0)
+        name.Size = UDim2.new(1, -30, 1, 0)
+        name.Font = Enum.Font.GothamBold
+        name.TextSize = 13
+        name.TextXAlignment = Enum.TextXAlignment.Left
+        name.TextColor3 = Theme.Text
+        name.TextTruncate = Enum.TextTruncate.AtEnd
+        name.Text = plr.DisplayName
+        name.Parent = header
+
+        local items = Instance.new("Frame")
+        items.Name = "Items"
+        items.BackgroundTransparency = 1
+        items.Size = UDim2.new(1, 0, 0, 0)
+        items.AutomaticSize = Enum.AutomaticSize.Y
+        items.LayoutOrder = 2
+        items.Parent = frame
+        local grid = Instance.new("UIGridLayout")
+        grid.CellSize = UDim2.fromOffset(size, size)
+        grid.CellPadding = UDim2.fromOffset(3, 3)
+        grid.SortOrder = Enum.SortOrder.LayoutOrder
+        grid.Parent = items
+
+        return { frame = frame, name = name, items = items, grid = grid, signature = nil }
     end
 
     local function fillItems(row, list)
@@ -13092,145 +13273,119 @@ do
                 child:Destroy()
             end
         end
+        local size = cellSize()
+        row.grid.CellSize = UDim2.fromOffset(size, size)
         for index, item in ipairs(list) do
-            local cell = New("Frame", {
-                Name = item.name,
-                BackgroundColor3 = Theme.Card,
-                BackgroundTransparency = 0.15,
-                BorderSizePixel = 0,
-                LayoutOrder = index,
-                Parent = row.items,
-            }, { Round(5) })
-            New("ImageLabel", {
-                BackgroundTransparency = 1,
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromScale(0.82, 0.82),
-                Image = itemIcon(item.name),
-                Parent = cell,
-            })
-            if item.amount > 1 then
-                New("TextLabel", {
-                    BackgroundTransparency = 1,
-                    AnchorPoint = Vector2.new(1, 1),
-                    Position = UDim2.new(1, -2, 1, -1),
-                    Size = UDim2.fromOffset(cellSize(), 12),
-                    Font = FONT.Bold,
-                    TextSize = 11,
-                    TextXAlignment = Enum.TextXAlignment.Right,
-                    TextColor3 = Theme.Text,
-                    TextStrokeTransparency = 0.3,
-                    Text = shortCount(item.amount),
-                    ZIndex = 2,
-                    Parent = cell,
-                })
+            local cell = Instance.new("Frame")
+            cell.LayoutOrder = index
+            cell.BackgroundColor3 = Theme.Card
+            cell.BackgroundTransparency = 0.1
+            cell.BorderSizePixel = 0
+            cell.Parent = row.items
+            local cc = Instance.new("UICorner")
+            cc.CornerRadius = UDim.new(0, 5)
+            cc.Parent = cell
+            local icon = Instance.new("ImageLabel")
+            icon.BackgroundTransparency = 1
+            icon.AnchorPoint = Vector2.new(0.5, 0.5)
+            icon.Position = UDim2.fromScale(0.5, 0.5)
+            icon.Size = UDim2.fromScale(0.82, 0.82)
+            icon.ScaleType = Enum.ScaleType.Fit
+            icon.Image = itemIcon(item.name)
+            icon.Parent = cell
+            if (item.amount or 1) > 1 then
+                local amt = Instance.new("TextLabel")
+                amt.BackgroundTransparency = 1
+                amt.AnchorPoint = Vector2.new(1, 1)
+                amt.Position = UDim2.new(1, -2, 1, -1)
+                amt.Size = UDim2.new(1, -2, 0, 12)
+                amt.Font = Enum.Font.GothamBold
+                amt.TextSize = 11
+                amt.TextColor3 = Color3.new(1, 1, 1)
+                amt.TextStrokeTransparency = 0.5
+                amt.TextXAlignment = Enum.TextXAlignment.Right
+                amt.Text = shortCount(item.amount)
+                amt.ZIndex = 2
+                amt.Parent = cell
             end
-        end
-    end
-
-    local function removeRow(plr)
-        local row = rows[plr]
-        if row then
-            row.frame:Destroy()
-            rows[plr] = nil
         end
     end
 
     local function refreshPanel()
+        ensureGui()
         local cfg = invEsp.Config
         local wanted = {}
         local candidates = {}
+        local totalItems = 0
         for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and Util.GetCharacter(plr) and not (cfg.TeamCheck and sameTeam(plr)) then
-                local distance = distanceTo(plr) or 0
+            if plr ~= LocalPlayer and not (cfg.TeamCheck and sameTeam(plr)) then
+                local d = distanceTo(plr) or 9e9
                 local limit = cfg.MaxDistance or 0
-                if limit <= 0 or distance <= limit then
-                    candidates[#candidates + 1] = { plr = plr, distance = distance }
+                if limit <= 0 or d <= limit then
+                    candidates[#candidates + 1] = { plr = plr, distance = d }
                 end
             end
         end
-        table.sort(candidates, function(a, b)
-            return a.distance < b.distance
-        end)
+        table.sort(candidates, function(a, b) return a.distance < b.distance end)
 
         for index, entry in ipairs(candidates) do
-            if index > 10 then
-                break
-            end
+            if index > 12 then break end
             local plr = entry.plr
             local list, signature = collect(plr)
-            if #list > 0 then
-                wanted[plr] = true
-                local row = rows[plr] or buildRow(plr)
-                rows[plr] = row
-                row.frame.LayoutOrder = index
-                row.frame.Parent = panel
-                local color = teamColor(plr)
-                row.name.TextColor3 = color
-                row.avatarStroke.Color = color
-                row.name.Text = plr.DisplayName
-
-                local kit = cfg.Kits and kitOf(plr)
-                local kitKey = kit or ""
-                if kit then
-                    row.kit.Image = kitIcon(kit)
-                end
-                row.kit.Visible = kit ~= nil and kit ~= false and row.kit.Image ~= ""
-
-                local key = signature .. "|" .. kitKey .. "|" .. tostring(cellSize())
-                if row.signature ~= key then
-                    row.signature = key
-                    fillItems(row, list)
-                end
+            totalItems = totalItems + #list
+            wanted[plr] = true
+            local row = rows[plr] or buildRow(plr)
+            rows[plr] = row
+            row.frame.LayoutOrder = index
+            row.frame.Visible = true
+            local color = teamColor(plr)
+            row.name.TextColor3 = color
+            local dist = entry.distance < 1e8 and string.format(" · %dm", math.floor(entry.distance)) or ""
+            row.name.Text = string.format("%s%s · %d", plr.DisplayName, dist, #list)
+            local key = (signature or "") .. "|" .. tostring(cellSize())
+            if row.signature ~= key then
+                row.signature = key
+                fillItems(row, list)
             end
         end
-
         for plr in pairs(rows) do
             if not wanted[plr] then
                 removeRow(plr)
             end
         end
-    end
-
-    local function clearPanel()
-        for plr in pairs(rows) do
-            removeRow(plr)
+        if statusLabel then
+            local utilOk = resolveInventoryUtil() ~= nil
+            statusLabel.Text = string.format(
+                "Inv ESP · %d players · %d items · %s",
+                #candidates,
+                totalItems,
+                utilOk and "Util OK" or "Util miss (folder/char)"
+            )
         end
-        if panel then
-            panel:Destroy()
-            panel = nil
-        end
+        placePanel()
     end
 
     invEsp = Tabs.Render:CreateModule({
         Name = "Inventory ESP",
-        Description = "Side panel showing what every enemy is carrying.",
+        Description = "Side panel of enemy inventories (CatVape InventoryUtil path).",
         OnEnable = function(mod)
             pcall(Bedwars.ResolveExtras)
-            assert(inventoriesFolder(), "Inventories not found - join a Bedwars match first")
-
-            panel = New("Frame", {
-                Name = "NovaInventoryEsp",
-                BackgroundTransparency = 1,
-                Size = UDim2.fromOffset(panelWidth(), 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
-                ZIndex = 0,
-                Parent = UI.Gui,
-            }, {
-                New("UIListLayout", {
-                    Padding = UDim.new(0, 6),
-                    SortOrder = Enum.SortOrder.LayoutOrder,
-                    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-                }),
-            })
-            placePanel()
-            mod.Maid:Give(clearPanel)
-
+            pcall(Bedwars.Resolve)
+            local alive = true
+            ensureGui()
+            -- Module disable + full Unload both must kill the ScreenGui (it is NOT under UI.Gui)
+            local function shutdown()
+                alive = false
+                destroyInvGui()
+            end
+            mod.Maid:Give(shutdown)
+            Nova.Maid:Give(shutdown)
             mod.Maid:Give(task.spawn(function()
-                while mod.Enabled do
+                while alive and mod.Enabled and not Nova.Unloaded do
                     pcall(refreshPanel)
-                    task.wait(0.5)
+                    task.wait(0.3)
                 end
+                destroyInvGui()
             end))
         end,
     })
@@ -13238,19 +13393,18 @@ do
     invEsp:AddSection("Display")
     invEsp:AddOption({
         Label = "Side", Key = "Side", Options = { "Right", "Left" }, Default = "Right",
-        Callback = placePanel,
+        Callback = function() pcall(placePanel) end,
     })
     invEsp:AddSlider({
         Label = "Icon Size", Key = "Size", Min = 20, Max = 44, Default = 28, Step = 2, Suffix = " px",
-        Callback = placePanel,
+        Callback = function() pcall(placePanel) end,
     })
-    invEsp:AddToggle({ Label = "Show Kits", Key = "Kits", Default = false, Tip = "Adds the player's kit icon to their row." })
-    invEsp:AddToggle({ Label = "Personal Chest", Key = "Personal", Default = false, Tip = "Also lists what they keep in their personal chest." })
+    invEsp:AddToggle({ Label = "Personal Chest", Key = "Personal", Default = false })
     invEsp:AddSection("Players")
-    invEsp:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, Tip = "Hide your teammates." })
+    invEsp:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
     invEsp:AddSlider({
         Label = "Max Distance", Key = "MaxDistance", Min = 0, Max = 1000, Default = 0, Step = 25, Suffix = " studs",
-        Tip = "0 = show everyone, no matter how far.",
+        Tip = "0 = unlimited",
     })
     invEsp:AddSection("Items")
     invEsp:AddToggle({ Label = "Weapons", Key = "ShowWeapons", Default = true })
@@ -13259,7 +13413,8 @@ do
     invEsp:AddToggle({ Label = "Resources", Key = "ShowResources", Default = true })
     invEsp:AddToggle({ Label = "Blocks", Key = "ShowBlocks", Default = false })
     invEsp:AddToggle({ Label = "Other", Key = "ShowOther", Default = true })
-    invEsp:AddNote("Shows at most the 10 nearest players. Needs to be in a Bedwars match.")
+    invEsp:AddLabel("Uses InventoryUtil.getInventory like CatVape. Status line shows Util OK/miss.")
+
 
     -- ====================== NAMETAGS ======================
     local CollectionService = service("CollectionService")
@@ -13381,7 +13536,11 @@ do
         local cfg = cfgOf()
         local list = {}
         if cfg.Players ~= false then
-            for _, plr in ipairs(Players:GetPlayers()) do
+            local players = Players
+            if not players then
+                players = service("Players")
+            end
+            for _, plr in ipairs(players:GetPlayers()) do
                 if plr ~= LocalPlayer then
                     list[#list + 1] = { key = plr, plr = plr }
                 end
@@ -13623,6 +13782,9 @@ do
         end)
         font = fontOk and font or FONT.Bold
 
+        if not tagFolder or not tagFolder.Parent then
+            tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
+        end
         local gui = New("BillboardGui", {
             Name = "NovaTag",
             Size = UDim2.fromOffset(520, 220),
@@ -13630,6 +13792,7 @@ do
             AlwaysOnTop = true,
             LightInfluence = 0,
             ResetOnSpawn = false,
+            MaxDistance = 1000,
             Parent = tagFolder,
         })
         local stack = New("Frame", {
@@ -14119,12 +14282,22 @@ do
         Description = "Overhead tags with name, health, distance, gear, kit and more.",
         OnEnable = function(mod)
             pcall(Bedwars.ResolveExtras)
-            tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
+            pcall(Bedwars.Resolve)
+
+            local function ensureFolder()
+                if tagFolder and tagFolder.Parent then
+                    return tagFolder
+                end
+                tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
+                return tagFolder
+            end
+            ensureFolder()
+
             mod.Maid:Give(function()
                 resetTags()
                 restoreDefaults()
                 if tagFolder then
-                    tagFolder:Destroy()
+                    pcall(function() tagFolder:Destroy() end)
                     tagFolder = nil
                 end
             end)
@@ -14135,7 +14308,17 @@ do
             end))
             mod.Maid:Give(task.spawn(function()
                 while mod.Enabled do
-                    pcall(refreshTags)
+                    ensureFolder()
+                    local ok, err = pcall(refreshTags)
+                    if not ok and type(err) == "string" then
+                        -- Soft log once in a while for debugging
+                        if not mod._lastTagErr or os.clock() - mod._lastTagErr > 5 then
+                            mod._lastTagErr = os.clock()
+                            pcall(function()
+                                Nova.Notify("NameTags", "refresh error: " .. string.sub(tostring(err), 1, 60), 3, "warn")
+                            end)
+                        end
+                    end
                     task.wait(0.12)
                 end
             end))
