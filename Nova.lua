@@ -4679,7 +4679,8 @@ do
         Description = "Expands hitboxes of players / NPCs (client side).",
         OnEnable = function(mod)
             local cfg = mod.Config
-            local originals = setmetatable({}, { __mode = "k" })
+            -- Strong refs so we can always restore even after the part is gone from targets
+            local originals = {} -- [root] = { Size, Transparency, CanCollide, Massless, Hum }
             local wallCache = setmetatable({}, { __mode = "k" })
 
             local function restore(root)
@@ -4689,26 +4690,35 @@ do
                 end
                 originals[root] = nil
                 pcall(function()
-                    root.Size = saved.Size
-                    root.Transparency = saved.Transparency
-                    root.CanCollide = saved.CanCollide
-                    root.Massless = saved.Massless
+                    if root and root.Parent then
+                        root.Size = saved.Size
+                        root.Transparency = saved.Transparency
+                        root.CanCollide = saved.CanCollide
+                        root.Massless = saved.Massless
+                    end
                 end)
             end
 
-            -- Runs on disable / unload / reinject: puts every hitbox back
-            mod.Maid:Give(function()
+            local function restoreAll()
                 for root in pairs(originals) do
                     restore(root)
                 end
-            end)
+            end
+
+            mod.Maid:Give(restoreAll)
+
+            -- If a humanoid dies / character leaves, restore that root immediately
+            mod.Maid:Give(Workspace.DescendantRemoving:Connect(function(inst)
+                if originals[inst] then
+                    restore(inst)
+                end
+            end))
 
             mod.Maid:Give(RunService.Heartbeat:Connect(function()
                 local cam = Workspace.CurrentCamera
                 local now = os.clock()
                 local _, _, myRoot = Util.GetCharacter(LocalPlayer)
 
-                -- Points that must never end up inside an expanded box (Inside Fix)
                 local points = {}
                 if myRoot then
                     points[#points + 1] = myRoot.Position
@@ -4720,74 +4730,75 @@ do
                 local seen = {}
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
                     local root = entry.Root
-                    local expand = not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player))
-
-                    if expand and cfg.WallCheck and cam then
-                        local cache = wallCache[entry]
-                        if not cache or now - cache.Time > 0.1 then
-                            cache = { Time = now, Visible = Util.HasLineOfSight(cam.CFrame.Position, root.Position) }
-                            wallCache[entry] = cache
+                    local hum = entry.Humanoid
+                    -- Dead / missing = never expand, always restore
+                    if not root or not root.Parent or not hum or hum.Health <= 0 then
+                        if root and originals[root] then
+                            restore(root)
                         end
-                        expand = cache.Visible
-                    end
+                    else
+                        local expand = not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player))
 
-                    if expand then
-                        seen[root] = true
-                        local saved = originals[root]
-                        if not saved then
-                            saved = {
-                                Size = root.Size,
-                                Transparency = root.Transparency,
-                                CanCollide = root.CanCollide,
-                                Massless = root.Massless,
-                            }
-                            originals[root] = saved
+                        if expand and cfg.WallCheck and cam then
+                            local cache = wallCache[entry]
+                            if not cache or now - cache.Time > 0.1 then
+                                cache = { Time = now, Visible = Util.HasLineOfSight(cam.CFrame.Position, root.Position) }
+                                wallCache[entry] = cache
+                            end
+                            expand = cache.Visible
                         end
 
-                        local size = math.min(cfg.Size, HITBOX_EFFECTIVE_MAX)
+                        if expand then
+                            seen[root] = true
+                            local saved = originals[root]
+                            if not saved then
+                                saved = {
+                                    Size = root.Size,
+                                    Transparency = root.Transparency,
+                                    CanCollide = root.CanCollide,
+                                    Massless = root.Massless,
+                                }
+                                originals[root] = saved
+                            end
 
-                        -- Inside Fix: if you're standing inside the expanded box (touch events never
-                        -- fire, rays start inside the part and pass through it), shrink the box just
-                        -- enough that you and your camera stay outside it. It grows back as you move away.
-                        if cfg.InsideFix and #points > 0 then
-                            local nearest = math.huge
-                            local cf = root.CFrame
-                            for _, point in ipairs(points) do
-                                local rel = cf:PointToObjectSpace(point)
-                                local d = math.max(math.abs(rel.X), math.abs(rel.Y), math.abs(rel.Z))
-                                if d < nearest then
-                                    nearest = d
+                            local size = tonumber(cfg.Size) or 5
+                            if cfg.InsideFix and #points > 0 then
+                                local nearest = math.huge
+                                local cf = root.CFrame
+                                for _, point in ipairs(points) do
+                                    local rel = cf:PointToObjectSpace(point)
+                                    local d = math.max(math.abs(rel.X), math.abs(rel.Y), math.abs(rel.Z))
+                                    if d < nearest then
+                                        nearest = d
+                                    end
+                                end
+                                if nearest < size / 2 + 0.5 then
+                                    local base = math.max(saved.Size.X, saved.Size.Y, saved.Size.Z)
+                                    size = math.clamp((nearest - 0.5) * 2, math.min(base, size), size)
                                 end
                             end
-                            if nearest < size / 2 + 0.5 then
-                                local base = math.max(saved.Size.X, saved.Size.Y, saved.Size.Z)
-                                size = math.clamp((nearest - 0.5) * 2, math.min(base, size), size)
-                            end
-                        end
 
-                        local sizeVector = Vector3.new(size, size, size)
-                        if root.Size ~= sizeVector then
-                            root.Size = sizeVector
-                        end
-                        -- Only override the hitbox's transparency (making the expanded volume
-                        -- actually visible) when the user asked to see it. Otherwise leave it at
-                        -- whatever it originally was (normally fully invisible) - the expanded
-                        -- size/CanCollide still does its job either way, so there's no reason for
-                        -- a translucent box to appear over every target by default.
-                        local wantTransparency = cfg.ShowHitbox and cfg.Transparency or saved.Transparency
-                        if root.Transparency ~= wantTransparency then
-                            root.Transparency = wantTransparency
-                        end
-                        if root.CanCollide then
-                            root.CanCollide = false
-                        end
-                        if not root.Massless then
-                            root.Massless = true
+                            local sizeVector = Vector3.new(size, size, size)
+                            if root.Size ~= sizeVector then
+                                root.Size = sizeVector
+                            end
+                            local wantTransparency = cfg.ShowHitbox and cfg.Transparency or saved.Transparency
+                            if root.Transparency ~= wantTransparency then
+                                root.Transparency = wantTransparency
+                            end
+                            if root.CanCollide then
+                                root.CanCollide = false
+                            end
+                            if not root.Massless then
+                                root.Massless = true
+                            end
+                        elseif originals[root] then
+                            restore(root)
                         end
                     end
                 end
 
-                -- Anything we expanded earlier that is no longer a valid target gets restored
+                -- Restore anything no longer targeted (left, died, filtered out)
                 for root in pairs(originals) do
                     if not seen[root] then
                         restore(root)
@@ -5847,32 +5858,168 @@ do
             end
 
             -- Best target near the crosshair; returns entry, aimPart
-            local function pickTarget(origin, cam, projmeta, tool)
-                local mouse = aimReference(cam)
-                local best, bestPart, bestScore = nil, nil, math.huge
-                for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                    local ok = true
-                    if entry.Player then
-                        if Util.IsTeammate(entry.Player) then
-                            ok = false
-                        elseif entry.Player:GetAttribute("Spectator") then
-                            ok = false
+
+            -- ===== CatVape-style velocity sample + SolveTrajectory =====
+            local history = setmetatable({}, { __mode = "k" }) -- [root] = { {t,p}, ... }
+            local JUMP_SPEED = 42.6
+
+            local function sampleRoot(root)
+                if not root then return end
+                local now = os.clock()
+                local list = history[root]
+                if not list then
+                    list = {}
+                    history[root] = list
+                end
+                list[#list + 1] = { t = now, p = root.Position }
+                while #list > 12 or (#list > 0 and now - list[1].t > 0.35) do
+                    table.remove(list, 1)
+                end
+            end
+
+            local function measuredVelocity(root)
+                local list = history[root]
+                if not list or #list < 2 then
+                    return nil
+                end
+                local a, b = list[1], list[#list]
+                local dt = b.t - a.t
+                if dt < 0.02 then
+                    return nil
+                end
+                return (b.p - a.p) / dt
+            end
+
+            -- Classic ballistic interception (CatVape Prediction.SolveTrajectory shape)
+            -- Returns aimPoint (origin + launchVel), impact, travelTime
+            local function SolveTrajectory(origin, speed, gravity, targetPos, targetVel, playerGravity, hipHeight, jumpVel, _params, airborne, rootPos, _root)
+                if typeof(origin) ~= "Vector3" or typeof(targetPos) ~= "Vector3" then
+                    return nil
+                end
+                speed = tonumber(speed) or 0
+                gravity = tonumber(gravity) or 196.2
+                playerGravity = tonumber(playerGravity) or Workspace.Gravity
+                targetVel = typeof(targetVel) == "Vector3" and targetVel or Vector3.zero
+                if speed < 1 then
+                    return nil
+                end
+
+                -- slight aim lift on torso/root shots (CatVape AimLift behaviour)
+                local aimPos = targetPos
+                if rootPos and (targetPos - rootPos).Magnitude < 0.15 then
+                    aimPos = targetPos + Vector3.new(0, 0.5, 0)
+                end
+
+                if type(airborne) ~= "boolean" then
+                    airborne = math.abs(targetVel.Y) > 0.01
+                end
+
+                -- If jumping from ground, inject jump velocity
+                if jumpVel and not airborne then
+                    targetVel = Vector3.new(targetVel.X, math.max(targetVel.Y, jumpVel), targetVel.Z)
+                    airborne = true
+                end
+
+                local floorY = aimPos.Y - (tonumber(hipHeight) or 2)
+                if not airborne then
+                    -- horizontal motion only when grounded
+                    targetVel = Vector3.new(targetVel.X, 0, targetVel.Z)
+                end
+
+                local function predict(t)
+                    local p = aimPos + targetVel * t
+                    if airborne and playerGravity > 0 then
+                        p = Vector3.new(p.X, p.Y - 0.5 * playerGravity * t * t, p.Z)
+                        if p.Y < floorY then
+                            p = Vector3.new(p.X, floorY, p.Z)
                         end
                     end
-                    if ok then
-                        local part = aimPartFor(entry, projmeta, tool)
-                        local distance = (part.Position - origin).Magnitude
-                        if distance <= cfg.Range then
-                            local point, onScreen = cam:WorldToViewportPoint(part.Position)
-                            local screen = (Vector2.new(point.X, point.Y) - mouse).Magnitude
-                            -- the target you were just aiming at gets a small head start, so two players
-                            -- close together don't make the aim flip back and forth
-                            local sticky = (entry == lastTarget and os.clock() - lastTargetAt < 0.8) and 1.3 or 1
-                            if onScreen and point.Z > 0 and screen <= cfg.FOV * sticky
-                                and Util.HasLineOfSight(cam.CFrame.Position, part.Position) then
-                                local score = (sticky > 1) and screen * 0.65 or screen
-                                if score < bestScore then
-                                    best, bestPart, bestScore = entry, part, score
+                    return p
+                end
+
+                -- Estimate travel time then Newton-refine so |lead - 0.5*g*t^2| = speed*t
+                local bestT, bestVel
+                local dist0 = (aimPos - origin).Magnitude
+                local t = math.clamp(dist0 / speed, 0.05, 4)
+                for _ = 1, 10 do
+                    local impact = predict(t)
+                    local to = impact - origin
+                    -- account for projectile gravity drop: effective horizontal+vertical need
+                    local drop = 0.5 * gravity * t * t
+                    local adjusted = to + Vector3.new(0, drop, 0)
+                    local need = adjusted.Magnitude
+                    local err = need - speed * t
+                    -- derivative approx
+                    local dt = 0.01
+                    local impact2 = predict(t + dt)
+                    local to2 = impact2 - origin
+                    local drop2 = 0.5 * gravity * (t + dt) * (t + dt)
+                    local need2 = (to2 + Vector3.new(0, drop2, 0)).Magnitude
+                    local derr = (need2 - speed * (t + dt)) - err
+                    if math.abs(derr) < 1e-6 then
+                        break
+                    end
+                    t = t - err / derr
+                    if t < 0.03 or t > 5 then
+                        break
+                    end
+                end
+                t = math.clamp(t, 0.04, 4.5)
+                local impact = predict(t)
+                local to = impact - origin
+                local drop = 0.5 * gravity * t * t
+                local launch = (to + Vector3.new(0, drop, 0))
+                if launch.Magnitude < 0.01 then
+                    return nil
+                end
+                local launchVel = launch.Unit * speed
+                -- verify roughly hits
+                local aimPoint = origin + launchVel
+                return aimPoint, impact, t, launchVel
+            end
+
+            local function pickTarget(origin, cam, projmeta, tool)
+                local mouse = UserInputService:GetMouseLocation()
+                local best, bestPart, bestScore = nil, nil, math.huge
+                local fov = tonumber(cfg.FOV) or 1000
+                local maxDist = tonumber(cfg.Range) or 1000
+                local partMode = cfg.Part or "Dynamic"
+                for _, entry in ipairs(Util.GetTargets(cfg.Targets or "Players + NPCs")) do
+                    if entry.Root and entry.Humanoid and entry.Humanoid.Health > 0 then
+                        if not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player)) then
+                            sampleRoot(entry.Root)
+                            local dist = (entry.Root.Position - origin).Magnitude
+                            if dist <= maxDist then
+                                local part = entry.Root
+                                local useHead = false
+                                if partMode == "Head" then
+                                    useHead = true
+                                elseif partMode == "Dynamic" then
+                                    local text = string.lower(tostring(tool and tool.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
+                                    useHead = text:find("headhunter", 1, true) ~= nil or text:find("tactical", 1, true) ~= nil
+                                end
+                                if useHead then
+                                    local head = entry.Model:FindFirstChild("Head")
+                                    if head and head:IsA("BasePart") then
+                                        part = head
+                                    end
+                                end
+                                local sp, onScreen = cam:WorldToViewportPoint(part.Position)
+                                local score
+                                if cfg.Sort == "Damage" and entry.Humanoid then
+                                    score = entry.Humanoid.Health
+                                else
+                                    local center = cam.ViewportSize / 2
+                                    local screen = Vector2.new(sp.X, sp.Y)
+                                    score = (screen - center).Magnitude
+                                    if not onScreen or sp.Z < 0 then
+                                        score = score + 5000
+                                    end
+                                end
+                                if score <= fov and score < bestScore then
+                                    if not cfg.WallCheck or Util.HasLineOfSight(origin, part.Position) then
+                                        best, bestPart, bestScore = entry, part, score
+                                    end
                                 end
                             end
                         end
@@ -5881,41 +6028,31 @@ do
                 return best, bestPart
             end
 
-            -- Returns a modified copy of the game's launch values, or nil to leave the shot alone
+            -- CatVape GetLaunchValues → rewrite native launch table
             local function aimShot(native, projmeta, worldmeta, tool)
                 local cam = Workspace.CurrentCamera
                 if not cam or typeof(native.initialVelocity) ~= "Vector3" or typeof(native.positionFrom) ~= "Vector3" then
                     return nil
                 end
-                local firstPerson = Util.IsFirstPerson()
                 local projectileName = tostring(projmeta and projmeta.projectile or ""):lower()
                 if blacklist[projectileName] then
                     return nil
                 end
-                -- User-chosen items this module should never touch - shoot those normally.
-                -- Some items (e.g. Fireball) don't come through as a real `tool` argument here,
-                -- or their internal Name doesn't match what's printed on the item, so this checks
-                -- every name we can get our hands on (projectile id, tool name, currently-held
-                -- item) and ignores spaces/case/punctuation so "fireball", "Fire Ball" and
-                -- "FireBall" all match each other.
                 if cfg.ExcludeItems and cfg.ExcludeItems:match("%S") then
                     local function squash(s)
-                        local r = tostring(s or ""):lower():gsub("[^%a%d]", "")
-                        return r
+                        return tostring(s or ""):lower():gsub("[^%a%d]", "")
                     end
                     local candidates = { squash(projectileName) }
                     if tool and typeof(tool) == "Instance" then
                         candidates[#candidates + 1] = squash(tool.Name)
                     end
                     local held = Util.GetHeldName()
-                    if held then
-                        candidates[#candidates + 1] = squash(held)
-                    end
+                    if held then candidates[#candidates + 1] = squash(held) end
                     for word in cfg.ExcludeItems:gmatch("[^,]+") do
                         word = squash(word:match("^%s*(.-)%s*$"))
                         if word ~= "" then
-                            for _, candidate in ipairs(candidates) do
-                                if candidate ~= "" and candidate:find(word, 1, true) then
+                            for _, cand in ipairs(candidates) do
+                                if cand ~= "" and cand:find(word, 1, true) then
                                     return nil
                                 end
                             end
@@ -5925,220 +6062,119 @@ do
 
                 local from = native.positionFrom
                 local speed = native.initialVelocity.Magnitude
-                if speed < 1 then
-                    return nil
-                end
-                local gravity = tonumber(native.gravitationalAcceleration)
-                    or (DEFAULT_GRAVITY * (tonumber(projmeta and projmeta.gravityMultiplier) or 1))
+                if speed < 1 then return nil end
 
-                local entry, part = pickTarget(from, cam, projmeta, tool)
-                if not entry then
-                    return nil
-                end
-
-                -- Per-projectile numbers (some weapons override them)
-                local meta, overrides = nil, {}
+                -- Meta (CatVape: ProjectileMeta + multipliers)
+                local meta, overrides = {}, {}
                 pcall(function()
-                    meta = projmeta:getProjectileMeta()
-                    if type(meta.getProjectileOverridesFunction) == "function" then
-                        overrides = meta.getProjectileOverridesFunction(LocalPlayer)
+                    if projmeta and type(projmeta.getProjectileMeta) == "function" then
+                        meta = projmeta:getProjectileMeta() or {}
+                        if type(meta.getProjectileOverridesFunction) == "function" then
+                            overrides = meta.getProjectileOverridesFunction(LocalPlayer) or {}
+                        end
                     end
                 end)
-                if type(overrides) ~= "table" then
-                    overrides = {}
+                if type(meta) ~= "table" then meta = {} end
+                if type(overrides) ~= "table" then overrides = {} end
+
+                local gravityMult = tonumber(projmeta and projmeta.gravityMultiplier) or 1
+                local velMult = tonumber(projmeta and projmeta.velocityMultiplier) or 1
+                local gravity = tonumber(native.gravitationalAcceleration)
+                    or ((tonumber(meta.gravitationalAcceleration) or 196.2) * gravityMult)
+                local metaSpeed = tonumber(meta.launchVelocity)
+                if metaSpeed and metaSpeed > 10 then
+                    speed = metaSpeed * math.max(velMult, 0.25)
+                else
+                    speed = speed * math.max(velMult, 0.25)
                 end
-                meta = type(meta) == "table" and meta or {}
-                local normalLife = tonumber(overrides.lifetimeOverride) or tonumber(meta.lifetimeSec) or 3
-                local predictedLife = tonumber(overrides.predictionLifetimeOverride) or tonumber(meta.predictionLifetimeSec)
-                local lifetime = math.min((worldmeta and predictedLife) or normalLife, 4)
-                local returnDistance = tonumber(overrides.returnDistanceOverride) or tonumber(meta.returnDistance)
+
+                local lifetime = tonumber(overrides.lifetimeOverride) or tonumber(meta.lifetimeSec) or 3
+                if worldmeta then
+                    lifetime = tonumber(overrides.predictionLifetimeOverride) or tonumber(meta.predictionLifetimeSec) or lifetime
+                end
+                lifetime = math.min(lifetime, 4)
+
+                local entry, part = pickTarget(from, cam, projmeta, tool)
+                if not entry then return nil end
 
                 local root, hum = entry.Root, entry.Humanoid
-                local now = os.clock()
-                sample(entry, now)
-                watchForJump(entry, now)
+                sampleRoot(root)
 
-                -- Prefer position-sampled velocity (CatVape-style): replicated ALV often lags or zeros
-                local velocity = root.AssemblyLinearVelocity
-                local measured = measuredVelocity(entry, now)
-                if measured then
-                    local repH = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-                    local movH = Vector3.new(measured.X, 0, measured.Z).Magnitude
-                    if movH > 1 then
-                        local w = (movH > repH * 1.15 + 1.5) and 1 or 0.75
-                        velocity = Vector3.new(
-                            measured.X * w + velocity.X * (1 - w),
-                            (math.abs(measured.Y) > math.abs(velocity.Y) + 2) and measured.Y or velocity.Y,
-                            measured.Z * w + velocity.Z * (1 - w)
-                        )
-                    end
-                end
+                -- Velocity: blend ALV + measured (CatVape uses ALV; measured fills replication holes)
+                local velocity = part.AssemblyLinearVelocity
                 if projectileName == "telepearl" then
                     velocity = Vector3.zero
-                end
-
-                -- Meta speed/gravity when more accurate than native
-                local metaSpeed = tonumber(meta.launchVelocity)
-                local metaGrav = tonumber(meta.gravitationalAcceleration)
-                local mult = tonumber(projmeta and projmeta.gravityMultiplier) or 1
-                local velMult = tonumber(projmeta and projmeta.velocityMultiplier) or 1
-                if metaSpeed and metaSpeed > 10 then
-                    local boosted = metaSpeed * math.max(velMult, 0.25)
-                    if math.abs(speed - metaSpeed) < 3 then
-                        speed = boosted
-                    elseif speed < metaSpeed * 0.4 then
-                        speed = math.max(speed, boosted * 0.85)
-                    end
-                end
-                if metaGrav and metaGrav > 0 then
-                    gravity = metaGrav * mult
-                end
-
-                local horizontalLead = (cfg.XPredict or 100) / 100
-                local verticalLead = (cfg.YPredict or 100) / 100
-                local vx, vz = velocity.X * horizontalLead, velocity.Z * horizontalLead
-                local airborne = hum.FloorMaterial == Enum.Material.Air or math.abs(velocity.Y) > 1.5
-                local vy = airborne and velocity.Y * verticalLead or 0
-                if not airborne then
-                    local okState, state = pcall(function()
-                        return hum:GetState()
-                    end)
-                    if okState and state == Enum.HumanoidStateType.Jumping then
-                        airborne = true
-                        local observed = JumpVelocity[entry.Model]
-                        local jumpSpeed = (observed and now - observed.at < JUMP_OBSERVATION_TTL) and observed.vy or JUMP_SPEED
-                        vy = jumpSpeed * verticalLead
-                    end
-                elseif math.abs(vy) < 2 then
-                    local observed = JumpVelocity[entry.Model]
-                    if observed and now - observed.at < JUMP_OBSERVATION_TTL then
-                        vy = observed.vy * verticalLead
+                else
+                    local measured = measuredVelocity(root)
+                    if measured then
+                        local w = 0.65
+                        velocity = velocity:Lerp(measured, w)
                     end
                 end
 
-                local targetGravity = Workspace.Gravity
+                -- Player gravity modifiers (balloons / owl) — CatVape
+                local playerGravity = Workspace.Gravity
                 local balloons = entry.Model:GetAttribute("InflatedBalloons")
                 if type(balloons) == "number" and balloons > 0 then
-                    targetGravity = targetGravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
+                    local factor = balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975
+                    playerGravity = Workspace.Gravity * (1 - factor)
                 end
-                local primary = entry.Model.PrimaryPart
-                if primary and primary:FindFirstChild(FLOATY_MARKER) then
-                    targetGravity = 6
-                end
+                pcall(function()
+                    if root:FindFirstChild("rbxassetid://8200754399") then
+                        playerGravity = 6
+                    end
+                end)
                 if entry.Player and entry.Player:GetAttribute("IsOwlTarget") then
-                    for _, owl in ipairs(CollectionService:GetTagged("Owl")) do
-                        if owl:GetAttribute("Target") == entry.Player.UserId and owl:GetAttribute("Status") == 2 then
-                            targetGravity = 0
-                            break
-                        end
+                    playerGravity = 0
+                end
+
+                local airborne = hum.FloorMaterial == Enum.Material.Air or math.abs(root.AssemblyLinearVelocity.Y) > 0.01
+                local jumping = false
+                pcall(function()
+                    jumping = hum:GetState() == Enum.HumanoidStateType.Jumping
+                end)
+                local jumpVel = jumping and JUMP_SPEED or nil
+                local hip = hum.HipHeight or 2
+
+                local hx = (cfg.XPredict or 100) / 100
+                local hy = (cfg.YPredict or 100) / 100
+                local scaledVel = Vector3.new(velocity.X * hx, velocity.Y * hy, velocity.Z * hx)
+
+                local aimPoint, impact, travel, launchVel = SolveTrajectory(
+                    from, speed, gravity, part.Position, scaledVel, playerGravity, hip, jumpVel, nil, airborne, root.Position, root
+                )
+                -- Second pass with lead scale (CatVape Horizontal/Vertical adjust)
+                if aimPoint and travel and (hx ~= 1 or hy ~= 1) then
+                    local rise = (velocity.Y * travel) - (playerGravity * travel * travel * 0.5)
+                    local lead = Vector3.new(velocity.X * travel * (hx - 1), rise * (hy - 1), velocity.Z * travel * (hx - 1))
+                    local a2, _, t2, lv2 = SolveTrajectory(
+                        from, speed, gravity, part.Position + lead, scaledVel, playerGravity, hip, jumpVel, nil, airborne, root.Position, root
+                    )
+                    if a2 and lv2 then
+                        aimPoint, travel, launchVel = a2, t2 or travel, lv2
                     end
                 end
 
-                local lead = pingLead()
-                local base = part.Position + Vector3.new(0, (part.Name == "Head") and 0 or 0.35, 0)
-
-                local floorY = nil
-                if airborne then
-                    RayFilter.Refresh()
-                    local down = Workspace:Raycast(root.Position, Vector3.new(0, -300, 0), RayFilter.Params)
-                    if down then
-                        floorY = down.Position.Y + (hum.HipHeight or 2) + root.Size.Y * 0.5 + (base.Y - root.Position.Y)
-                        floorY = math.min(floorY, base.Y + 0.5)
-                    end
-                end
-
-                local runSpeed = Vector3.new(vx, 0, vz).Magnitude
-                local runDirection = runSpeed > 0.5 and Vector3.new(vx, 0, vz).Unit or nil
-                local runLimit = math.huge
-                if runDirection then
-                    RayFilter.Refresh()
-                    local reach = runSpeed * (lifetime + lead) + 2
-                    local hit = Workspace:Raycast(root.Position + Vector3.new(0, 1, 0), runDirection * reach, RayFilter.Params)
-                    if hit then
-                        runLimit = math.max(hit.Distance - 1.5, 0)
-                    end
-                end
-
-                local yOffsetNow = 0
-                local function targetAt(t)
-                    local tt = t + lead
-                    local y = base.Y + yOffsetNow
-                    if airborne and targetGravity > 0 then
-                        y = y + vy * tt - 0.5 * targetGravity * tt * tt
-                        if floorY and y < floorY + yOffsetNow then
-                            y = floorY + yOffsetNow
-                        end
-                    elseif airborne and targetGravity <= 0 then
-                        y = y + vy * tt
-                    end
-                    local x, z = base.X + vx * tt, base.Z + vz * tt
-                    if runDirection and runSpeed * tt > runLimit then
-                        x = base.X + runDirection.X * runLimit
-                        z = base.Z + runDirection.Z * runLimit
-                    end
-                    return Vector3.new(x, y, z)
-                end
-
-                local bow = Bedwars.BowConstants
-                local relX, relY, relZ
-                local toolMeta = tool and Bedwars.ItemMeta and Bedwars.ItemMeta[tool.Name]
-                local relative = toolMeta and toolMeta.projectileSource and toolMeta.projectileSource.relativeOverride
-                if type(relative) == "table" then
-                    relX, relY, relZ = relative.relX or 0, relative.relY or 0, relative.relZ or 0
-                elseif bow and tonumber(bow.RelX) ~= nil then
-                    relX, relY, relZ = bow.RelX, bow.RelY or 0, bow.RelZ or 0
-                end
-                local useOffset = relX ~= nil and not firstPerson
-
-                local chosen, chosenTime
-                for _, dy in ipairs({ 0, 0.55, -0.4, 1.1, -0.9, 1.8 }) do
-                    yOffsetNow = dy
-                    local v, flight = solveLaunch(from, speed, gravity, targetAt, lifetime)
-                    if v then
-                        if useOffset then
-                            local spawn = (CFrame.lookAt(from, from + v) * CFrame.new(-relX, -relY, -relZ)).Position
-                            local v2, flight2 = solveLaunch(spawn, speed, gravity, targetAt, lifetime)
-                            if v2 then
-                                v, flight = v2, flight2
-                            end
-                        end
-                        -- CatVape second pass when predict scale != 100%
-                        if horizontalLead ~= 1 or verticalLead ~= 1 then
-                            local rise = (vy * flight) - (targetGravity * flight * flight * 0.5)
-                            local adjLead = Vector3.new(
-                                velocity.X * flight * (horizontalLead - 1),
-                                rise * (verticalLead - 1),
-                                velocity.Z * flight * (horizontalLead - 1)
-                            )
-                            local savedBase = base
-                            base = part.Position + Vector3.new(0, (part.Name == "Head") and 0 or 0.35, 0) + adjLead
-                            local v3, f3 = solveLaunch(from, speed, gravity, targetAt, lifetime)
-                            base = savedBase
-                            if v3 then
-                                v, flight = v3, f3
-                            end
-                        end
-                        local closeShot = (part.Position - from).Magnitude < 28
-                        if worldmeta or closeShot or arcIsClear(from, v, gravity, flight) then
-                            chosen, chosenTime = v, flight
-                            break
-                        end
-                    end
-                end
-                if not chosen then
+                if not aimPoint or not travel or not launchVel or travel > lifetime then
                     return nil
                 end
-                if returnDistance and speed * chosenTime > returnDistance - 2 then
-                    return nil
+
+                lastTarget, lastTargetAt = entry, os.clock()
+                if cfg.ShowTarget then
+                    box.Adornee = root
                 end
 
                 local result = {}
-                for key, value in pairs(native) do
-                    result[key] = value
+                for k, v in pairs(native) do
+                    result[k] = v
                 end
-                result.initialVelocity = chosen
-                lastTarget, lastTargetAt = entry, os.clock()
-                return result, chosenTime
+                result.initialVelocity = launchVel
+                result.positionFrom = from
+                result.gravitationalAcceleration = gravity
+                if result.deltaT ~= nil then
+                    result.deltaT = lifetime
+                end
+                return result
             end
 
             local function wrapper(...)
@@ -6189,9 +6225,8 @@ do
                     local _, _, myRoot = Util.GetCharacter(LocalPlayer)
                     if myRoot then
                         for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                            if (entry.Root.Position - myRoot.Position).Magnitude <= cfg.Range * 1.5 then
-                                sample(entry, now)
-                                watchForJump(entry, now)
+                            if entry.Root and (entry.Root.Position - myRoot.Position).Magnitude <= (cfg.Range or 250) * 1.5 then
+                                sampleRoot(entry.Root)
                             end
                         end
                     end
@@ -6249,10 +6284,10 @@ do
 
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
     aim:AddTextBox({ Label = "Exclude Items", Key = "ExcludeItems", Default = "", Placeholder = "comma separated names", Tip = "Shots fired with these items (partial names work) are left alone - this module won't aim them." })
-    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 250, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
-    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 1000, Default = 500, Step = 5, Suffix = " px" })
-    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 90, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways. ~90% often tracks better than full 100%." })
-    aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 90, Step = 5, Suffix = "%", Tip = "How far ahead to lead jumps/falls. ~90% often tracks better than full 100%." })
+    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 1000, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
+    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 1000, Default = 1000, Step = 5, Suffix = " px" })
+    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways. ~90% often tracks better than full 100%." })
+    aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 100, Step = 5, Suffix = "%", Tip = "How far ahead to lead jumps/falls. ~90% often tracks better than full 100%." })
     aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
     aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
@@ -6670,6 +6705,136 @@ do
     esp:AddToggle({ Label = "Health Bar", Key = "HealthBar", Default = true })
     esp:AddToggle({ Label = "Skeleton", Key = "Skeleton", Default = false, Tip = "Draw lines through each player's joints (head, arms, legs)." })
     esp:AddOption({ Label = "Color", Key = "Color", Options = { "Purple", "White", "Red", "Cyan", "Green" }, Default = "Purple", Swatches = PALETTE })
+
+
+    -- Beehive ESP (CatVape: CollectionService tag "beehive")
+    do
+        local CollectionService = service("CollectionService")
+        local hiveRefs = {} -- [hive] = TextLabel
+
+        local function destroyLabel(hive)
+            local lab = hiveRefs[hive]
+            if lab then
+                pcall(function() lab:Destroy() end)
+                hiveRefs[hive] = nil
+            end
+        end
+
+        local function makeLabel(hive)
+            if hiveRefs[hive] then return hiveRefs[hive] end
+            local owner = hive:GetAttribute("OwnerUserId") or hive:GetAttribute("Owner") or hive:GetAttribute("Player")
+            local ownerName = "?"
+            if type(owner) == "number" then
+                local plr = Players:GetPlayerByUserId(owner)
+                ownerName = plr and plr.DisplayName or tostring(owner)
+            elseif type(owner) == "string" then
+                ownerName = owner
+            end
+            -- try parent attributes
+            pcall(function()
+                if ownerName == "?" then
+                    local oid = hive:GetAttribute("OwnerUserId")
+                    if not oid and hive.Parent then oid = hive.Parent:GetAttribute("OwnerUserId") end
+                    if type(oid) == "number" then
+                        local plr = Players:GetPlayerByUserId(oid)
+                        if plr then ownerName = plr.DisplayName end
+                    end
+                end
+            end)
+            local lab = New("TextLabel", {
+                Name = "NovaBeehive",
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundColor3 = Theme.Background,
+                BackgroundTransparency = 0.45,
+                BorderSizePixel = 0,
+                Font = Enum.Font.GothamMedium,
+                TextSize = 14,
+                TextColor3 = Theme.AccentLight,
+                TextStrokeTransparency = 0.6,
+                Visible = false,
+                ZIndex = 20,
+                Parent = UI.Gui,
+            }, { Round(6), New("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }) })
+            lab.Name = ownerName -- store owner for text builder
+            hiveRefs[hive] = lab
+            return lab
+        end
+
+        local hiveEsp = Tabs.Render:CreateModule({
+            Name = "Beehive ESP",
+            Description = "Shows beehive locations, owner and bee count.",
+            OnEnable = function(mod)
+                local cfg = mod.Config
+
+                local function added(hive)
+                    if not hive:IsA("BasePart") and not hive:IsA("Model") then
+                        local part = hive:FindFirstChildWhichIsA("BasePart", true)
+                        if part then hive = part end
+                    end
+                    makeLabel(hive)
+                end
+
+                for _, v in ipairs(CollectionService:GetTagged("beehive")) do
+                    pcall(added, v)
+                end
+                mod.Maid:Give(CollectionService:GetInstanceAddedSignal("beehive"):Connect(function(v)
+                    pcall(added, v)
+                end))
+                mod.Maid:Give(CollectionService:GetInstanceRemovedSignal("beehive"):Connect(function(v)
+                    destroyLabel(v)
+                end))
+
+                mod.Maid:Give(RunService.RenderStepped:Connect(function()
+                    local cam = Workspace.CurrentCamera
+                    if not cam then return end
+                    for hive, lab in pairs(hiveRefs) do
+                        if not hive or not hive.Parent then
+                            destroyLabel(hive)
+                        else
+                            local pos
+                            if hive:IsA("BasePart") then
+                                pos = hive.Position
+                            elseif hive:IsA("Model") then
+                                pos = hive:GetPivot().Position
+                            else
+                                local p = hive:FindFirstChildWhichIsA("BasePart", true)
+                                pos = p and p.Position
+                            end
+                            if not pos then
+                                lab.Visible = false
+                            else
+                                local screen, on = cam:WorldToViewportPoint(pos + Vector3.new(0, 1.2, 0))
+                                if not on or screen.Z < 0 then
+                                    lab.Visible = false
+                                else
+                                    local level = hive:GetAttribute("Level") or hive:GetAttribute("Bees") or 0
+                                    if type(level) ~= "number" then level = 0 end
+                                    local owner = lab.Name ~= "NovaBeehive" and lab.Name or "Beehive"
+                                    local beeWord = level == 1 and "Bee" or "Bees"
+                                    local text = string.format("%s's beehive | %d %s", owner, level, beeWord)
+                                    lab.Text = text
+                                    lab.TextSize = 14 * (cfg.Scale or 1)
+                                    lab.TextColor3 = Theme.AccentLight
+                                    lab.BackgroundTransparency = cfg.Transparency or 0.45
+                                    lab.Position = UDim2.fromOffset(screen.X, screen.Y)
+                                    lab.Visible = true
+                                end
+                            end
+                        end
+                    end
+                end))
+
+                mod.Maid:Give(function()
+                    for hive in pairs(hiveRefs) do
+                        destroyLabel(hive)
+                    end
+                end)
+            end,
+        })
+        hiveEsp:AddSlider({ Label = "Scale", Key = "Scale", Min = 0.5, Max = 1.5, Default = 1, Step = 0.1 })
+        hiveEsp:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.45, Step = 0.05 })
+    end
+
 
     Tabs.Render:CreatePlaceholder("More render features coming soon...")
 end
