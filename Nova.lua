@@ -4134,7 +4134,7 @@ function Nova.Unload(keepSaved)
         end
         -- Explicit known overlays that live outside UI.Gui
         pcall(function()
-            for _, name in ipairs({ "NovaInventoryESP", "NovaInventoryEsp", "NovaNameTags" }) do
+            for _, name in ipairs({ "NovaInventoryESP", "NovaInventoryEsp", "NovaNameTags", "NovaNameTagsGui" }) do
                 for _, root in ipairs(roots) do
                     local inst = root:FindFirstChild(name, true)
                     if inst then
@@ -4254,6 +4254,17 @@ if type(env.Nova) == "table" and not env.Nova.Unloaded and env.__NovaJob == game
 end
 env.__NovaBooting = game.JobId
 task.wait(1)
+
+-- Backend (console + log) — always run on auto-inject, not only on manual execute
+pcall(function()
+    local fn = loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/console.lua"))
+    if fn then fn() end
+end)
+pcall(function()
+    local fn = loadstring(game:HttpGet("https://raw.githubusercontent.com/Zynthire/Nova/main/backend/log.lua"))
+    if fn then fn() end
+end)
+
 local src = %s
 if not src and type(isfile) == "function" and isfile(cache) then
     pcall(function()
@@ -10541,6 +10552,7 @@ do
     local BY_ID = {}
     for _, entry in ipairs(KITS) do
         BY_ID[entry.Id] = entry
+        BY_ID[string.lower(entry.Id)] = entry
     end
 
     local function prettyName(id)
@@ -10550,15 +10562,51 @@ do
     end
 
     local function equippedKits()
-        local raw = LocalPlayer:GetAttribute("PlayingAsKits")
-        local list = {}
-        if type(raw) == "string" then
-            for id in string.gmatch(raw, "[%w_]+") do
-                if id ~= "none" then
-                    list[#list + 1] = id
+        local list, seen = {}, {}
+        local function add(id)
+            if type(id) ~= "string" then
+                return
+            end
+            id = id:lower():match("^[%w_]+") or id:lower()
+            if id == "" or id == "none" or seen[id] then
+                return
+            end
+            seen[id] = true
+            list[#list + 1] = id
+        end
+        local function absorb(raw)
+            if type(raw) == "string" then
+                for id in string.gmatch(raw, "[%w_]+") do
+                    add(id)
+                end
+            elseif type(raw) == "table" then
+                for _, id in pairs(raw) do
+                    add(tostring(id))
                 end
             end
         end
+        -- Player attributes (Bedwars uses PlayingAsKits; others show up on some seasons)
+        for _, key in ipairs({ "PlayingAsKits", "Kit", "kit", "ActiveKit", "BedwarsKit", "SelectedKit" }) do
+            absorb(LocalPlayer:GetAttribute(key))
+        end
+        local char = LocalPlayer.Character
+        if char then
+            for _, key in ipairs({ "PlayingAsKits", "Kit", "kit" }) do
+                absorb(char:GetAttribute(key))
+            end
+        end
+        -- Knit / store if ResolveExtras pulled them
+        pcall(function()
+            if Bedwars.Store then
+                local state = Bedwars.Store:getState()
+                if state then
+                    absorb(state.Kit)
+                    if state.Bedwars then
+                        absorb(state.Bedwars.kit)
+                    end
+                end
+            end
+        end)
         return list
     end
 
@@ -10585,8 +10633,13 @@ do
                     if ready then
                         pcall(Bedwars.ResolveExtras)
                         for _, id in ipairs(equippedKits()) do
-                            if BY_ID[id] and mod.Config["Kit_" .. id] ~= false then
-                                wanted[id] = true
+                            local entry = BY_ID[id]
+                            if entry then
+                                -- Config keys use original kit id casing from KITS
+                                local cfgKey = "Kit_" .. entry.Id
+                                if mod.Config[cfgKey] ~= false then
+                                    wanted[entry.Id] = entry
+                                end
                             end
                         end
                     end
@@ -10596,12 +10649,12 @@ do
                             session:Stop()
                         end
                     end
-                    for id in pairs(wanted) do
+                    for id, entry in pairs(wanted) do
                         if not sessions[id] then
                             local session = newSession()
                             sessions[id] = session
                             session.Thread = task.spawn(function()
-                                pcall(BY_ID[id].Run, session)
+                                pcall(entry.Run, session)
                             end)
                         end
                         active[#active + 1] = prettyName(id)
@@ -13108,14 +13161,26 @@ do
     end
 
     local function collect(plr)
+        -- Merge all sources (Util / folder / character) so something always shows
         local list = collectCatVape(plr)
-        if #list == 0 then list = collectFolder(plr) end
-        if #list == 0 then list = collectCharacter(plr) end
+        local folderList = collectFolder(plr)
+        local charList = collectCharacter(plr)
+        local seen = {}
+        local merged = {}
+        for _, src in ipairs({ list, folderList, charList }) do
+            for _, it in ipairs(src) do
+                local key = it.name
+                if not seen[key] then
+                    seen[key] = true
+                    merged[#merged + 1] = it
+                end
+            end
+        end
         local parts = {}
-        for _, it in ipairs(list) do
+        for _, it in ipairs(merged) do
             parts[#parts + 1] = it.name .. ":" .. it.amount
         end
-        return list, table.concat(parts, ",")
+        return merged, table.concat(parts, ",")
     end
 
     local function destroyInvGui()
@@ -13401,7 +13466,7 @@ do
     })
     invEsp:AddToggle({ Label = "Personal Chest", Key = "Personal", Default = false })
     invEsp:AddSection("Players")
-    invEsp:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
+    invEsp:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = false })
     invEsp:AddSlider({
         Label = "Max Distance", Key = "MaxDistance", Min = 0, Max = 1000, Default = 0, Step = 25, Suffix = " studs",
         Tip = "0 = unlimited",
@@ -13783,7 +13848,21 @@ do
         font = fontOk and font or FONT.Bold
 
         if not tagFolder or not tagFolder.Parent then
-            tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
+            -- rebuilt by OnEnable ensureFolder; last-resort parent
+            local parentGui = nil
+            pcall(function()
+                parentGui = getGuiParent()
+            end)
+            parentGui = parentGui or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            local host = Instance.new("ScreenGui")
+            host.Name = "NovaNameTagsGui"
+            host.ResetOnSpawn = false
+            host.IgnoreGuiInset = true
+            host.DisplayOrder = 99990
+            host.Parent = parentGui
+            tagFolder = Instance.new("Folder")
+            tagFolder.Name = "NovaNameTags"
+            tagFolder.Parent = host
         end
         local gui = New("BillboardGui", {
             Name = "NovaTag",
@@ -14284,11 +14363,29 @@ do
             pcall(Bedwars.ResolveExtras)
             pcall(Bedwars.Resolve)
 
+            local tagGui
             local function ensureFolder()
                 if tagFolder and tagFolder.Parent then
                     return tagFolder
                 end
-                tagFolder = New("Folder", { Name = "NovaNameTags", Parent = UI.Gui })
+                -- Own ScreenGui so tags stay visible when the main Nova UI is hidden
+                if not (tagGui and tagGui.Parent) then
+                    tagGui = Instance.new("ScreenGui")
+                    tagGui.Name = "NovaNameTagsGui"
+                    tagGui.ResetOnSpawn = false
+                    tagGui.IgnoreGuiInset = true
+                    tagGui.DisplayOrder = 99990
+                    tagGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                    pcall(function()
+                        tagGui.Parent = getGuiParent()
+                    end)
+                    if not tagGui.Parent then
+                        tagGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+                    end
+                end
+                tagFolder = Instance.new("Folder")
+                tagFolder.Name = "NovaNameTags"
+                tagFolder.Parent = tagGui
                 return tagFolder
             end
             ensureFolder()
