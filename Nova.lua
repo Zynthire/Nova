@@ -9470,7 +9470,7 @@ do
         "IllIIIIlIllIlIIIlI", "YoZevStar", "pzlican", "Deevicus", "Blackprincess1", "yhpro1230", "eple_147",
         "whoisdv2_erin", "whoisdv4_erin", "whoisdv3_erin", "VicForLife14", "SleeplessSoulmate", "Jsquire07",
         "DVwastaken", "pxIican", "devzebu", "FunFamilyKids177", "Artan3333", "3MEWMTS5LJCB", "Zengoulen",
-        "GloriousConfigB2", "heywasupsir", "c6chisa", "splashbird5372",
+        "GloriousConfigB2", "heywasupsir", "c6chisa", "splashbird5372", "HolyItsSteven",
     }) do
         KNOWN_NAMES[name:lower()] = true
     end
