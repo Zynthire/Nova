@@ -465,7 +465,7 @@ local Nova = {
     Unloaded   = false,
 }
 -- Bump this when defaults change so stale saved settings don't mask them
-local CONFIG_VERSION = 7
+local CONFIG_VERSION = 8
 if Nova.Config.__v ~= CONFIG_VERSION then
     Nova.Config = { UI = Nova.Config.UI or {}, __v = CONFIG_VERSION }
 end
@@ -5326,6 +5326,8 @@ do
             local lastHitText, lastHitAt = "", 0
             local autoRotateOverridden = nil
             local warnedUnavailable = false
+            -- High Hitreg ghost recovery (CatVape-style micro backoff when hits start dropping)
+            local ghostDelay, ghostStalls = 0, 0
 
             local setStatus = makeStatusLabel(mod, "Kill Aura", -100)
 
@@ -5541,18 +5543,96 @@ do
                     releaseRotation(hum)
                 end
 
-                -- Timing: same as the original version. The sword's own attack speed is the floor.
-                local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0
-                local interval = math.max(cfg.MinInterval, swordFloor)
+                -- Timing. High Hitreg = CatVape src/libraries/swordtiming.lua Calculate() path.
+                -- Stock swords normally floor at attackSpeed 0.3 (~33–34/10s). CatVape subtracts
+                -- CooldownCorrection and uses HighSpacing/HitFloor so the real pace is ~0.285s
+                -- (~35–36/10s). Off = unchanged Nova behavior (full sword attackSpeed floor).
+                local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.3
+                local interval
+                local attackCooldown = swordFloor
+                if cfg.HighHitreg then
+                    -- Constants from CatVape swordtiming.lua (do not "round" these)
+                    local SAFE_SPACING = 0.296
+                    local HIGH_SPACING = 0.2925
+                    local HIT_FLOOR = 0.285
+                    local GAP_FLOOR = 0.2915
+                    local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.013412
+                    local WEAPON_SPACING = {
+                        [0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345,
+                        [0.4] = 0.341, [0.6] = 0.63,
+                    }
+                    local speed = swordFloor > 0 and swordFloor or 0.3
+                    local fury = 1
+                    local budget = 0.2
+                    pcall(function()
+                        if Bedwars.Handler and Bedwars.Handler.Get then
+                            local remote = Bedwars.Handler:Get("SwordHit")
+                            if remote and remote.GetRateLimit then
+                                local limit = remote:GetRateLimit()
+                                if type(limit) == "number" and limit > 0 then
+                                    budget = 60 / limit
+                                end
+                            end
+                        end
+                    end)
+                    -- SwordTiming.Calculate(speed, fury, high=true, budget)
+                    local stock = math.abs(speed - 0.3) < 0.000001
+                    local normal = HIGH_SPACING
+                    local spacing = stock and normal or WEAPON_SPACING[speed] or (speed + 0.03)
+                    spacing = math.max(spacing * fury, budget)
+                    local scale = spacing / (stock and normal or SAFE_SPACING)
+                    local gap = (scale < 1 and GAP_FLOOR or HIT_FLOOR) * scale
+                    if stock then
+                        gap = math.max(gap, GAP_FLOOR * fury, budget)
+                    end
+                    local cooldown = math.max(speed * fury - COOLDOWN_CORRECTION, 0)
+                    attackCooldown = cooldown
+                    -- CatVape effective hit pace for stock+high:
+                    --   HitDelay ≈ max(budget, spacing, ...)
+                    --   LastHit gap ≈ gapMin (≥ GapFloor)
+                    --   GameCooldown uses AttackCooldown (≈0.2848) — this is what unlocks 35–36/10s
+                    -- Use the tighter of spacing and max(cooldown, HitFloor), never below budget.
+                    if stock then
+                        interval = math.max(cfg.MinInterval, budget, math.min(spacing, math.max(cooldown, HIT_FLOOR)))
+                    else
+                        interval = math.max(cfg.MinInterval, budget, spacing)
+                    end
+                    -- Frame-band trim (CatVape): when ceil(spacing/ft)*ft is above the high band,
+                    -- snap spacing down toward 10/35 so you actually land in the 35–36 window.
+                    do
+                        local frameTime = 1 / 60
+                        pcall(function()
+                            local n = StatsService and StatsService.FrameRateManager
+                            -- keep 60 fallback; executors vary
+                        end)
+                        local band = (10 / 34) * scale
+                        local bandFloor = math.max(10 / 35, HIGH_SPACING) * scale
+                        local alignedCeil = math.ceil(spacing / frameTime) * frameTime
+                        local frames = math.floor(band / frameTime)
+                        if stock and alignedCeil > band and (frames * frameTime) >= bandFloor then
+                            spacing = math.max((frames * frameTime) - (frameTime * 0.5), GAP_FLOOR * scale)
+                            interval = math.max(cfg.MinInterval, budget, math.min(spacing, math.max(cooldown, HIT_FLOOR)))
+                        end
+                    end
+                    if (ghostDelay or 0) > 0 then
+                        interval = interval + ghostDelay
+                    end
+                else
+                    interval = math.max(cfg.MinInterval, swordFloor)
+                    attackCooldown = swordFloor
+                end
                 if nextInterval == 0 then
                     nextInterval = interval
                 end
                 local serverNow = Workspace:GetServerTimeNow()
                 local lastGameSwing = tonumber(Bedwars.SwordController.lastAttack) or 0
-                local tooSoon = now - lastSend < nextInterval
-                -- Don't double up with the game's own swing (Swing Only is built on that swing, so it skips this)
-                if not cfg.SwingOnly and serverNow - lastGameSwing < nextInterval * 0.9 then
-                    tooSoon = true
+                -- CatVape: GameCooldown = max((lastAttack + AttackCooldown) - serverNow, 0)
+                local gameCooldown = math.max((lastGameSwing + attackCooldown) - serverNow, 0)
+                local tooSoon = (now - lastSend) < nextInterval or gameCooldown > 0.001
+                if not cfg.HighHitreg and not cfg.SwingOnly then
+                    if serverNow - lastGameSwing < nextInterval * 0.9 then
+                        tooSoon = true
+                    end
                 end
                 if tooSoon then
                     if now - lastHitAt < 0.5 and lastHitText ~= "" then
@@ -5577,6 +5657,11 @@ do
                 if sent > 0 then
                     lastSend = now
                     flashUntil = now + 0.12
+                    ghostStalls = 0
+                    -- Ease off recovery after clean hits
+                    if ghostDelay > 0 then
+                        ghostDelay = math.max(ghostDelay - 0.001, 0)
+                    end
                     nextInterval = interval * (cfg.RandomizeInterval and (0.95 + math.random() * 0.2) or 1)
                     if cfg.SwingOnly then
                         usedSwing = swung
@@ -5592,7 +5677,17 @@ do
                     lastHitText = "hit " .. leadText .. ((sent > 1) and (" +" .. (sent - 1)) or "")
                     setStatus(cfg.StatusLine, lastHitText)
                 else
+                    -- Send rejected: brief pad so the next swings register (High Hitreg only)
+                    if cfg.HighHitreg then
+                        ghostDelay = math.min((ghostDelay or 0) + 0.002, 0.012)
+                        nextInterval = math.max(nextInterval, interval + ghostDelay)
+                    end
                     setStatus(cfg.StatusLine, leadText .. " - " .. tostring(failure))
+                end
+                -- Too many blocked frames in a row → same micro backoff
+                if cfg.HighHitreg and (ghostStalls or 0) >= 4 then
+                    ghostDelay = math.min((ghostDelay or 0) + 0.003, 0.012)
+                    ghostStalls = 0
                 end
             end))
 
@@ -5613,6 +5708,12 @@ do
     aura:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
     aura:AddSection("Timing")
     aura:AddSlider({ Label = "Min Interval", Key = "MinInterval", Min = 0.05, Max = 0.6, Default = 0.05, Step = 0.01, Suffix = "s", Tip = "The sword's own attack speed is the real minimum." })
+    aura:AddToggle({
+        Label = "High Hitreg",
+        Key = "HighHitreg",
+        Default = false,
+        Tip = "Ports CatVape SwordTiming (HighSpacing + CooldownCorrection). Stock swords ~35–36 hits / 10s. Off = normal Nova timing.",
+    })
     aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = false, Tip = "Varies the delay between hits slightly." })
     aura:AddSection("Activation")
     aura:AddToggle({ Label = "Swing Only", Key = "SwingOnly", Default = false, Tip = "One hit per click you make." })
