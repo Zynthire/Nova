@@ -5543,17 +5543,16 @@ do
                     releaseRotation(hum)
                 end
 
-                -- Timing. High Hitreg = CatVape src/libraries/swordtiming.lua Calculate() path.
-                -- Stock swords normally floor at attackSpeed 0.3 (~33–34/10s). CatVape subtracts
-                -- CooldownCorrection and uses HighSpacing/HitFloor so the real pace is ~0.285s
-                -- (~35–36/10s). Off = unchanged Nova behavior (full sword attackSpeed floor).
+                -- Timing. High Hitreg = CatVape swordtiming.lua Calculate() path.
+                -- Stock + high uses AttackCooldown (speed - CooldownCorrection ≈ 0.2848) — CatVape's
+                -- real server gate. That lands ~35/10s cleanly. Pushing under AttackCooldown (ArrivalFloor)
+                -- is what caused mass ghost hits. Off = full 0.3 floor (~34).
                 local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.3
                 local interval
                 local attackCooldown = swordFloor
                 if cfg.HighHitreg then
-                    -- Constants from CatVape swordtiming.lua (do not "round" these)
-                    local SAFE_SPACING = 0.296
                     local HIGH_SPACING = 0.2925
+                    local SAFE_SPACING = 0.296
                     local HIT_FLOOR = 0.285
                     local GAP_FLOOR = 0.2915
                     local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.013412
@@ -5575,44 +5574,23 @@ do
                             end
                         end
                     end)
-                    -- SwordTiming.Calculate(speed, fury, high=true, budget)
                     local stock = math.abs(speed - 0.3) < 0.000001
-                    local normal = HIGH_SPACING
-                    local spacing = stock and normal or WEAPON_SPACING[speed] or (speed + 0.03)
+                    local spacing = stock and HIGH_SPACING or WEAPON_SPACING[speed] or (speed + 0.03)
                     spacing = math.max(spacing * fury, budget)
-                    local scale = spacing / (stock and normal or SAFE_SPACING)
-                    local gap = (scale < 1 and GAP_FLOOR or HIT_FLOOR) * scale
-                    if stock then
-                        gap = math.max(gap, GAP_FLOOR * fury, budget)
-                    end
                     local cooldown = math.max(speed * fury - COOLDOWN_CORRECTION, 0)
                     attackCooldown = cooldown
-                    -- CatVape effective hit pace for stock+high:
-                    --   HitDelay ≈ max(budget, spacing, ...)
-                    --   LastHit gap ≈ gapMin (≥ GapFloor)
-                    --   GameCooldown uses AttackCooldown (≈0.2848) — this is what unlocks 35–36/10s
-                    -- Use the tighter of spacing and max(cooldown, HitFloor), never below budget.
                     if stock then
-                        interval = math.max(cfg.MinInterval, budget, math.min(spacing, math.max(cooldown, HIT_FLOOR)))
-                    else
-                        interval = math.max(cfg.MinInterval, budget, spacing)
-                    end
-                    -- Frame-band trim (CatVape): when ceil(spacing/ft)*ft is above the high band,
-                    -- snap spacing down toward 10/35 so you actually land in the 35–36 window.
-                    do
-                        local frameTime = 1 / 60
-                        pcall(function()
-                            local n = StatsService and StatsService.FrameRateManager
-                            -- keep 60 fallback; executors vary
-                        end)
-                        local band = (10 / 34) * scale
-                        local bandFloor = math.max(10 / 35, HIGH_SPACING) * scale
-                        local alignedCeil = math.ceil(spacing / frameTime) * frameTime
-                        local frames = math.floor(band / frameTime)
-                        if stock and alignedCeil > band and (frames * frameTime) >= bandFloor then
-                            spacing = math.max((frames * frameTime) - (frameTime * 0.5), GAP_FLOOR * scale)
-                            interval = math.max(cfg.MinInterval, budget, math.min(spacing, math.max(cooldown, HIT_FLOOR)))
+                        -- AttackCooldown≈0.285 is the theoretical floor. A +4–6ms safety margin
+                        -- kills most ghost hits while still beating plain 0.3 (~34).
+                        -- Effective ≈0.289–0.291 → ~34.5–34.6 clean; with low ping can still see 35.
+                        local safety = 0.005
+                        interval = math.max(cfg.MinInterval, budget, cooldown + safety, HIT_FLOOR + safety)
+                        -- Never slower than needed for stability than GapFloor when ghosts recently fired
+                        if (ghostDelay or 0) > 0.006 then
+                            interval = math.max(interval, GAP_FLOOR)
                         end
+                    else
+                        interval = math.max(cfg.MinInterval, budget, spacing + 0.004)
                     end
                     if (ghostDelay or 0) > 0 then
                         interval = interval + ghostDelay
@@ -5626,9 +5604,12 @@ do
                 end
                 local serverNow = Workspace:GetServerTimeNow()
                 local lastGameSwing = tonumber(Bedwars.SwordController.lastAttack) or 0
-                -- CatVape: GameCooldown = max((lastAttack + AttackCooldown) - serverNow, 0)
+                -- Full AttackCooldown gate (no 0.985 trim — that was ghosting)
                 local gameCooldown = math.max((lastGameSwing + attackCooldown) - serverNow, 0)
-                local tooSoon = (now - lastSend) < nextInterval or gameCooldown > 0.001
+                local tooSoon = (now - lastSend) < nextInterval
+                if gameCooldown > 0.002 then
+                    tooSoon = true
+                end
                 if not cfg.HighHitreg and not cfg.SwingOnly then
                     if serverNow - lastGameSwing < nextInterval * 0.9 then
                         tooSoon = true
@@ -5658,11 +5639,39 @@ do
                     lastSend = now
                     flashUntil = now + 0.12
                     ghostStalls = 0
-                    -- Ease off recovery after clean hits
-                    if ghostDelay > 0 then
-                        ghostDelay = math.max(ghostDelay - 0.001, 0)
-                    end
                     nextInterval = interval * (cfg.RandomizeInterval and (0.95 + math.random() * 0.2) or 1)
+                    -- CatVape-style confirm: if the target never takes damage, it was a ghost hit
+                    if cfg.HighHitreg then
+                        local confirmTarget = reachable[1] and reachable[1].Entry
+                        local model = confirmTarget and confirmTarget.Model
+                        local before = model and model:GetAttribute("LastDamageTakenTime")
+                        task.delay(0.2, function()
+                            if not mod.Enabled or not cfg.HighHitreg then
+                                return
+                            end
+                            if not model or not model.Parent then
+                                return
+                            end
+                            local after = model:GetAttribute("LastDamageTakenTime")
+                            -- Only judge when the game exposes the attribute; otherwise don't pad
+                            if before == nil and after == nil then
+                                if ghostDelay > 0 then
+                                    ghostDelay = math.max(ghostDelay - 0.002, 0)
+                                end
+                                return
+                            end
+                            local landed = after ~= nil and after ~= before
+                            if not landed then
+                                ghostDelay = math.min((ghostDelay or 0) + 0.005, 0.022)
+                            elseif ghostDelay > 0 then
+                                ghostDelay = math.max(ghostDelay - 0.003, 0)
+                            end
+                        end)
+                    else
+                        if ghostDelay > 0 then
+                            ghostDelay = math.max(ghostDelay - 0.002, 0)
+                        end
+                    end
                     if cfg.SwingOnly then
                         usedSwing = swung
                     else
@@ -5679,14 +5688,14 @@ do
                 else
                     -- Send rejected: brief pad so the next swings register (High Hitreg only)
                     if cfg.HighHitreg then
-                        ghostDelay = math.min((ghostDelay or 0) + 0.002, 0.012)
+                        ghostDelay = math.min((ghostDelay or 0) + 0.003, 0.018)
                         nextInterval = math.max(nextInterval, interval + ghostDelay)
                     end
                     setStatus(cfg.StatusLine, leadText .. " - " .. tostring(failure))
                 end
                 -- Too many blocked frames in a row → same micro backoff
                 if cfg.HighHitreg and (ghostStalls or 0) >= 4 then
-                    ghostDelay = math.min((ghostDelay or 0) + 0.003, 0.012)
+                    ghostDelay = math.min((ghostDelay or 0) + 0.004, 0.018)
                     ghostStalls = 0
                 end
             end))
@@ -5712,7 +5721,10 @@ do
         Label = "High Hitreg",
         Key = "HighHitreg",
         Default = false,
-        Tip = "Ports CatVape SwordTiming (HighSpacing + CooldownCorrection). Stock swords ~35–36 hits / 10s. Off = normal Nova timing.",
+        Tip = "Tighter sword timing (~35 hits / 10s). May occasionally ghost a hit.",
+    })
+    aura:AddLabel("May ghost hit occasionally — closer to 35 hits / 10s when it lands clean.", {
+        ShowIf = function(c) return c.HighHitreg end,
     })
     aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = false, Tip = "Varies the delay between hits slightly." })
     aura:AddSection("Activation")
@@ -6964,6 +6976,93 @@ do
         hiveEsp:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.45, Step = 0.05 })
     end
 
+    local genEsp = Tabs.Render:CreateModule({
+        Name = "Generator ESP",
+        Description = "Highlights iron / diamond / emerald generators.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local adorns = {}
+            local CollectionService = game:GetService("CollectionService")
+            local COLORS = {
+                iron = Color3.fromRGB(200, 200, 210),
+                diamond = Color3.fromRGB(80, 200, 255),
+                emerald = Color3.fromRGB(80, 255, 140),
+            }
+            local TAGS = {
+                "iron-generator", "diamond-generator", "emerald-generator",
+                "IronGenerator", "DiamondGenerator", "EmeraldGenerator", "generator",
+            }
+
+            local function clear()
+                for part, box in pairs(adorns) do
+                    pcall(function() box:Destroy() end)
+                    adorns[part] = nil
+                end
+            end
+            mod.Maid:Give(clear)
+
+            local function kindFrom(name, tag)
+                local s = (tostring(tag or "") .. " " .. tostring(name or "")):lower()
+                if s:find("diamond", 1, true) then return "diamond" end
+                if s:find("emerald", 1, true) then return "emerald" end
+                return "iron"
+            end
+
+            mod.Maid:Give(RunService.Heartbeat:Connect(function()
+                local seen = {}
+                local candidates = {}
+                for _, tag in ipairs(TAGS) do
+                    pcall(function()
+                        for _, inst in ipairs(CollectionService:GetTagged(tag)) do
+                            candidates[#candidates + 1] = { inst = inst, tag = tag }
+                        end
+                    end)
+                end
+                if #candidates == 0 then
+                    pcall(function()
+                        for _, inst in ipairs(Workspace:GetDescendants()) do
+                            if inst:IsA("BasePart") or inst:IsA("Model") then
+                                local n = inst.Name:lower()
+                                if n:find("generator", 1, true) then
+                                    candidates[#candidates + 1] = { inst = inst, tag = n }
+                                end
+                            end
+                        end
+                    end)
+                end
+                for _, row in ipairs(candidates) do
+                    local part = row.inst
+                    if not part:IsA("BasePart") then
+                        part = row.inst:FindFirstChildWhichIsA("BasePart", true)
+                    end
+                    if part and part.Parent then
+                        seen[part] = true
+                        local box = adorns[part]
+                        if not box then
+                            box = Instance.new("BoxHandleAdornment")
+                            box.Adornee = part
+                            box.AlwaysOnTop = true
+                            box.ZIndex = 4
+                            box.Parent = UI.Gui
+                            adorns[part] = box
+                        end
+                        local kind = kindFrom(row.inst.Name, row.tag)
+                        box.Color3 = COLORS[kind] or COLORS.iron
+                        box.Size = part.Size + Vector3.new(0.25, 0.25, 0.25)
+                        box.Transparency = tonumber(cfg.Transparency) or 0.5
+                        box.Visible = true
+                    end
+                end
+                for part, box in pairs(adorns) do
+                    if not seen[part] then
+                        pcall(function() box:Destroy() end)
+                        adorns[part] = nil
+                    end
+                end
+            end))
+        end,
+    })
+    genEsp:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0.2, Max = 0.9, Default = 0.5, Step = 0.05 })
 
     Tabs.Render:CreatePlaceholder("More render features coming soon...")
 end
@@ -14700,6 +14799,97 @@ do
     sky:AddLabel("Custom ID applies one image to all six faces. Use an Image asset ID, not a Decal ID.", { ShowIf = function(c) return c.Mode == "Custom ID" end })
     sky:AddSlider({ Label = "Stars", Key = "StarCount", Min = 0, Max = 5000, Default = 3000, Step = 100, Callback = reapply, ShowIf = function(c) return c.Mode == "Space" end })
     sky:AddToggle({ Label = "Sun / Moon", Key = "CelestialBodies", Default = false, Callback = reapply })
+end
+
+-- ====================== MODULE: WORLD (NIGHTMARE EMOTE) ======================
+do
+    local nightmare = Tabs.World:CreateModule({
+        Name = "Nightmare Emote",
+        Description = "Plays the Nightmare emote effect (stand still).",
+        OnEnable = function(mod)
+            local char, hum, root = Util.GetCharacter(LocalPlayer)
+            if not char or not hum or not root then
+                error("Character not ready")
+            end
+
+            local asset
+            local animTrack
+            local lastPos = root.Position
+            local alive = true
+
+            pcall(function()
+                local effects = game:GetService("ReplicatedStorage"):FindFirstChild("Assets")
+                effects = effects and effects:FindFirstChild("Effects")
+                local template = effects and effects:FindFirstChild("NightmareEmote")
+                if not template then
+                    error("NightmareEmote asset not found")
+                end
+                asset = template:Clone()
+                asset.Parent = Workspace
+                for _, part in ipairs(asset:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false
+                        part.Anchored = true
+                        pcall(function()
+                            part.CanQuery = false
+                        end)
+                    end
+                end
+                local outer = asset:FindFirstChild("Outer")
+                if outer and outer:IsA("BasePart") then
+                    TweenService:Create(outer, TweenInfo.new(1.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {
+                        Orientation = outer.Orientation + Vector3.new(0, 360, 0),
+                    }):Play()
+                end
+                local middle = asset:FindFirstChild("Middle")
+                if middle and middle:IsA("BasePart") then
+                    TweenService:Create(middle, TweenInfo.new(12.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {
+                        Orientation = middle.Orientation + Vector3.new(0, -360, 0),
+                    }):Play()
+                end
+            end)
+
+            pcall(function()
+                local anim = Instance.new("Animation")
+                anim.AnimationId = "rbxassetid://9191822700"
+                animTrack = hum:LoadAnimation(anim)
+                animTrack:Play()
+            end)
+
+            mod.Maid:Give(RunService.RenderStepped:Connect(function()
+                if not alive then return end
+                local _, h, r = Util.GetCharacter(LocalPlayer)
+                if not r or not h or h.Health <= 0 then
+                    mod:SetEnabled(false)
+                    return
+                end
+                if (r.Position - lastPos).Magnitude > 0.15 then
+                    mod:SetEnabled(false)
+                    return
+                end
+                lastPos = r.Position
+                if asset and asset.Parent then
+                    pcall(function()
+                        if asset.PrimaryPart then
+                            asset:SetPrimaryPartCFrame(r.CFrame * CFrame.new(0, -3, 0))
+                        elseif asset:IsA("Model") then
+                            asset:PivotTo(r.CFrame * CFrame.new(0, -3, 0))
+                        end
+                    end)
+                end
+            end))
+
+            mod.Maid:Give(function()
+                alive = false
+                pcall(function()
+                    if animTrack then animTrack:Stop() end
+                end)
+                pcall(function()
+                    if asset then asset:Destroy() end
+                end)
+            end)
+        end,
+    })
 end
 
 -- ====================== MODULE: WORLD (LIGHTING) ======================
