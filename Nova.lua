@@ -5723,7 +5723,7 @@ do
         Default = false,
         Tip = "Tighter sword timing (~35 hits / 10s). May occasionally ghost a hit.",
     })
-    aura:AddLabel("May ghost hit occasionally — closer to 35 hits / 10s when it lands clean.", {
+    aura:AddLabel("May ghost hit occasionally — 35 hits in 10s when it lands clean.", {
         ShowIf = function(c) return c.HighHitreg end,
     })
     aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = false, Tip = "Varies the delay between hits slightly." })
