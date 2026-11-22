@@ -5548,29 +5548,29 @@ do
                 -- Timing: CatVape Calculate + HitFloor/AttackCooldown happy path.
                 -- Consistent 35 was GapFloor (0.2915) from pendingUnconfirmed — that only applies after a real ghost.
                 -- Clean path: AttackCooldown/HitFloor (~0.285) for 35–36. Server gate uses full AttackCooldown.
-                local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.3
+                local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.2
                 local interval
                 local attackCooldown = swordFloor
-                local HIT_FLOOR = 0.285
-                local GAP_FLOOR = 0.2915
-                local HIGH_SPACING = 0.2925
-                local SAFE_SPACING = 0.296
-                local ARRIVAL_FLOOR = 0.2747
-                local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.013412
+                local HIT_FLOOR = 0.272
+                local GAP_FLOOR = 0.2815
+                local HIGH_SPACING = 0.2818
+                local SAFE_SPACING = 0.29
+                local ARRIVAL_FLOOR = 0.24
+                local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.0135
                 local WEAPON_SPACING = {
-                    [0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345,
-                    [0.4] = 0.341, [0.6] = 0.63,
+                    [0.21] = 0.2, [0.25] = 0.24, [0.35] = 0.33,
+                    [0.4] = 0.335, [0.6] = 0.55,
                 }
                 if cfg.HighHitreg then
-                    local speed = swordFloor > 0 and swordFloor or 0.3
-                    local budget = 0.2
+                    local speed = swordFloor > 0 and swordFloor or 0.2
+                    local budget = 0.18
                     pcall(function()
                         if Bedwars.Client and type(Bedwars.Client.Get) == "function" then
                             local remote = Bedwars.Client:Get("SwordHit")
                             if remote and type(remote.GetRateLimit) == "function" then
                                 local limit = remote:GetRateLimit()
                                 if type(limit) == "number" and limit > 0 then
-                                    budget = 60 / limit
+                                    budget = 30 / limit
                                 end
                             end
                         end
