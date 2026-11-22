@@ -5326,8 +5326,10 @@ do
             local lastHitText, lastHitAt = "", 0
             local autoRotateOverridden = nil
             local warnedUnavailable = false
-            -- High Hitreg ghost recovery (CatVape-style micro backoff when hits start dropping)
+            -- High Hitreg ghost recovery (CatVape GhostDelay + pending confirm)
             local ghostDelay, ghostStalls = 0, 0
+            local pendingUnconfirmed = false -- CatVape: unconfirmed send → hold GapFloor next
+            local ghostHoldUntil = 0
 
             local setStatus = makeStatusLabel(mod, "Kill Aura", -100)
 
@@ -5543,30 +5545,29 @@ do
                     releaseRotation(hum)
                 end
 
-                -- Timing. High Hitreg = CatVape swordtiming.lua Calculate() path.
-                -- Stock + high uses AttackCooldown (speed - CooldownCorrection ≈ 0.2848) — CatVape's
-                -- real server gate. That lands ~35/10s cleanly. Pushing under AttackCooldown (ArrivalFloor)
-                -- is what caused mass ghost hits. Off = full 0.3 floor (~34).
+                -- Timing: CatVape Calculate + HitFloor/AttackCooldown happy path.
+                -- Consistent 35 was GapFloor (0.2915) from pendingUnconfirmed — that only applies after a real ghost.
+                -- Clean path: AttackCooldown/HitFloor (~0.285) for 35–36. Server gate uses full AttackCooldown.
                 local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.3
                 local interval
                 local attackCooldown = swordFloor
+                local HIT_FLOOR = 0.285
+                local GAP_FLOOR = 0.2915
+                local HIGH_SPACING = 0.2925
+                local SAFE_SPACING = 0.296
+                local ARRIVAL_FLOOR = 0.2747
+                local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.013412
+                local WEAPON_SPACING = {
+                    [0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345,
+                    [0.4] = 0.341, [0.6] = 0.63,
+                }
                 if cfg.HighHitreg then
-                    local HIGH_SPACING = 0.2925
-                    local SAFE_SPACING = 0.296
-                    local HIT_FLOOR = 0.285
-                    local GAP_FLOOR = 0.2915
-                    local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.013412
-                    local WEAPON_SPACING = {
-                        [0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345,
-                        [0.4] = 0.341, [0.6] = 0.63,
-                    }
                     local speed = swordFloor > 0 and swordFloor or 0.3
-                    local fury = 1
                     local budget = 0.2
                     pcall(function()
-                        if Bedwars.Handler and Bedwars.Handler.Get then
-                            local remote = Bedwars.Handler:Get("SwordHit")
-                            if remote and remote.GetRateLimit then
+                        if Bedwars.Client and type(Bedwars.Client.Get) == "function" then
+                            local remote = Bedwars.Client:Get("SwordHit")
+                            if remote and type(remote.GetRateLimit) == "function" then
                                 local limit = remote:GetRateLimit()
                                 if type(limit) == "number" and limit > 0 then
                                     budget = 60 / limit
@@ -5574,26 +5575,46 @@ do
                             end
                         end
                     end)
+
                     local stock = math.abs(speed - 0.3) < 0.000001
-                    local spacing = stock and HIGH_SPACING or WEAPON_SPACING[speed] or (speed + 0.03)
-                    spacing = math.max(spacing * fury, budget)
-                    local cooldown = math.max(speed * fury - COOLDOWN_CORRECTION, 0)
+                    local normal = HIGH_SPACING
+                    local spacing = stock and normal or (WEAPON_SPACING[speed] or (speed + 0.03))
+                    spacing = math.max(spacing, budget)
+                    local scale = spacing / (stock and normal or SAFE_SPACING)
+                    local cooldown = math.max(speed - COOLDOWN_CORRECTION, 0)
                     attackCooldown = cooldown
-                    if stock then
-                        -- AttackCooldown≈0.285 is the theoretical floor. A +4–6ms safety margin
-                        -- kills most ghost hits while still beating plain 0.3 (~34).
-                        -- Effective ≈0.289–0.291 → ~34.5–34.6 clean; with low ping can still see 35.
-                        local safety = 0.005
-                        interval = math.max(cfg.MinInterval, budget, cooldown + safety, HIT_FLOOR + safety)
-                        -- Never slower than needed for stability than GapFloor when ghosts recently fired
-                        if (ghostDelay or 0) > 0.006 then
-                            interval = math.max(interval, GAP_FLOOR)
-                        end
-                    else
-                        interval = math.max(cfg.MinInterval, budget, spacing + 0.004)
+
+                    local gDelay = tonumber(ghostDelay) or 0
+                    local ping = 0
+                    pcall(function()
+                        ping = LocalPlayer:GetNetworkPing() or 0
+                    end)
+                    local margin = 0
+                    if ping >= 0.12 then
+                        margin = math.min((ping - 0.1) * 0.06, 0.006)
                     end
-                    if (ghostDelay or 0) > 0 then
-                        interval = interval + ghostDelay
+
+                    -- CatVape frame credit target: HitDelay - min(ft, HitDelay - HitFloor) ≈ HitFloor
+                    local hitDelay = math.max(budget, spacing + gDelay + margin)
+                    local frameTime = 1 / 60
+                    local credit = 0
+                    if stock and now >= ghostHoldUntil then
+                        credit = math.min(frameTime, math.max(hitDelay - HIT_FLOOR * scale, 0))
+                    end
+                    local credited = hitDelay - credit -- ~0.285 when clean
+
+                    if stock then
+                        -- Happy path: min of credited spacing and HitFloor, never under ArrivalFloor
+                        -- Pure AttackCooldown (~0.2848) is the CatVape server-side floor.
+                        interval = math.max(cfg.MinInterval, budget, ARRIVAL_FLOOR, math.min(credited, HIT_FLOOR) + gDelay + margin)
+                        interval = math.max(interval, cooldown)
+                    else
+                        interval = math.max(cfg.MinInterval, budget, hitDelay, cooldown)
+                    end
+
+                    -- ONLY after a confirmed ghost (GhostHold) — not while merely waiting on confirm
+                    if now < ghostHoldUntil then
+                        interval = math.max(interval, GAP_FLOOR + gDelay)
                     end
                 else
                     interval = math.max(cfg.MinInterval, swordFloor)
@@ -5604,10 +5625,10 @@ do
                 end
                 local serverNow = Workspace:GetServerTimeNow()
                 local lastGameSwing = tonumber(Bedwars.SwordController.lastAttack) or 0
-                -- Full AttackCooldown gate (no 0.985 trim — that was ghosting)
                 local gameCooldown = math.max((lastGameSwing + attackCooldown) - serverNow, 0)
                 local tooSoon = (now - lastSend) < nextInterval
-                if gameCooldown > 0.002 then
+                -- CatVape waits full GameCooldown; tiny epsilon avoids float jitter only
+                if gameCooldown > 0.00025 then
                     tooSoon = true
                 end
                 if not cfg.HighHitreg and not cfg.SwingOnly then
@@ -5639,13 +5660,22 @@ do
                     lastSend = now
                     flashUntil = now + 0.12
                     ghostStalls = 0
-                    nextInterval = interval * (cfg.RandomizeInterval and (0.95 + math.random() * 0.2) or 1)
-                    -- CatVape-style confirm: if the target never takes damage, it was a ghost hit
+                    -- CatVape: never swing *faster* than the calculated spacing when High Hitreg is on
+                    if cfg.HighHitreg then
+                        nextInterval = interval * (cfg.RandomizeInterval and (1.0 + math.random() * 0.04) or 1)
+                    else
+                        nextInterval = interval * (cfg.RandomizeInterval and (0.95 + math.random() * 0.2) or 1)
+                    end
+                    -- CatVape GhostPending: only slow down after a *confirmed* miss (GhostHold).
+                    -- Do NOT hold GapFloor while waiting on confirm — that locked rate at 35.
                     if cfg.HighHitreg then
                         local confirmTarget = reachable[1] and reachable[1].Entry
                         local model = confirmTarget and confirmTarget.Model
                         local before = model and model:GetAttribute("LastDamageTakenTime")
-                        task.delay(0.2, function()
+                        local ping = 0
+                        pcall(function() ping = LocalPlayer:GetNetworkPing() or 0 end)
+                        local timeout = math.max(0.22, ping * 2 + 0.12)
+                        task.delay(timeout, function()
                             if not mod.Enabled or not cfg.HighHitreg then
                                 return
                             end
@@ -5653,31 +5683,37 @@ do
                                 return
                             end
                             local after = model:GetAttribute("LastDamageTakenTime")
-                            -- Only judge when the game exposes the attribute; otherwise don't pad
+                            -- No attribute system → don't treat as ghost
                             if before == nil and after == nil then
-                                if ghostDelay > 0 then
-                                    ghostDelay = math.max(ghostDelay - 0.002, 0)
+                                if ghostDelay > 0 and os.clock() > ghostHoldUntil then
+                                    ghostDelay = math.max(ghostDelay - 0.001, 0)
                                 end
                                 return
                             end
                             local landed = after ~= nil and after ~= before
-                            if not landed then
-                                ghostDelay = math.min((ghostDelay or 0) + 0.005, 0.022)
-                            elseif ghostDelay > 0 then
-                                ghostDelay = math.max(ghostDelay - 0.003, 0)
+                            if landed then
+                                if ghostDelay > 0 and os.clock() > ghostHoldUntil then
+                                    ghostDelay = math.max(ghostDelay - 0.001, 0)
+                                end
+                            else
+                                -- Real ghost: micro pad + 2s hold at GapFloor
+                                ghostDelay = math.min((ghostDelay or 0) + 0.001, (10 / 34) - 0.2925)
+                                ghostHoldUntil = os.clock() + 2
+                                ghostStalls = (ghostStalls or 0) + 1
                             end
                         end)
                     else
                         if ghostDelay > 0 then
-                            ghostDelay = math.max(ghostDelay - 0.002, 0)
+                            ghostDelay = math.max(ghostDelay - 0.001, 0)
                         end
                     end
+                    -- CatVape always stamps lastAttack on a successful send (needed for GameCooldown gate)
+                    pcall(function()
+                        Bedwars.SwordController.lastAttack = Workspace:GetServerTimeNow()
+                    end)
                     if cfg.SwingOnly then
                         usedSwing = swung
                     else
-                        pcall(function()
-                            Bedwars.SwordController.lastAttack = Workspace:GetServerTimeNow()
-                        end)
                         if cfg.SwingAnimation then
                             playSwing(meta)
                         end
@@ -5721,9 +5757,9 @@ do
         Label = "High Hitreg",
         Key = "HighHitreg",
         Default = false,
-        Tip = "Tighter sword timing (~35 hits / 10s). May occasionally ghost a hit.",
+        Tip = "CatVape HitFloor pace when clean (~35–36 / 10s). GapFloor only after a ghost.",
     })
-    aura:AddLabel("May ghost hit occasionally — 35 hits in 10s when it lands clean.", {
+    aura:AddLabel("Ports CatVape Calculate + GameCooldown gate. Stock swords ~35–36 / 10s.", {
         ShowIf = function(c) return c.HighHitreg end,
     })
     aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = false, Tip = "Varies the delay between hits slightly." })
