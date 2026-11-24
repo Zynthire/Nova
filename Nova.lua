@@ -539,20 +539,20 @@ end
 -- window border glow, module cards - so the whole thing reads as one deliberate gradient
 -- language instead of a single flat colour repeated everywhere.
 local Theme = {
-    Background  = Color3.fromRGB(5, 5, 9),
-    Panel       = Color3.fromRGB(11, 10, 18),
-    Card        = Color3.fromRGB(18, 16, 29),
-    CardHi      = Color3.fromRGB(24, 22, 37),
-    Accent      = Color3.fromRGB(152, 98, 255),
-    AccentAlt   = Color3.fromRGB(90, 200, 255),
+    Background  = Color3.fromRGB(9, 9, 12),
+    Panel       = Color3.fromRGB(15, 15, 20),
+    Card        = Color3.fromRGB(22, 22, 29),
+    CardHi      = Color3.fromRGB(29, 29, 38),
+    Accent      = Color3.fromRGB(139, 108, 255),
+    AccentAlt   = Color3.fromRGB(139, 108, 255),
     AccentDark  = Color3.fromRGB(104, 62, 205),
     AccentLight = Color3.fromRGB(198, 164, 255),
-    Text        = Color3.fromRGB(245, 243, 252),
-    TextDim     = Color3.fromRGB(154, 148, 180),
-    TextFaint   = Color3.fromRGB(98, 93, 124),
-    Stroke      = Color3.fromRGB(34, 31, 52),
-    StrokeHover = Color3.fromRGB(72, 64, 112),
-    Track       = Color3.fromRGB(40, 36, 64),
+    Text        = Color3.fromRGB(236, 236, 244),
+    TextDim     = Color3.fromRGB(150, 150, 168),
+    TextFaint   = Color3.fromRGB(98, 98, 116),
+    Stroke      = Color3.fromRGB(38, 38, 49),
+    StrokeHover = Color3.fromRGB(70, 70, 90),
+    Track       = Color3.fromRGB(48, 48, 62),
     Good        = Color3.fromRGB(110, 224, 150),
     Bad         = Color3.fromRGB(255, 96, 118),
     Warn        = Color3.fromRGB(255, 198, 96),
@@ -562,7 +562,7 @@ local Theme = {
 -- accent rather than computed, so the pairing always looks intentional (violet -> sky, pink ->
 -- sunset orange, etc.) instead of an auto hue-shift landing somewhere muddy.
 local ACCENTS = {
-    { Name = "Purple", Color = Color3.fromRGB(152, 98, 255), Alt = Color3.fromRGB(90, 200, 255) },
+    { Name = "Purple", Color = Color3.fromRGB(139, 108, 255), Alt = Color3.fromRGB(90, 200, 255) },
     { Name = "Blue",   Color = Color3.fromRGB(86, 148, 255), Alt = Color3.fromRGB(64, 208, 232) },
     { Name = "Cyan",   Color = Color3.fromRGB(64, 208, 232), Alt = Color3.fromRGB(120, 130, 255) },
     { Name = "Green",  Color = Color3.fromRGB(84, 214, 148), Alt = Color3.fromRGB(64, 208, 232) },
@@ -590,7 +590,8 @@ end
 
 local function applyAccent(color, alt)
     Theme.Accent = color
-    Theme.AccentAlt = alt or color:Lerp(Color3.new(1, 1, 1), 0.3)
+    -- Flat accent: every old two-stop gradient now resolves to one colour (cleaner look).
+    Theme.AccentAlt = color
     Theme.AccentDark = color:Lerp(Color3.new(0, 0, 0), 0.32)
     Theme.AccentLight = color:Lerp(Color3.new(1, 1, 1), 0.45)
     for _, hook in ipairs(ThemeHooks) do
@@ -778,7 +779,7 @@ local function createSwitch(parent, width, height)
         trackGradient.Enabled = state
         Animate(track, { BackgroundColor3 = state and Theme.Accent or Theme.Track }, instant, 0.18)
         Animate(knob, { Position = position, BackgroundColor3 = state and Color3.new(1, 1, 1) or Theme.TextDim }, instant, 0.18)
-        Animate(haloRing, { Transparency = state and 0.6 or 1 }, instant, 0.18)
+        Animate(haloRing, { Transparency = 1 }, instant, 0.18)
     end
     onTheme(function()
         trackGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
@@ -806,7 +807,7 @@ local function makeButton(parent, text, style, size)
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = parent,
-    }, { Round(15), stroke })
+    }, { Round(9), stroke })
 
     local hovered = false
     local function paint(instant)
@@ -1060,7 +1061,7 @@ function Controls.Slider(host, o)
         TextColor3 = Theme.AccentLight,
         ClearTextOnFocus = true,
         Parent = row,
-    }, { Round(12), valueStroke })
+    }, { Round(8), valueStroke })
     local track = New("Frame", {
         Position = UDim2.new(0, 0, 0, 38),
         Size = UDim2.new(1, 0, 0, 6),
@@ -1313,7 +1314,7 @@ function Controls.Option(host, o)
             AutoButtonColor = false,
             Text = "",
             Parent = row,
-        }, { Round(13), buttonStroke })
+        }, { Round(8), buttonStroke })
         local valueLabel = New("TextLabel", {
             Position = UDim2.fromOffset(10, 0),
             Size = UDim2.new(1, -30, 1, 0),
@@ -1395,7 +1396,7 @@ function Controls.TextBox(host, o)
         ClearTextOnFocus = false,
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = row,
-    }, { Round(13), boxStroke, Pad(10, 0, 10, 0) })
+    }, { Round(8), boxStroke, Pad(10, 0, 10, 0) })
     onTheme(function()
         box.TextColor3 = Theme.AccentLight
     end)
@@ -1486,7 +1487,7 @@ UI.Main = New("Frame", {
     BorderSizePixel = 0,
     Visible = false,
     Parent = UI.Holder,
-}, { Round(20), mainStroke })
+}, { Round(12), mainStroke })
 
 UI.Scale = New("UIScale", { Scale = 1, Parent = UI.Main })
 
@@ -1514,7 +1515,7 @@ local Sidebar = New("Frame", {
     BackgroundColor3 = Theme.Panel,
     BorderSizePixel = 0,
     Parent = UI.Main,
-}, { Round(20) })
+}, { Round(12) })
 -- Squares off Sidebar's own right-edge rounding where it meets Main. Kept at the back (ZIndex 0)
 -- so it never paints over the tab pill, which used to get its right corner flattened by this.
 New("Frame", {
@@ -1551,18 +1552,18 @@ do
         Position = UDim2.fromOffset(16 + 17, 17 + 17),
         Size = UDim2.fromOffset(48, 48),
         BackgroundColor3 = Color3.new(1, 1, 1),
-        BackgroundTransparency = 0.88,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ZIndex = 0,
         Parent = BrandArea,
-    }, { Round(16) })
+    }, { Round(10) })
     local brandTile = New("Frame", {
         Position = UDim2.fromOffset(16, 17),
         Size = UDim2.fromOffset(34, 34),
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         Parent = BrandArea,
-    }, { Round(12) })
+    }, { Round(8) })
     local brandGradient = New("UIGradient", { Rotation = 45, Parent = brandTile })
     Stroke(Color3.new(1, 1, 1), 1, 0.7).Parent = brandTile
     New("TextLabel", {
@@ -1629,7 +1630,7 @@ local TabIndicator = New("Frame", {
     ZIndex = 1,
     Visible = false,
     Parent = Sidebar,
-}, { Round(11), tabIndicatorGradient })
+}, { Round(8), tabIndicatorGradient })
 onTheme(function()
     tabIndicatorGradient.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
 end)
@@ -1711,7 +1712,7 @@ local SearchFrame = New("Frame", {
     BackgroundColor3 = Theme.Card,
     BorderSizePixel = 0,
     Parent = TopBar,
-}, { Round(15), searchStroke })
+}, { Round(9), searchStroke })
 -- No search-icon glyph here on purpose: "⌕" isn't in Roblox's default UI font, so it was
 -- rendering as a missing-glyph box instead of a magnifying glass. The placeholder text alone
 -- carries the hint now.
@@ -1758,7 +1759,7 @@ do
         TextSize = 12,
         TextColor3 = Theme.TextDim,
         Parent = TopBar,
-    }, { Round(15), chipStroke })
+    }, { Round(9), chipStroke })
     local chipHover = false
     local function paintChip(instant)
         if UI.OnlyActive then
@@ -1816,7 +1817,7 @@ New("Frame", {
     BorderSizePixel = 0,
     Parent = Sidebar,
 }, {
-    Round(14),
+    Round(9),
     Stroke(Theme.Stroke, 1, 0.3),
     New("ImageLabel", {
         Position = UDim2.fromOffset(10, 10),
@@ -1829,7 +1830,7 @@ New("Frame", {
             end)
             return ok and url or ""
         end)(),
-    }, { Round(17) }),
+    }, { Round(10) }),
     New("Frame", {
         Position = UDim2.fromOffset(35, 35),
         Size = UDim2.fromOffset(10, 10),
@@ -1976,7 +1977,7 @@ do
         TextSize = 11,
         TextColor3 = Theme.TextFaint,
         Parent = header,
-    }, { Round(12), chipStroke })
+    }, { Round(8), chipStroke })
     -- Tooltip attached below, once UI:AttachTip exists (this block runs before that's defined).
 
     local divider = New("Frame", {
@@ -2361,7 +2362,7 @@ function UI:CreateTab(name, subtitle, icon)
             TextColor3 = Theme.TextFaint,
             LayoutOrder = 99999,
             Parent = tab.Page,
-        }, { Round(12), Stroke(Theme.Stroke, 1, 0.4) })
+        }, { Round(8), Stroke(Theme.Stroke, 1, 0.4) })
     end
 
     -- ---------------------------------------------------------------
@@ -2401,7 +2402,7 @@ function UI:CreateTab(name, subtitle, icon)
             BorderSizePixel = 0,
             LayoutOrder = #tab.Modules + 1,
             Parent = tab.Page,
-        }, { Round(16), cardStroke })
+        }, { Round(10), cardStroke })
         mod.Card = card
 
         -- A soft corner glow instead of a flat tint or a bar: a diagonal wash of accent colour
@@ -2419,6 +2420,20 @@ function UI:CreateTab(name, subtitle, icon)
         })
         onTheme(function()
             cardGlow.Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt)
+        end)
+        -- Slim accent bar on the card's left edge: the one clear "on / selected" marker.
+        local cardBar = New("Frame", {
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, 0, 0.5, 0),
+            Size = UDim2.fromOffset(3, 26),
+            BackgroundColor3 = Theme.Accent,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 2,
+            Parent = card,
+        }, { Round(2) })
+        onTheme(function()
+            cardBar.BackgroundColor3 = Theme.Accent
         end)
 
         local headerButton = New("TextButton", {
@@ -2502,9 +2517,10 @@ function UI:CreateTab(name, subtitle, icon)
             Animate(card, { BackgroundColor3 = bg }, instant, 0.12)
             -- a clear glowing outline while selected or on - the corner wash carries the rest
             local strokeColor = (selected or mod.Enabled) and Theme.Accent or Theme.Stroke
-            local strokeTrans = selected and 0.15 or (mod.Enabled and (hovered and 0.2 or 0.35) or 1)
+            local strokeTrans = selected and 0.45 or (mod.Enabled and (hovered and 0.55 or 0.7) or 1)
             Animate(cardStroke, { Color = strokeColor, Transparency = strokeTrans }, instant, 0.15)
-            cardGlow.Enabled = mod.Enabled
+            cardGlow.Enabled = false
+            Animate(cardBar, { BackgroundTransparency = (selected or mod.Enabled) and 0 or 1 }, instant, 0.15)
             iconGradient.Enabled = mod.Enabled
             Animate(iconGlyph, { TextColor3 = mod.Enabled and Color3.new(1, 1, 1) or Theme.TextDim }, instant, 0.15)
         end
@@ -2911,7 +2927,7 @@ UI.DropdownFrame = New("Frame", {
     Visible = false,
     ZIndex = 61,
     Parent = UI.Main,
-}, { Round(12), Stroke(Theme.StrokeHover, 1) })
+}, { Round(8), Stroke(Theme.StrokeHover, 1) })
 local DropList = New("ScrollingFrame", {
     Size = UDim2.fromScale(1, 1),
     BackgroundTransparency = 1,
@@ -3133,7 +3149,7 @@ function Nova.Notify(title, text, duration, kind, force)
         Text = "",
         ClipsDescendants = true,
         Parent = wrap,
-    }, { Round(12), Stroke(Theme.Stroke, 1) })
+    }, { Round(8), Stroke(Theme.Stroke, 1) })
 
     -- Slim status dot instead of a boxed icon
     New("Frame", {
@@ -3684,7 +3700,7 @@ local SettingsMenu = New("Frame", {
     Visible = false,
     ZIndex = 41,
     Parent = UI.Main,
-}, { Round(16), Stroke(Theme.StrokeHover, 1) })
+}, { Round(10), Stroke(Theme.StrokeHover, 1) })
 local SettingsScale = New("UIScale", { Scale = 1, Parent = SettingsMenu })
 
 New("TextLabel", {
@@ -4698,75 +4714,188 @@ do
 end
 
 -- ====================== MODULE: HITBOX EXPANDER ======================
+-- Player mode adds an extra invisible box around each enemy (the enemy's own body is never touched,
+-- so nothing freezes when they die). Sword mode widens the game's own sword swing region instead.
 do
-    -- The slider goes higher, but anything above this has no extra effect (bigger boxes glitch)
-    local HITBOX_EFFECTIVE_MAX = 10.5
+    local CollectionService = service("CollectionService")
+
+    local SWORD_REGION_DEFAULT = 3.8
+    local COLORS = {
+        Accent = nil, -- filled in below (follows the theme)
+        Red = Color3.fromRGB(255, 0, 0),
+        Blue = Color3.fromRGB(0, 100, 255),
+        Green = Color3.fromRGB(0, 255, 0),
+        Yellow = Color3.fromRGB(255, 255, 0),
+        Orange = Color3.fromRGB(255, 140, 0),
+        Purple = Color3.fromRGB(180, 0, 255),
+        White = Color3.fromRGB(255, 255, 255),
+        Cyan = Color3.fromRGB(0, 255, 255),
+        Pink = Color3.fromRGB(255, 50, 150),
+        Black = Color3.fromRGB(0, 0, 0),
+    }
+    local COLOR_NAMES = { "Accent", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "White", "Cyan", "Pink", "Black" }
+
+    local function boxSize(expand)
+        return Vector3.new(3, 6, 3) + Vector3.one * ((tonumber(expand) or 14.4) / 5)
+    end
 
     local hitbox = Tabs.Combat:CreateModule({
         Name = "Hitbox Expander",
         Description = "Expands hitboxes of players / NPCs (client side).",
         OnEnable = function(mod)
             local cfg = mod.Config
-            -- Strong refs so we can always restore even after the part is gone from targets
-            local originals = {} -- [root] = { Size, Transparency, CanCollide, Massless, Hum }
+            local records = setmetatable({}, { __mode = "k" }) -- [model] = { Part, Connections }
             local wallCache = setmetatable({}, { __mode = "k" })
+            local swordApplied = false
 
-            local function restore(root)
-                local saved = originals[root]
-                if not saved then
+            local function destroyRecord(model)
+                local record = records[model]
+                if not record then
                     return
                 end
-                originals[root] = nil
+                records[model] = nil
+                for _, connection in ipairs(record.Connections) do
+                    connection:Disconnect()
+                end
                 pcall(function()
-                    if root and root.Parent then
-                        root.Size = saved.Size
-                        root.Transparency = saved.Transparency
-                        root.CanCollide = saved.CanCollide
-                        root.Massless = saved.Massless
-                    end
+                    record.Part:Destroy()
                 end)
             end
 
-            local function restoreAll()
-                for root in pairs(originals) do
-                    restore(root)
+            local function destroyAll()
+                for model in pairs(records) do
+                    destroyRecord(model)
+                end
+                -- Anything left over from an earlier run
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    local char = plr.Character
+                    if char then
+                        for _, child in ipairs(char:GetChildren()) do
+                            if child.Name == "NovaHitbox" then
+                                child:Destroy()
+                            end
+                        end
+                    end
                 end
             end
 
-            mod.Maid:Give(restoreAll)
+            local function setSwordRegion(on)
+                local ok = pcall(function()
+                    local swing = Bedwars.SwordController.swingSwordInRegion
+                    debug.setconstant(swing, 6, on and ((tonumber(cfg.Expand) or 14.4) / 3) or SWORD_REGION_DEFAULT)
+                end)
+                return ok
+            end
 
-            -- If a humanoid dies / character leaves, restore that root immediately
-            mod.Maid:Give(Workspace.DescendantRemoving:Connect(function(inst)
-                if originals[inst] then
-                    restore(inst)
+            local function colorFor()
+                if cfg.HitboxColor == "Accent" or not COLORS[cfg.HitboxColor] then
+                    return Theme.Accent
                 end
-            end))
+                return COLORS[cfg.HitboxColor]
+            end
 
-            mod.Maid:Give(RunService.Heartbeat:Connect(function()
+            local function createFor(entry)
+                local model, root, hum = entry.Model, entry.Root, entry.Humanoid
+                local part = Instance.new("Part")
+                part.Name = "NovaHitbox"
+                part.Archivable = false
+                part.Size = boxSize(cfg.Expand)
+                part.Position = root.Position
+                part.CanCollide = false
+                part.CanQuery = true
+                part.Massless = true
+                part.Transparency = cfg.ShowHitbox and (tonumber(cfg.Transparency) or 0.7) or 1
+                part.LocalTransparencyModifier = cfg.ShowHitbox and 0 or 1
+                part.Color = colorFor()
+                part.Parent = model
+
+                local weld = Instance.new("Motor6D")
+                weld.Part0 = part
+                weld.Part1 = root
+                weld.Parent = part
+
+                local owner = Instance.new("ObjectValue")
+                owner.Name = "EntityValue"
+                owner.Value = model
+                owner.Parent = part
+                CollectionService:AddTag(part, "Hitbox")
+
+                local connections = {}
+                -- Gone the instant the target dies or leaves, so the game's own death handling runs untouched
+                if hum then
+                    connections[#connections + 1] = hum.HealthChanged:Connect(function(health)
+                        if health <= 0 then
+                            destroyRecord(model)
+                        end
+                    end)
+                    connections[#connections + 1] = hum.Died:Connect(function()
+                        destroyRecord(model)
+                    end)
+                end
+                connections[#connections + 1] = model.AncestryChanged:Connect(function(_, parent)
+                    if not parent then
+                        destroyRecord(model)
+                    end
+                end)
+                connections[#connections + 1] = root.AncestryChanged:Connect(function(_, parent)
+                    if not parent then
+                        destroyRecord(model)
+                    end
+                end)
+                records[model] = { Part = part, Connections = connections }
+            end
+
+            local function holdingSword()
+                if not Bedwars.Ready then
+                    return false
+                end
+                local item = Bedwars.GetHeldSword()
+                return item ~= nil
+            end
+
+            mod.Maid:Give(function()
+                destroyAll()
+                if swordApplied then
+                    swordApplied = false
+                    setSwordRegion(false)
+                end
+            end)
+
+            local acc = 0
+            mod.Maid:Give(RunService.Heartbeat:Connect(function(dt)
+                acc = acc + dt
+                if acc < 0.2 then
+                    return
+                end
+                acc = 0
+
+                if cfg.Mode == "Sword" then
+                    if next(records) ~= nil then
+                        destroyAll()
+                    end
+                    if Bedwars.Ready or Bedwars.Resolve() then
+                        -- Re-applied on every pass so slider changes take effect straight away
+                        swordApplied = setSwordRegion(true)
+                    end
+                    return
+                end
+                if swordApplied then
+                    swordApplied = false
+                    setSwordRegion(false)
+                end
+
+                if cfg.AutoToggle and not holdingSword() then
+                    destroyAll()
+                    return
+                end
+
                 local cam = Workspace.CurrentCamera
                 local now = os.clock()
-                local _, _, myRoot = Util.GetCharacter(LocalPlayer)
-
-                local points = {}
-                if myRoot then
-                    points[#points + 1] = myRoot.Position
-                end
-                if cam then
-                    points[#points + 1] = cam.CFrame.Position
-                end
-
-                local seen = {}
+                local wanted = {}
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                    local root = entry.Root
-                    local hum = entry.Humanoid
-                    -- Dead / missing = never expand, always restore
-                    if not root or not root.Parent or not hum or hum.Health <= 0 then
-                        if root and originals[root] then
-                            restore(root)
-                        end
-                    else
+                    local root, hum, model = entry.Root, entry.Humanoid, entry.Model
+                    if root and root.Parent and hum and hum.Health > 0 and model and model.Parent then
                         local expand = not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player))
-
                         if expand and cfg.WallCheck and cam then
                             local cache = wallCache[entry]
                             if not cache or now - cache.Time > 0.1 then
@@ -4775,77 +4904,57 @@ do
                             end
                             expand = cache.Visible
                         end
-
                         if expand then
-                            seen[root] = true
-                            local saved = originals[root]
-                            if not saved then
-                                saved = {
-                                    Size = root.Size,
-                                    Transparency = root.Transparency,
-                                    CanCollide = root.CanCollide,
-                                    Massless = root.Massless,
-                                }
-                                originals[root] = saved
-                            end
-
-                            local size = tonumber(cfg.Size) or 5
-                            if cfg.InsideFix and #points > 0 then
-                                local nearest = math.huge
-                                local cf = root.CFrame
-                                for _, point in ipairs(points) do
-                                    local rel = cf:PointToObjectSpace(point)
-                                    local d = math.max(math.abs(rel.X), math.abs(rel.Y), math.abs(rel.Z))
-                                    if d < nearest then
-                                        nearest = d
-                                    end
+                            wanted[model] = true
+                            local record = records[model]
+                            if not record or not record.Part.Parent then
+                                if record then
+                                    destroyRecord(model)
                                 end
-                                if nearest < size / 2 + 0.5 then
-                                    local base = math.max(saved.Size.X, saved.Size.Y, saved.Size.Z)
-                                    size = math.clamp((nearest - 0.5) * 2, math.min(base, size), size)
+                                createFor(entry)
+                            else
+                                local part = record.Part
+                                local size = boxSize(cfg.Expand)
+                                if part.Size ~= size then
+                                    part.Size = size
                                 end
+                                local transparency = cfg.ShowHitbox and (tonumber(cfg.Transparency) or 0.7) or 1
+                                if part.Transparency ~= transparency then
+                                    part.Transparency = transparency
+                                end
+                                local modifier = cfg.ShowHitbox and 0 or 1
+                                if part.LocalTransparencyModifier ~= modifier then
+                                    part.LocalTransparencyModifier = modifier
+                                end
+                                part.Color = colorFor()
                             end
-
-                            local sizeVector = Vector3.new(size, size, size)
-                            if root.Size ~= sizeVector then
-                                root.Size = sizeVector
-                            end
-                            local wantTransparency = cfg.ShowHitbox and cfg.Transparency or saved.Transparency
-                            if root.Transparency ~= wantTransparency then
-                                root.Transparency = wantTransparency
-                            end
-                            if root.CanCollide then
-                                root.CanCollide = false
-                            end
-                            if not root.Massless then
-                                root.Massless = true
-                            end
-                        elseif originals[root] then
-                            restore(root)
                         end
                     end
                 end
-
-                -- Restore anything no longer targeted (left, died, filtered out)
-                for root in pairs(originals) do
-                    if not seen[root] then
-                        restore(root)
+                for model in pairs(records) do
+                    if not wanted[model] then
+                        destroyRecord(model)
                     end
                 end
             end))
         end,
     })
 
+    hitbox:AddSection("Mode")
+    hitbox:AddOption({
+        Label = "Mode", Key = "Mode", Options = { "Player", "Sword" }, Default = "Player",
+        Tip = "Player adds an extra box around each enemy. Sword widens the game's own swing region instead.",
+    })
+    hitbox:AddSlider({ Label = "Expand Amount", Key = "Expand", Min = 0, Max = 30, Default = 14.4, Step = 0.1, Tip = "How much bigger the hitbox gets." })
     hitbox:AddSection("Targeting")
-    hitbox:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players", Tip = "Whose hitboxes get expanded." })
-    hitbox:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
-    hitbox:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, Tip = "Leave your teammates alone." })
-    hitbox:AddSection("Size")
-    hitbox:AddSlider({ Label = "Size", Key = "Size", Min = 1, Max = 14, Default = 6, Step = 0.5, Suffix = " studs" })
-    hitbox:AddLabel("Sizes above 10.5 have no extra effect.")
-    hitbox:AddToggle({ Label = "Show Hitbox", Key = "ShowHitbox", Default = false, Tip = "Makes the expanded hitbox visible on targets. Off by default - the expansion still works either way, this is just a preview." })
-    hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.85, Step = 0.05, ShowIf = function(c) return c.ShowHitbox end, Tip = "How visible the expanded box is." })
-    hitbox:AddToggle({ Label = "Inside Fix", Key = "InsideFix", Default = true })
+    hitbox:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players", ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Whose hitboxes get expanded." })
+    hitbox:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, ShowIf = function(c) return c.Mode ~= "Sword" end })
+    hitbox:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Leave your teammates alone." })
+    hitbox:AddToggle({ Label = "Auto Toggle", Key = "AutoToggle", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Only expands hitboxes while you hold a sword." })
+    hitbox:AddSection("Visuals")
+    hitbox:AddToggle({ Label = "Show Hitbox", Key = "ShowHitbox", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Makes the expanded hitbox visible. The expansion works either way - this is just a preview." })
+    hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.7, Step = 0.05, ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
+    hitbox:AddOption({ Label = "Color", Key = "HitboxColor", Options = COLOR_NAMES, Default = "Accent", ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
 end
 
 -- ====================== MODULE: BEDWARS BRIDGE ======================
@@ -5046,7 +5155,8 @@ do
 
     local hitRemote
     -- Sends one SwordHit with TRUE positions (your real position, the target's real position).
-    function Bedwars.SendHit(item, targetChar, selfPos, targetPos)
+    -- `claim` (optional, High Hitreg): { Self = reported position, Dir = aim direction } replaces the reach spoof below.
+    function Bedwars.SendHit(item, targetChar, selfPos, targetPos, claim)
         if not hitRemote then
             local ok, remote = pcall(function()
                 return Bedwars.Client:Get("SwordHit")
@@ -5067,30 +5177,38 @@ do
             weapon = owned
         end
 
-        local offset = targetPos - selfPos
-        local mag = offset.Magnitude
-        if mag < 0.01 then
-            return false, "target is on top of you"
-        end
-
-        -- Reach spoof (Vape-style): report selfPosition closer along the real path
-        -- so the server sees ≤ ~14.4 studs. Keeps first-person strafing working.
-        local limit = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0)
-            and (Bedwars.ReachLimit - 0.01)
-            or 14.39
-        local dir = offset.Unit
-        local reportedSelf = selfPos
-        if mag > limit then
-            reportedSelf = selfPos + dir * (mag - limit)
-        end
-
-        local cam = Workspace.CurrentCamera
-        local camOrigin = (cam and cam.CFrame.Position) or selfPos
-        local camDir = targetPos - camOrigin
-        if camDir.Magnitude > 0.01 then
-            camDir = camDir.Unit
+        local reportedSelf, camOrigin, camDir
+        if claim then
+            if (targetPos - claim.Self).Magnitude < 0.01 then
+                return false, "target is on top of you"
+            end
+            reportedSelf, camOrigin, camDir = claim.Self, claim.Self, claim.Dir
         else
-            camDir = dir
+            local offset = targetPos - selfPos
+            local mag = offset.Magnitude
+            if mag < 0.01 then
+                return false, "target is on top of you"
+            end
+
+            -- Reach spoof: report selfPosition closer along the real path
+            -- so the server sees <= ~14.4 studs. Keeps first-person strafing working.
+            local limit = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0)
+                and (Bedwars.ReachLimit - 0.01)
+                or 14.39
+            local dir = offset.Unit
+            reportedSelf = selfPos
+            if mag > limit then
+                reportedSelf = selfPos + dir * (mag - limit)
+            end
+
+            local cam = Workspace.CurrentCamera
+            camOrigin = (cam and cam.CFrame.Position) or selfPos
+            camDir = targetPos - camOrigin
+            if camDir.Magnitude > 0.01 then
+                camDir = camDir.Unit
+            else
+                camDir = dir
+            end
         end
 
         local payload = {
@@ -5159,26 +5277,46 @@ local function makeStatusLabel(mod, prefix, yOffset)
         New("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }),
     }))
     local lastAt = 0
+    local nextRetryAt = 0
+    -- Heartbeat callbacks run with a weaker security context than the thread that first built
+    -- this label under the hidden GUI container, so a plain property write from in there can
+    -- get rejected ("lacking capability Plugin") even though the same write works fine from a
+    -- button click. Re-asserting identity 8 right before touching the label (same trick already
+    -- used around the game's own module requires elsewhere in this file) keeps it elevated.
+    -- It's still wrapped in pcall and backed off on failure so a module's own step never aborts
+    -- and the console never gets spammed - it just retries a few times a second instead of
+    -- going silent forever.
     return function(show, text)
-        if not show then
-            if label.Visible then
-                label.Visible = false
-            end
+        if os.clock() < nextRetryAt then
             return
         end
-        label.Visible = true
-        text = tostring(text or "")
-        -- Always allow forced updates (e.g. death / respawn) without the 0.1s throttle blocking them
-        local force = text ~= lastText and (
-            text:find("waiting", 1, true)
-            or text:find("dead", 1, true)
-            or text:find("character", 1, true)
-            or os.clock() - lastAt > 0.08
-        )
-        if force then
-            lastText = text
-            lastAt = os.clock()
-            label.Text = render(text)
+        local ok = pcall(function()
+            if setthreadidentity then
+                pcall(setthreadidentity, 8)
+            end
+            if not show then
+                if label.Visible then
+                    label.Visible = false
+                end
+                return
+            end
+            label.Visible = true
+            text = tostring(text or "")
+            -- Always allow forced updates (e.g. death / respawn) without the 0.1s throttle blocking them
+            local force = text ~= lastText and (
+                text:find("waiting", 1, true)
+                or text:find("dead", 1, true)
+                or text:find("character", 1, true)
+                or os.clock() - lastAt > 0.08
+            )
+            if force then
+                lastText = text
+                lastAt = os.clock()
+                label.Text = render(text)
+            end
+        end)
+        if not ok then
+            nextRetryAt = os.clock() + 0.5
         end
     end
 end
@@ -5260,6 +5398,15 @@ do
         attempt("Store", function()
             return require(walk(LocalPlayer, "PlayerScripts", "TS", "ui", "store")).ClientStore
         end)
+        attempt("BlockBreaker", function()
+            return Bedwars.Knit.Controllers.BlockBreakController.blockBreaker
+        end)
+        attempt("ViewmodelController", function()
+            return Bedwars.Knit.Controllers.ViewmodelController
+        end)
+        attempt("AnimationUtil", function()
+            return require(walk(ReplicatedStorage, "rbxts_include", "node_modules", "@easy-games", "game-core", "out", "shared", "util", "animation-util")).AnimationUtil
+        end)
         attempt("RankMeta", function()
             return require(walk(ReplicatedStorage, "TS", "rank", "rank-meta")).RankMeta
         end)
@@ -5314,6 +5461,63 @@ end
 -- ====================== MODULE: KILL AURA ======================
 do
     local gate = {}
+    local ReplicatedStorage = service("ReplicatedStorage")
+
+    -- High Hitreg timing constants. The server runs combat on a 60 Hz tick, so a hit can only be
+    -- accepted on a tick boundary; the scheduler below lines every send up with that grid.
+    local SERVER_TICK = 1 / 60
+    local SELF_LAG, SELF_LAG_LOW, SELF_LAG_HIGH = 0.09, 0.07, 0.11
+    local TARGET_LAG, CLAIM_LAG, LAG_CAP = 0.12, 0.05, 8
+    -- SERVER_SLACK sets how far past the real ~14.4 stud sword reach the position spoof is
+    -- trusted (effective cap = reach + SERVER_SLACK - RANGE_MARGIN, so 6.0 here lands ~20 studs).
+    -- Pushed up from 3.6 (~17.6 studs) at the user's request for more range; if it starts getting
+    -- flagged or hits stop registering at the far end, drop this back toward 3.6-4.0.
+    local SERVER_SLACK, RANGE_MARGIN, CLAIM_MARGIN = 6.0, 0.4, 1
+
+    -- Potion that speeds up swings (changes the sword's cooldown)
+    local furyState = { tried = false }
+    local function furyMultiplier()
+        if not furyState.tried then
+            furyState.tried = true
+            pcall(function()
+                local ts = ReplicatedStorage.TS
+                furyState.status = require(ts["status-effect"]["status-effect-util"]).StatusEffectUtil
+                furyState.kind = require(ts["status-effect"]["status-effect-type"]).StatusEffectType
+                furyState.mult = require(ts.balance["black-marketeer-balance"]).BlackMarketeerBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER
+            end)
+        end
+        if not furyState.status then
+            return 1
+        end
+        local ok, active = pcall(function()
+            return furyState.status:isActive(LocalPlayer.Character, furyState.kind.FURY_POTION)
+        end)
+        if ok and active and type(furyState.mult) == "number" and furyState.mult > 0 then
+            return furyState.mult > 1 and (1 / furyState.mult) or furyState.mult
+        end
+        return 1
+    end
+
+    -- The game adds a small buffer to the sword cooldown on the client; High Hitreg zeroes it and
+    -- puts the original value back afterwards.
+    local savedSwingBuffer
+    local function setSwingBuffer(on)
+        pcall(function()
+            local consts = require(ReplicatedStorage.TS.combat["combat-constant"]).SwordsConstants
+            if table.isfrozen(consts) and setreadonly then
+                setreadonly(consts, false)
+            end
+            if on then
+                if savedSwingBuffer == nil then
+                    savedSwingBuffer = consts.swordSwingBufferMultiplier
+                end
+                consts.swordSwingBufferMultiplier = 0
+            elseif savedSwingBuffer ~= nil then
+                consts.swordSwingBufferMultiplier = savedSwingBuffer
+                savedSwingBuffer = nil
+            end
+        end)
+    end
     local aura = Tabs.Combat:CreateModule({
         Name = "Kill Aura",
         Description = "Sword aura for Bedwars.",
@@ -5326,10 +5530,248 @@ do
             local lastHitText, lastHitAt = "", 0
             local autoRotateOverridden = nil
             local warnedUnavailable = false
-            -- High Hitreg ghost recovery (CatVape GhostDelay + pending confirm)
-            local ghostDelay, ghostStalls = 0, 0
-            local pendingUnconfirmed = false -- CatVape: unconfirmed send → hold GapFloor next
-            local ghostHoldUntil = 0
+            -- ===== High Hitreg scheduler state =====
+            local strike = {
+                lastSent = 0, nextAt = 0, gridDue = 0, lastSrv = 0, ratio = 0.98,
+                accepted = nil, anchor = nil, pend = nil, shift = 0, lock = 0, prevOk = nil,
+                cdel = nil, cdHigh = nil, up = nil, lastOkT = nil, wasStale = false,
+                baseSpeed = 0.3, fury = 1, frame = 1 / 60, log = {},
+            }
+            local upSamples = {}                                  -- measured upload latency samples
+            local otherHit = setmetatable({}, { __mode = "k" })  -- when someone else last damaged a model
+            local damageHooked = false
+            local swingBufferOn = false
+            local bucket = { tokens = 4, stamp = os.clock() }
+            local trailTimes, trailPos = {}, {}
+
+            local function spendToken()
+                local clock = os.clock()
+                bucket.tokens = math.min(bucket.tokens + (clock - bucket.stamp) * 4.5, 4)
+                bucket.stamp = clock
+                if bucket.tokens < 1 then
+                    return false
+                end
+                bucket.tokens = bucket.tokens - 1
+                return true
+            end
+
+            -- Short history of where you were, so positions can be reported as the server saw them
+            local function trackSelf(pos, clock)
+                local count = #trailTimes
+                if count > 0 and clock - trailTimes[count] > 0.25 then
+                    table.clear(trailTimes)
+                    table.clear(trailPos)
+                end
+                table.insert(trailTimes, clock)
+                table.insert(trailPos, pos)
+                while #trailTimes > 2 and clock - trailTimes[2] >= 0.3 do
+                    table.remove(trailTimes, 1)
+                    table.remove(trailPos, 1)
+                end
+            end
+
+            local function selfAt(moment, fallback)
+                local count = #trailTimes
+                if count == 0 then
+                    return fallback
+                end
+                if moment <= trailTimes[1] then
+                    return trailPos[1]
+                end
+                for i = count, 2, -1 do
+                    if trailTimes[i - 1] <= moment then
+                        local span = trailTimes[i] - trailTimes[i - 1]
+                        local alpha = span > 0 and (moment - trailTimes[i - 1]) / span or 1
+                        return trailPos[i - 1]:Lerp(trailPos[i], math.clamp(alpha, 0, 1))
+                    end
+                end
+                return trailPos[count]
+            end
+
+            local function lagOffset(vel, lag)
+                local offset = vel * lag
+                if offset.Magnitude > LAG_CAP then
+                    return offset.Unit * LAG_CAP
+                end
+                return offset
+            end
+
+            local function serverDistance(seen, vel, clock, fallback)
+                local low = selfAt(clock - SELF_LAG_LOW, fallback)
+                local high = selfAt(clock - SELF_LAG_HIGH, fallback)
+                local ref = seen - lagOffset(vel, TARGET_LAG)
+                return math.max((seen - low).Magnitude, (seen - high).Magnitude, (ref - low).Magnitude, (ref - high).Magnitude)
+            end
+
+            -- A hit of yours was accepted by the server: learn the upload latency and anchor the next send to it
+            local function noteLanded(target)
+                local clock = os.clock()
+                local ping0 = math.clamp(LocalPlayer:GetNetworkPing(), 0.005, 0.5)
+                local maxAge = math.min(math.max((strike.cdel or 0.15) * 2.5, (strike.cdHigh or 0) * 1.3, ping0 * 2 + 0.2), 0.8)
+                local entry
+                local hitAt = target and target:GetAttribute("LastDamageTakenTime")
+                for _, e in ipairs(strike.log) do
+                    if not e.ok and not e.done and e.target == target then
+                        local age = clock - e.t
+                        if age >= 0 and age < maxAge then
+                            if type(hitAt) == "number" and e.srv then
+                                if e.srv <= hitAt + 0.02 and (not entry or e.t > entry.t) then
+                                    entry = e
+                                end
+                            elseif not entry or e.t < entry.t then
+                                entry = e
+                            end
+                        end
+                    end
+                end
+                if not entry then
+                    return
+                end
+                local age = clock - entry.t
+                entry.ok = true
+                strike.cdel = strike.cdel and (strike.cdel * 0.8 + age * 0.2) or age
+                strike.cdHigh = math.max(age, (strike.cdHigh or age) * 0.97)
+                local srvNow = Workspace:GetServerTimeNow()
+                local ping = math.clamp(LocalPlayer:GetNetworkPing(), 0.005, 0.5)
+                local landed = srvNow - ping
+                local attr = target and target:GetAttribute("LastDamageTakenTime")
+                local mixed = (otherHit[target] or 0) > entry.t - 0.05
+                if not mixed and type(attr) == "number" and attr <= srvNow + 0.05 and attr >= srvNow - ping * 2 - 0.1 then
+                    landed = attr
+                    entry.srvGap = strike.accepted and attr - strike.accepted or nil
+                    strike.accepted = math.max(strike.accepted or 0, attr)
+                    if entry.srv and #upSamples >= 5 then
+                        local sorted = table.clone(upSamples)
+                        table.sort(sorted)
+                        local p75 = sorted[math.floor(0.75 * (#sorted - 1)) + 1]
+                        landed = math.min(attr, entry.srv + p75)
+                    end
+                    if entry.srv then
+                        local up = attr - entry.srv
+                        if up > 0 and up < 0.5 then
+                            strike.up = strike.up and (strike.up * 0.8 + up * 0.2) or up
+                            table.insert(upSamples, up)
+                            if #upSamples > 30 then
+                                table.remove(upSamples, 1)
+                            end
+                        end
+                    end
+                end
+                strike.lastOkT = math.max(strike.lastOkT or 0, entry.t)
+                if not strike.anchor or landed > strike.anchor then
+                    strike.anchor = landed
+                end
+            end
+
+            -- Whole server ticks between two hits: lo = the fastest the server accepts, hi = the safe pace
+            local function tickRange()
+                local speed = (strike.baseSpeed or 0.3) * (strike.fury or 1)
+                local hi = math.max(math.ceil(speed / SERVER_TICK - 0.001), 1)
+                local lo = math.min(math.max(math.floor(speed * 0.95 / SERVER_TICK + 0.5), 1), hi)
+                return lo, hi
+            end
+
+            local function gapFloor()
+                local lo = tickRange()
+                return lo * SERVER_TICK
+            end
+
+            -- True when the next hit may go out now. With enough latency samples the send is timed so it
+            -- ARRIVES exactly one floor after the last accepted hit; before that it paces on a fixed grid.
+            local function anchorOpen(openAt)
+                local floor = gapFloor()
+                local srvNow = Workspace:GetServerTimeNow()
+                local due
+                if strike.accepted and srvNow - strike.accepted < 1 and #upSamples >= 5 then
+                    local sorted = table.clone(upSamples)
+                    table.sort(sorted)
+                    local upMid = sorted[math.floor(#sorted / 2) + 1]
+                    local stale = strike.pend ~= nil and not strike.pend.ok
+                    local spread = sorted[math.floor(#sorted * 0.9) + 1] - sorted[math.floor(#sorted * 0.1) + 1]
+                    local base = (strike.lastSent or 0) + (stale and floor + math.clamp(spread, 0, SERVER_TICK) or floor)
+                    due = math.max(base, os.clock() + (strike.accepted + floor - upMid - srvNow + (strike.shift or 0)))
+                    strike.wasStale = stale
+                else
+                    strike.wasStale = false
+                    local _, hi = tickRange()
+                    due = math.max(openAt or 0, strike.gridDue or 0, (strike.lastSent or 0) + hi * SERVER_TICK)
+                end
+                local left = due - os.clock()
+                -- Less than a frame to go: wait it out so the send isn't a whole frame late
+                if left > 0 and left < math.min(strike.frame or SERVER_TICK, SERVER_TICK) then
+                    repeat until os.clock() >= due
+                    left = 0
+                end
+                return left <= 0
+            end
+
+            -- Looks at recent sends and nudges the timing offset: a miss right after a hit means too early,
+            -- a hit that came a whole extra tick later means we can go slightly sooner
+            local function tune()
+                local clock = os.clock()
+                local settle = math.clamp(math.max((strike.cdHigh or 0) * 1.25, LocalPlayer:GetNetworkPing() * 2 + 0.15), 0.25, 0.8)
+                for _, entry in ipairs(strike.log) do
+                    if not entry.done and clock - entry.t > settle then
+                        entry.done = true
+                        local body = entry.target
+                        local hum = body and body.Parent and body:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 and not body:FindFirstChildOfClass("ForceField") then
+                            local lo = tickRange()
+                            strike.lock = math.max((strike.lock or 0) - 1, 0)
+                            if entry.ok then
+                                local gapTicks = entry.srvGap and entry.srvGap / SERVER_TICK
+                                if not entry.stale and gapTicks and gapTicks > lo + 0.5 and gapTicks < lo * 1.5 then
+                                    strike.shift = math.max((strike.shift or 0) - 0.0005, -0.05)
+                                end
+                                strike.prevOk = true
+                            else
+                                if strike.prevOk and strike.lock <= 0 and not entry.stale and not ((otherHit[body] or 0) > entry.t - 0.3) then
+                                    strike.shift = math.min((strike.shift or 0) + 0.0005 * lo, SERVER_TICK)
+                                    strike.lock = 5
+                                end
+                                strike.prevOk = false
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Fallback when the game's damage event can't be hooked: watch the target's own damage timestamp
+            local function pollLanded()
+                if damageHooked then
+                    return
+                end
+                for _, e in ipairs(strike.log) do
+                    if not e.ok and not e.done and e.target and e.target.Parent then
+                        local current = e.target:GetAttribute("LastDamageTakenTime")
+                        if current ~= nil and current ~= e.before then
+                            noteLanded(e.target)
+                        end
+                    end
+                end
+            end
+
+            pcall(function()
+                local network = require(LocalPlayer.PlayerScripts.TS.lib.network)
+                local zap = network and network.EntityDamageEventZap
+                if zap and type(zap.On) == "function" then
+                    local disconnect = zap.On(function(victim, _, damageType, _, from)
+                        if not mod.Enabled or not cfg.HighHitreg then
+                            return
+                        end
+                        local mine = LocalPlayer.Character
+                        if (from == mine or from == LocalPlayer) and victim and victim ~= mine and damageType == 0 then
+                            noteLanded(victim)
+                        elseif victim and from ~= mine and from ~= LocalPlayer then
+                            otherHit[victim] = os.clock()
+                        end
+                    end)
+                    if type(disconnect) == "function" then
+                        mod.Maid:Give(disconnect)
+                    end
+                    damageHooked = true
+                end
+            end)
 
             local setStatus = makeStatusLabel(mod, "Kill Aura", -100)
 
@@ -5457,6 +5899,112 @@ do
                 end)
             end
 
+            -- High Hitreg: one scheduling pass. Sends only when the tick-aligned window is open.
+            local function strikeStep(root, item, meta, reachable, leadText, swung)
+                local weapon = meta.sword
+                local baseSpeed = (type(weapon.attackSpeed) == "number" and weapon.attackSpeed > 0) and weapon.attackSpeed or 0.3
+                local furyNow = furyMultiplier()
+                strike.baseSpeed, strike.fury = baseSpeed, furyNow
+                local cooldown = baseSpeed * furyNow
+                strike.interval = cooldown * strike.ratio
+
+                -- A swing the game made on its own (your own click) also starts the cooldown
+                if not cfg.SwingOnly then
+                    local last = tonumber(Bedwars.SwordController.lastAttack) or 0
+                    if last > strike.lastSrv + 0.005 then
+                        strike.lastSrv = last
+                        local at = os.clock() - math.max(Workspace:GetServerTimeNow() - last, 0)
+                        strike.nextAt = math.max(strike.nextAt, at + strike.interval)
+                    end
+                end
+
+                pollLanded()
+
+                local open = anchorOpen(strike.nextAt)
+                if not open or (os.clock() - strike.lastSent) < cfg.MinInterval or not spendToken() then
+                    if os.clock() - lastHitAt < 0.5 and lastHitText ~= "" then
+                        setStatus(cfg.StatusLine, lastHitText)
+                    else
+                        setStatus(cfg.StatusLine, "target " .. leadText)
+                    end
+                    return
+                end
+
+                -- Report positions the way the server saw them a moment ago, always inside its reach
+                local clockNow = os.clock()
+                local rootNow = root.Position
+                local selfBase = selfAt(clockNow - SELF_LAG, rootNow)
+                local serverReach = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0 and Bedwars.ReachLimit <= 16)
+                    and Bedwars.ReachLimit or 14.4
+                local baseReach = (type(weapon.attackRange) == "number" and weapon.attackRange > 0) and weapon.attackRange or serverReach
+                local rangeLimit = math.min(cfg.Range, baseReach + SERVER_SLACK - RANGE_MARGIN)
+
+                local sent, failure, leadModel = 0, nil, nil
+                local sentAt = os.clock()
+                for index = 1, math.min(cfg.MaxTargets, #reachable) do
+                    local entry = reachable[index].Entry
+                    local targetRoot = entry.Root
+                    local targetSeen = targetRoot.Position
+                    local targetVel = targetRoot.AssemblyLinearVelocity
+                    if serverDistance(targetSeen, targetVel, clockNow, rootNow) > rangeLimit then
+                        failure = "too far for the server"
+                    else
+                        local targetAt = targetSeen - lagOffset(targetVel, CLAIM_LAG)
+                        local claimGap = targetAt - selfBase
+                        local aimDir = claimGap.Magnitude > 0.001 and claimGap.Unit or Vector3.new(0, -1, 0)
+                        local selfReport = targetAt - aimDir * math.min(claimGap.Magnitude, baseReach - CLAIM_MARGIN)
+                        sentAt = os.clock()
+                        local ok, err = Bedwars.SendHit(item, entry.Model, rootNow, targetAt, { Self = selfReport, Dir = aimDir })
+                        if ok then
+                            sent = sent + 1
+                            leadModel = leadModel or entry.Model
+                        else
+                            failure = err
+                        end
+                    end
+                end
+
+                if sent == 0 then
+                    setStatus(cfg.StatusLine, leadText .. " - " .. tostring(failure))
+                    return
+                end
+
+                -- Advance the tick grid by exactly one spacing so a late frame doesn't push every later hit back
+                local spacing = gapFloor()
+                local grid = strike.gridDue or 0
+                strike.gridDue = (grid > 0 and sentAt - grid < spacing) and grid + spacing or sentAt + spacing
+                strike.nextAt = strike.gridDue
+                strike.lastSent = sentAt
+                local record = {
+                    t = sentAt, ok = false, target = leadModel, stale = strike.wasStale,
+                    srv = Workspace:GetServerTimeNow(),
+                    before = leadModel and leadModel:GetAttribute("LastDamageTakenTime"),
+                }
+                table.insert(strike.log, record)
+                strike.pend = record
+                if #strike.log > 40 then
+                    table.remove(strike.log, 1)
+                end
+                tune()
+
+                if not cfg.SwingOnly then
+                    pcall(function()
+                        Bedwars.SwordController.lastAttack = Workspace:GetServerTimeNow()
+                    end)
+                end
+                strike.lastSrv = math.max(Workspace:GetServerTimeNow(), tonumber(Bedwars.SwordController.lastAttack) or 0)
+
+                if cfg.SwingOnly then
+                    usedSwing = swung
+                elseif cfg.SwingAnimation then
+                    playSwing(meta)
+                end
+                flashUntil = sentAt + 0.12
+                lastHitAt = sentAt
+                lastHitText = "hit " .. leadText .. ((sent > 1) and (" +" .. (sent - 1)) or "")
+                setStatus(cfg.StatusLine, lastHitText)
+            end
+
             mod.Maid:Give(RunService.Heartbeat:Connect(function(dt)
                 local char, hum, root = Util.GetCharacter(LocalPlayer)
                 local function idle(text)
@@ -5479,6 +6027,15 @@ do
                 if not char or hum.Health <= 0 then
                     idle("waiting for your character")
                     return
+                end
+
+                if cfg.HighHitreg then
+                    strike.frame = strike.frame * 0.9 + math.clamp(dt, 0.003, 0.05) * 0.1
+                    trackSelf(root.Position, os.clock())
+                end
+                if (cfg.HighHitreg and true or false) ~= swingBufferOn then
+                    swingBufferOn = cfg.HighHitreg and true or false
+                    setSwingBuffer(swingBufferOn)
                 end
 
                 local stunned = char:GetAttribute("StunnedUntilTime")
@@ -5545,81 +6102,15 @@ do
                     releaseRotation(hum)
                 end
 
-                -- Timing: CatVape Calculate + HitFloor/AttackCooldown happy path.
-                -- Consistent 35 was GapFloor (0.2915) from pendingUnconfirmed — that only applies after a real ghost.
-                -- Clean path: AttackCooldown/HitFloor (~0.285) for 35–36. Server gate uses full AttackCooldown.
-                local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.2
-                local interval
-                local attackCooldown = swordFloor
-                local HIT_FLOOR = 0.272
-                local GAP_FLOOR = 0.2815
-                local HIGH_SPACING = 0.2818
-                local SAFE_SPACING = 0.29
-                local ARRIVAL_FLOOR = 0.24
-                local COOLDOWN_CORRECTION = (0.017999999225139618 / 10) + 0.0135
-                local WEAPON_SPACING = {
-                    [0.21] = 0.2, [0.25] = 0.24, [0.35] = 0.33,
-                    [0.4] = 0.335, [0.6] = 0.55,
-                }
                 if cfg.HighHitreg then
-                    local speed = swordFloor > 0 and swordFloor or 0.2
-                    local budget = 0.18
-                    pcall(function()
-                        if Bedwars.Client and type(Bedwars.Client.Get) == "function" then
-                            local remote = Bedwars.Client:Get("SwordHit")
-                            if remote and type(remote.GetRateLimit) == "function" then
-                                local limit = remote:GetRateLimit()
-                                if type(limit) == "number" and limit > 0 then
-                                    budget = 30 / limit
-                                end
-                            end
-                        end
-                    end)
-
-                    local stock = math.abs(speed - 0.3) < 0.000001
-                    local normal = HIGH_SPACING
-                    local spacing = stock and normal or (WEAPON_SPACING[speed] or (speed + 0.03))
-                    spacing = math.max(spacing, budget)
-                    local scale = spacing / (stock and normal or SAFE_SPACING)
-                    local cooldown = math.max(speed - COOLDOWN_CORRECTION, 0)
-                    attackCooldown = cooldown
-
-                    local gDelay = tonumber(ghostDelay) or 0
-                    local ping = 0
-                    pcall(function()
-                        ping = LocalPlayer:GetNetworkPing() or 0
-                    end)
-                    local margin = 0
-                    if ping >= 0.12 then
-                        margin = math.min((ping - 0.1) * 0.06, 0.006)
-                    end
-
-                    -- CatVape frame credit target: HitDelay - min(ft, HitDelay - HitFloor) ≈ HitFloor
-                    local hitDelay = math.max(budget, spacing + gDelay + margin)
-                    local frameTime = 1 / 60
-                    local credit = 0
-                    if stock and now >= ghostHoldUntil then
-                        credit = math.min(frameTime, math.max(hitDelay - HIT_FLOOR * scale, 0))
-                    end
-                    local credited = hitDelay - credit -- ~0.285 when clean
-
-                    if stock then
-                        -- Happy path: min of credited spacing and HitFloor, never under ArrivalFloor
-                        -- Pure AttackCooldown (~0.2848) is the CatVape server-side floor.
-                        interval = math.max(cfg.MinInterval, budget, ARRIVAL_FLOOR, math.min(credited, HIT_FLOOR) + gDelay + margin)
-                        interval = math.max(interval, cooldown)
-                    else
-                        interval = math.max(cfg.MinInterval, budget, hitDelay, cooldown)
-                    end
-
-                    -- ONLY after a confirmed ghost (GhostHold) — not while merely waiting on confirm
-                    if now < ghostHoldUntil then
-                        interval = math.max(interval, GAP_FLOOR + gDelay)
-                    end
-                else
-                    interval = math.max(cfg.MinInterval, swordFloor)
-                    attackCooldown = swordFloor
+                    strikeStep(root, item, meta, reachable, leadText, swung)
+                    return
                 end
+
+                -- Standard timing: the sword's own attack speed is the interval
+                local swordFloor = (type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0.2
+                local interval = math.max(cfg.MinInterval, swordFloor)
+                local attackCooldown = swordFloor
                 if nextInterval == 0 then
                     nextInterval = interval
                 end
@@ -5627,11 +6118,10 @@ do
                 local lastGameSwing = tonumber(Bedwars.SwordController.lastAttack) or 0
                 local gameCooldown = math.max((lastGameSwing + attackCooldown) - serverNow, 0)
                 local tooSoon = (now - lastSend) < nextInterval
-                -- CatVape waits full GameCooldown; tiny epsilon avoids float jitter only
                 if gameCooldown > 0.00025 then
                     tooSoon = true
                 end
-                if not cfg.HighHitreg and not cfg.SwingOnly then
+                if not cfg.SwingOnly then
                     if serverNow - lastGameSwing < nextInterval * 0.9 then
                         tooSoon = true
                     end
@@ -5659,55 +6149,8 @@ do
                 if sent > 0 then
                     lastSend = now
                     flashUntil = now + 0.12
-                    ghostStalls = 0
-                    -- CatVape: never swing *faster* than the calculated spacing when High Hitreg is on
-                    if cfg.HighHitreg then
-                        nextInterval = interval * (cfg.RandomizeInterval and (1.0 + math.random() * 0.04) or 1)
-                    else
-                        nextInterval = interval * (cfg.RandomizeInterval and (0.95 + math.random() * 0.2) or 1)
-                    end
-                    -- CatVape GhostPending: only slow down after a *confirmed* miss (GhostHold).
-                    -- Do NOT hold GapFloor while waiting on confirm — that locked rate at 35.
-                    if cfg.HighHitreg then
-                        local confirmTarget = reachable[1] and reachable[1].Entry
-                        local model = confirmTarget and confirmTarget.Model
-                        local before = model and model:GetAttribute("LastDamageTakenTime")
-                        local ping = 0
-                        pcall(function() ping = LocalPlayer:GetNetworkPing() or 0 end)
-                        local timeout = math.max(0.22, ping * 2 + 0.12)
-                        task.delay(timeout, function()
-                            if not mod.Enabled or not cfg.HighHitreg then
-                                return
-                            end
-                            if not model or not model.Parent then
-                                return
-                            end
-                            local after = model:GetAttribute("LastDamageTakenTime")
-                            -- No attribute system → don't treat as ghost
-                            if before == nil and after == nil then
-                                if ghostDelay > 0 and os.clock() > ghostHoldUntil then
-                                    ghostDelay = math.max(ghostDelay - 0.001, 0)
-                                end
-                                return
-                            end
-                            local landed = after ~= nil and after ~= before
-                            if landed then
-                                if ghostDelay > 0 and os.clock() > ghostHoldUntil then
-                                    ghostDelay = math.max(ghostDelay - 0.001, 0)
-                                end
-                            else
-                                -- Real ghost: micro pad + 2s hold at GapFloor
-                                ghostDelay = math.min((ghostDelay or 0) + 0.001, (10 / 34) - 0.2925)
-                                ghostHoldUntil = os.clock() + 2
-                                ghostStalls = (ghostStalls or 0) + 1
-                            end
-                        end)
-                    else
-                        if ghostDelay > 0 then
-                            ghostDelay = math.max(ghostDelay - 0.001, 0)
-                        end
-                    end
-                    -- CatVape always stamps lastAttack on a successful send (needed for GameCooldown gate)
+                    nextInterval = interval * (cfg.RandomizeInterval and (0.95 + math.random() * 0.2) or 1)
+                    -- Stamp lastAttack on every successful send (the game's own cooldown gate reads it)
                     pcall(function()
                         Bedwars.SwordController.lastAttack = Workspace:GetServerTimeNow()
                     end)
@@ -5722,30 +6165,22 @@ do
                     lastHitText = "hit " .. leadText .. ((sent > 1) and (" +" .. (sent - 1)) or "")
                     setStatus(cfg.StatusLine, lastHitText)
                 else
-                    -- Send rejected: brief pad so the next swings register (High Hitreg only)
-                    if cfg.HighHitreg then
-                        ghostDelay = math.min((ghostDelay or 0) + 0.003, 0.018)
-                        nextInterval = math.max(nextInterval, interval + ghostDelay)
-                    end
                     setStatus(cfg.StatusLine, leadText .. " - " .. tostring(failure))
-                end
-                -- Too many blocked frames in a row → same micro backoff
-                if cfg.HighHitreg and (ghostStalls or 0) >= 4 then
-                    ghostDelay = math.min((ghostDelay or 0) + 0.004, 0.018)
-                    ghostStalls = 0
                 end
             end))
 
             mod.Maid:Give(function()
                 local _, hum = Util.GetCharacter(LocalPlayer)
                 releaseRotation(hum)
+                swingBufferOn = false
+                setSwingBuffer(false)
             end)
         end,
     })
 
     aura:AddSection("Targeting")
     aura:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players" })
-    aura:AddSlider({ Label = "Range", Key = "Range", Min = 3, Max = 22, Default = 12, Step = 0.1, Suffix = " studs", Tip = "Hits only register up to the server's reach (about 14.4 studs)." })
+    aura:AddSlider({ Label = "Range", Key = "Range", Min = 3, Max = 22, Default = 12, Step = 0.1, Suffix = " studs", Tip = "Hits only register up to the server's reach (currently spoofed out to about 18 studs)." })
     aura:AddSlider({ Label = "Max Angle", Key = "Angle", Min = 30, Max = 360, Default = 180, Step = 5, Suffix = "°", Tip = "Field of view in front of you. 360 hits all around." })
     aura:AddSlider({ Label = "Max Targets", Key = "MaxTargets", Min = 1, Max = 5, Default = 1, Step = 1 })
     aura:AddOption({ Label = "Sort", Key = "Sort", Options = { "Distance", "Health", "Angle" }, Default = "Distance" })
@@ -5757,9 +6192,9 @@ do
         Label = "High Hitreg",
         Key = "HighHitreg",
         Default = false,
-        Tip = "CatVape HitFloor pace when clean (~35–36 / 10s). GapFloor only after a ghost.",
+        Tip = "Times every hit to land on the server's tick right after your last accepted hit. 36 hits / 10s with a stock sword.",
     })
-    aura:AddLabel("Ports CatVape Calculate + GameCooldown gate. Stock swords ~35–36 / 10s.", {
+    aura:AddLabel("Hits are lined up with the server's 60 Hz tick and timed from your measured latency. Randomize Interval is ignored while this is on.", {
         ShowIf = function(c) return c.HighHitreg end,
     })
     aura:AddToggle({ Label = "Randomize Interval", Key = "RandomizeInterval", Default = false, Tip = "Varies the delay between hits slightly." })
@@ -5777,30 +6212,88 @@ do
 end
 
 -- ====================== MODULE: BEDWARS PROJECTILE AIM ======================
+-- Redirects the arrow / fireball / pearl you release so it lands on the target. It hooks the game's
+-- own launch calculation (your camera never moves), keeps the game's draw timing, and solves a
+-- real ballistic intercept against where the target will be when the shot arrives.
 do
-    local DEFAULT_GRAVITY = 196.2
     local CollectionService = service("CollectionService")
-    local StatsService = service("Stats")
     local JUMP_SPEED = 42.6          -- upward speed of a Bedwars jump
     local FLOATY_MARKER = "rbxassetid://8200754399"
-    local BODY_PARTS = { "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "Torso" }
+    local MAX_LEAD_SPEED = 60        -- a target never leads faster than this horizontally
 
-    local function parseList(text)
-        local set = {}
-        for word in tostring(text or ""):gmatch("[^,]+") do
+    local function wordSet(text)
+        local list = {}
+        for word in tostring(text or ""):gmatch("[^,;]+") do
             word = word:lower():match("^%s*(.-)%s*$")
             if word ~= "" then
-                set[word] = true
+                list[#list + 1] = word
             end
         end
-        return set
+        return list
     end
 
-    -- Finds the lowest flight time t at which a projectile launched at `speed` can meet
-    -- the target. targetAt(t) gives the predicted target position after t seconds.
-    -- CatVape-style: fine scan + binary search + Newton polish.
-    -- Returns velocity, time or nil.
-    local function solveLaunch(from, speed, gravity, targetAt, maxTime)
+    -- Map-only raycasts (arrows fly through players, so only level geometry blocks a shot)
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Include
+    local rayMap
+    local function refreshRayParams()
+        local map = Workspace:FindFirstChild("Map")
+        if map ~= rayMap or not map or not map.Parent then
+            rayMap = map
+            if map and map.Parent then
+                rayParams.FilterType = Enum.RaycastFilterType.Include
+                rayParams.FilterDescendantsInstances = { map }
+            else
+                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                rayParams.FilterDescendantsInstances = { LocalPlayer.Character, Workspace.CurrentCamera }
+            end
+        end
+        return rayMap ~= nil
+    end
+
+    local splashParams = RaycastParams.new()
+    splashParams.FilterType = Enum.RaycastFilterType.Include
+    -- Fireballs splash: aim at the ground under a grounded target instead of at their body
+    local function splashAimPoint(root, hip)
+        local map = Workspace:FindFirstChild("Map")
+        if not map or not root then
+            return nil
+        end
+        if math.abs(root.AssemblyLinearVelocity.Y) > 2 then
+            return nil
+        end
+        splashParams.FilterDescendantsInstances = { map }
+        local hit = Workspace:Raycast(root.Position, Vector3.new(0, -((hip or 2) + root.Size.Y / 2 + 0.6), 0), splashParams)
+        if hit then
+            return Vector3.new(root.Position.X, hit.Position.Y + 0.5, root.Position.Z)
+        end
+        return nil
+    end
+
+    -- Effective gravity for a target hanging from balloons
+    local function balloonGravity(balloons, char)
+        local lift = balloons >= 4 and 1.2 or balloons >= 3 and 1.1 or balloons >= 2 and 0.975 or 0.85
+        local root = char and char.PrimaryPart
+        local vy = root and root.AssemblyLinearVelocity.Y or 0
+        return Workspace.Gravity * (1 - lift) + 0.1731 * vy * math.abs(vy)
+    end
+
+    -- Height of the floor under the target, expressed at the height of the aim point
+    local function floorLevel(root, hip, aimY)
+        if not refreshRayParams() then
+            return nil
+        end
+        local hit = Workspace:Raycast(root.Position, Vector3.new(0, -300, 0), rayParams)
+        if not hit then
+            return nil
+        end
+        return hit.Position.Y + (hip or 2) + root.Size.Y / 2 + (aimY - root.Position.Y)
+    end
+
+    -- Lowest flight time at which a projectile launched at `speed` can meet the target.
+    -- pathAt(t) = predicted target position after t seconds. Fine scan, then bisect, then Newton.
+    -- Returns velocity (unit * speed), flightTime  or nil.
+    local function solveLaunch(from, speed, gravity, pathAt, maxTime)
         if speed < 1 or maxTime < 0.05 then
             return nil
         end
@@ -5808,8 +6301,7 @@ do
             if t < 1e-4 then
                 t = 1e-4
             end
-            local point = targetAt(t)
-            return (point - from + Vector3.new(0, 0.5 * gravity * t * t, 0)) / t
+            return (pathAt(t) - from + Vector3.new(0, 0.5 * gravity * t * t, 0)) / t
         end
         local function excess(t)
             return need(t).Magnitude - speed
@@ -5863,113 +6355,21 @@ do
         return velocity.Unit * speed, bestT
     end
 
-    -- Samples the arc and checks nothing solid is in the way (characters are ignored)
+    -- Samples the arc and checks nothing solid is in the way
     local function arcIsClear(from, velocity, gravity, flightTime)
-        RayFilter.Refresh()
-        local samples = 14
+        if not refreshRayParams() then
+            return true
+        end
         local previous = from
-        for i = 1, samples do
-            local t = flightTime * (i / samples) * 0.97
+        for i = 1, 14 do
+            local t = flightTime * (i / 14) * 0.97
             local point = from + velocity * t - Vector3.new(0, 0.5 * gravity * t * t, 0)
-            local hit = Workspace:Raycast(previous, point - previous, RayFilter.Params)
-            if hit then
+            if Workspace:Raycast(previous, point - previous, rayParams) then
                 return false
             end
             previous = point
         end
         return true
-    end
-
-    -- Half the round trip to the server (seconds): what the target has already done by the time a
-    -- shot lands, on top of the flight time.
-    local function pingLead()
-        local ok, ping = pcall(function()
-            return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()
-        end)
-        if ok and type(ping) == "number" then
-            return math.clamp(ping / 1000 * 0.5, 0, 0.15)
-        end
-        return 0
-    end
-
-    -- Target movement history. The replicated velocity can read zero for players that move by
-    -- teleporting their position (speed hacks), so movement is also measured from position samples.
-    local History = setmetatable({}, { __mode = "k" })
-    local HISTORY_SPAN = 0.55
-
-    -- The actual upward speed a target left the ground with, caught the instant they jump, so
-    -- air prediction uses what really happened instead of always assuming a fixed jump speed
-    -- (movement-affecting mods, bounce pads, etc. all jump at different speeds than the default).
-    local JumpVelocity = setmetatable({}, { __mode = "k" })
-    local WasGrounded = setmetatable({}, { __mode = "k" })
-    local JUMP_OBSERVATION_TTL = 1.5
-
-    local function watchForJump(entry, now)
-        local root, hum = entry.Root, entry.Humanoid
-        if not root or not root.Parent or not hum then
-            return
-        end
-        local grounded = hum.FloorMaterial ~= Enum.Material.Air
-        local was = WasGrounded[entry.Model]
-        if was == nil then
-            was = grounded
-        end
-        if was and not grounded then
-            local okState, state = pcall(hum.GetState, hum)
-            if okState and state == Enum.HumanoidStateType.Jumping then
-                local vy = root.AssemblyLinearVelocity.Y
-                if vy > 1 then
-                    JumpVelocity[entry.Model] = { vy = vy, at = now }
-                end
-            end
-        end
-        WasGrounded[entry.Model] = grounded
-    end
-
-    local function sample(entry, now)
-        local root = entry.Root
-        if not root or not root.Parent then
-            return
-        end
-        local list = History[entry.Model]
-        if not list then
-            list = {}
-            History[entry.Model] = list
-        end
-        local last = list[#list]
-        if last and now - last.t < 0.02 then
-            return
-        end
-        list[#list + 1] = { t = now, p = root.Position }
-        while #list > 2 and now - list[1].t > HISTORY_SPAN do
-            table.remove(list, 1)
-        end
-    end
-
-    local function measuredVelocity(entry, now)
-        local list = History[entry.Model]
-        if not list or #list < 2 then
-            return nil
-        end
-        local newest = list[#list]
-        local oldest
-        for _, point in ipairs(list) do
-            if newest.t - point.t >= 0.08 then
-                oldest = point
-            end
-        end
-        if not oldest then
-            return nil
-        end
-        local dt = newest.t - oldest.t
-        if dt <= 0 or now - newest.t > 0.25 then
-            return nil
-        end
-        local velocity = (newest.p - oldest.p) / dt
-        if velocity.Magnitude > 130 then
-            return nil -- a teleport, not movement
-        end
-        return velocity
     end
 
     -- Where "the crosshair" is: screen centre in first person / locked mouse, otherwise the cursor
@@ -5990,9 +6390,9 @@ do
             local installed = false
             local lastTryAt = 0
             local lastTarget, lastTargetAt = nil, 0
-            -- Everything that used to be a user-facing toggle here is now just locked to its most
-            -- accurate setting - one less thing to configure, nothing to get wrong.
-            local blacklist = { telepearl = true }
+            local lockedRandomPart = nil
+            local cursorHidden = false
+            local history = setmetatable({}, { __mode = "k" }) -- [root] = { {t, p}, ... }
 
             local setStatus = makeStatusLabel(mod, "Projectile Aimbot", -130)
 
@@ -6018,30 +6418,9 @@ do
                 circle.Visible = false
             end
 
-            -- Headshot-style weapons (e.g. Headhunter) should aim the head, not the torso
-            local function headhunterWeapon(projmeta, tool)
-                local text = string.lower(tostring(tool and tool.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
-                return string.find(text, "headhunter", 1, true) ~= nil
-            end
-
-            local function aimPartFor(entry, projmeta, tool)
-                if headhunterWeapon(projmeta, tool) then
-                    local head = entry.Model:FindFirstChild("Head")
-                    if head and head:IsA("BasePart") then
-                        return head
-                    end
-                end
-                return entry.Root
-            end
-
-            -- Best target near the crosshair; returns entry, aimPart
-
-            -- ===== CatVape-style velocity sample + SolveTrajectory =====
-            local history = setmetatable({}, { __mode = "k" }) -- [root] = { {t,p}, ... }
-            local JUMP_SPEED = 42.6
-
+            -- Short position history; only used when the replicated velocity reads zero for a target
+            -- that is clearly moving (players that move by teleporting their position)
             local function sampleRoot(root)
-                if not root then return end
                 local now = os.clock()
                 local list = history[root]
                 if not list then
@@ -6061,178 +6440,170 @@ do
                 end
                 local a, b = list[1], list[#list]
                 local dt = b.t - a.t
-                if dt < 0.02 then
+                if dt < 0.05 then
                     return nil
                 end
                 return (b.p - a.p) / dt
             end
 
-            -- CatVape-style ballistic solve: light lead, gravity compensate, no over-prediction
-            -- Returns aimPoint, impact, travelTime, launchVel
-            local function SolveTrajectory(origin, speed, gravity, targetPos, targetVel, playerGravity, hipHeight, jumpVel, _params, airborne, rootPos, _root)
-                if typeof(origin) ~= "Vector3" or typeof(targetPos) ~= "Vector3" then
-                    return nil
-                end
-                speed = tonumber(speed) or 0
-                gravity = tonumber(gravity) or 196.2
-                playerGravity = tonumber(playerGravity) or Workspace.Gravity
-                targetVel = typeof(targetVel) == "Vector3" and targetVel or Vector3.zero
-                if speed < 1 then
-                    return nil
-                end
-
-                if type(airborne) ~= "boolean" then
-                    airborne = math.abs(targetVel.Y) > 0.5
-                end
-                -- Grounded: ignore vertical velocity (stops "sky lead")
-                local tv = airborne and targetVel or Vector3.new(targetVel.X, 0, targetVel.Z)
-                if jumpVel and jumpVel > 0 and not airborne then
-                    tv = Vector3.new(tv.X, jumpVel, tv.Z)
-                    airborne = true
-                end
-
-                local aimPos = targetPos
-                if rootPos and (targetPos - rootPos).Magnitude < 0.2 then
-                    aimPos = targetPos + Vector3.new(0, 0.35, 0) -- small CatVape-like AimLift
-                end
-                local floorY = aimPos.Y - (tonumber(hipHeight) or 2.5)
-
-                -- Iterate predicted intercept (subtle — 4 passes, clamp lead)
-                local impact = aimPos
-                local t = math.clamp((aimPos - origin).Magnitude / speed, 0.05, 3.5)
-                for _ = 1, 5 do
-                    local pred = aimPos + tv * t
-                    if airborne and playerGravity > 0 then
-                        pred = Vector3.new(pred.X, pred.Y - 0.5 * playerGravity * t * t, pred.Z)
-                        if pred.Y < floorY then
-                            pred = Vector3.new(pred.X, floorY, pred.Z)
-                        end
-                    end
-                    -- Cap horizontal lead so we don't aim miles ahead of fast targets
-                    local lead = pred - aimPos
-                    local leadH = Vector3.new(lead.X, 0, lead.Z)
-                    if leadH.Magnitude > 28 then
-                        leadH = leadH.Unit * 28
-                        pred = Vector3.new(aimPos.X + leadH.X, pred.Y, aimPos.Z + leadH.Z)
-                    end
-                    impact = pred
-                    local to = impact - origin
-                    local dist = to.Magnitude
-                    -- time accounting for arc length approx
-                    t = math.clamp(dist / speed, 0.05, 3.5)
-                end
-
-                local to = impact - origin
-                if to.Magnitude < 0.05 then
-                    return nil
-                end
-                -- Aim higher to counter projectile gravity (CatVape: built into SolveTrajectory)
-                local drop = 0.5 * gravity * t * t
-                local adjusted = to + Vector3.new(0, drop, 0)
-                if adjusted.Magnitude < 0.05 then
-                    return nil
-                end
-                local launchVel = adjusted.Unit * speed
-                local aimPoint = origin + launchVel
-                return aimPoint, impact, t, launchVel
+            local function heldName()
+                local char = LocalPlayer.Character
+                local hand = char and char:FindFirstChild("HandInvItem")
+                local item = hand and hand.Value
+                return item and item.Name or nil
             end
 
-            local function pickTarget(origin, cam, projmeta, tool)
-                local mouse = UserInputService:GetMouseLocation()
-                local best, bestPart, bestScore = nil, nil, math.huge
-                local fov = tonumber(cfg.FOV) or 1000
-                local maxDist = tonumber(cfg.Range) or 1000
-                local partMode = cfg.Part or "Dynamic"
+            local function shouldWork()
+                local mode = cfg.WorkMode or "Both"
+                local first = Util.IsFirstPerson()
+                if mode == "First Person" then
+                    return first
+                elseif mode == "Third Person" then
+                    return not first
+                end
+                return true
+            end
+
+            local function isBlacklisted(projectileName)
+                if not cfg.OtherProjectiles then
+                    local turret = projectileName:find("turret", 1, true) ~= nil or projectileName:find("vulcan", 1, true) ~= nil
+                    return not projectileName:find("arrow", 1, true) and not turret and not projectileName:find("owl", 1, true)
+                end
+                for _, word in ipairs(wordSet(cfg.Blacklist)) do
+                    if projectileName:find(word, 1, true) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function pickRandomPart(char)
+                local roll = math.random(1, 100)
+                local headChance = tonumber(cfg.HeadChance) or 50
+                local torsoChance = tonumber(cfg.TorsoChance) or 50
+                if roll <= headChance then
+                    return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+                elseif roll <= headChance + torsoChance then
+                    return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+                end
+                return char:FindFirstChild("HumanoidRootPart")
+            end
+
+            local CLOSEST_PARTS = {
+                "HumanoidRootPart", "Head", "LeftHand", "RightHand", "LeftLowerArm", "RightLowerArm",
+                "LeftUpperArm", "RightUpperArm", "LeftFoot", "RightFoot", "LeftLowerLeg", "RightLowerLeg",
+                "LeftUpperLeg", "RightUpperLeg", "LowerTorso", "UpperTorso",
+            }
+            local function closestPart(char, cam)
+                local point = aimReference(cam)
+                local ray = cam:ViewportPointToRay(point.X, point.Y, 0)
+                local bestAngle, bestPart = math.huge, nil
+                for _, name in ipairs(CLOSEST_PARTS) do
+                    local part = char:FindFirstChild(name)
+                    if part then
+                        local toPart = part.Position - ray.Origin
+                        if toPart.Magnitude > 0.01 then
+                            local angle = math.acos(math.clamp(ray.Direction:Dot(toPart.Unit), -1, 1))
+                            if angle < bestAngle then
+                                bestAngle, bestPart = angle, part
+                            end
+                        end
+                    end
+                end
+                return bestPart or char:FindFirstChild("HumanoidRootPart")
+            end
+
+            local function choosePart(entry, projmeta, tool, cam)
+                local mode = cfg.Part or "Dynamic"
+                local char = entry.Model
+                local head = char:FindFirstChild("Head")
+                if mode == "Head" then
+                    return head or entry.Root
+                elseif mode == "Closest" then
+                    return closestPart(char, cam) or entry.Root
+                elseif mode == "Randomize" then
+                    if lockedRandomPart and lockedRandomPart.Parent ~= char then
+                        lockedRandomPart = nil
+                    end
+                    if not lockedRandomPart or not lockedRandomPart.Parent then
+                        lockedRandomPart = pickRandomPart(char)
+                    end
+                    return lockedRandomPart or entry.Root
+                elseif mode == "Dynamic" then
+                    local text = string.lower(tostring(tool and tool.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
+                    if text:find("headhunter", 1, true) and head then
+                        return head
+                    end
+                end
+                return entry.Root
+            end
+
+            -- Best target near the crosshair / by distance / by health
+            local function pickTarget(origin, cam)
+                local best, bestScore = nil, math.huge
+                local reference = aimReference(cam)
+                local fov = tonumber(cfg.FOV) or 300
+                local range = tonumber(cfg.Range) or 100
+                local sortMode = cfg.Sort or "Cursor"
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets or "Players + NPCs")) do
-                    if entry.Root and entry.Humanoid and entry.Humanoid.Health > 0 then
-                        if not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player)) then
-                            sampleRoot(entry.Root)
-                            local dist = (entry.Root.Position - origin).Magnitude
-                            if dist <= maxDist then
-                                local part = entry.Root
-                                local useHead = false
-                                if partMode == "Head" then
-                                    useHead = true
-                                elseif partMode == "Dynamic" then
-                                    local text = string.lower(tostring(tool and tool.Name or "") .. " " .. tostring(projmeta and projmeta.projectile or ""))
-                                    useHead = text:find("headhunter", 1, true) ~= nil or text:find("tactical", 1, true) ~= nil
+                    local root, hum = entry.Root, entry.Humanoid
+                    if root and root.Parent and hum and hum.Health > 0
+                        and not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player)) then
+                        local dist = (root.Position - origin).Magnitude
+                        if dist <= range then
+                            local sp, onScreen = cam:WorldToViewportPoint(root.Position)
+                            local pixels = (Vector2.new(sp.X, sp.Y) - reference).Magnitude
+                            if onScreen and sp.Z > 0 and pixels <= fov then
+                                local score = pixels
+                                if sortMode == "Distance" then
+                                    score = dist
+                                elseif sortMode == "Health" or sortMode == "Damage" then
+                                    score = hum.Health
                                 end
-                                if useHead then
-                                    local head = entry.Model:FindFirstChild("Head")
-                                    if head and head:IsA("BasePart") then
-                                        part = head
-                                    end
-                                end
-                                local sp, onScreen = cam:WorldToViewportPoint(part.Position)
-                                local score
-                                if cfg.Sort == "Damage" and entry.Humanoid then
-                                    score = entry.Humanoid.Health
-                                else
-                                    local center = cam.ViewportSize / 2
-                                    local screen = Vector2.new(sp.X, sp.Y)
-                                    score = (screen - center).Magnitude
-                                    if not onScreen or sp.Z < 0 then
-                                        score = score + 5000
-                                    end
-                                end
-                                if score <= fov and score < bestScore then
-                                    if not cfg.WallCheck or Util.HasLineOfSight(origin, part.Position) then
-                                        best, bestPart, bestScore = entry, part, score
-                                    end
+                                if score < bestScore and (not cfg.WallCheck or Util.HasLineOfSight(origin, root.Position)) then
+                                    best, bestScore = entry, score
                                 end
                             end
                         end
                     end
                 end
-                return best, bestPart
+                return best
             end
 
-            -- CatVape GetLaunchValues → rewrite native launch table
-            local function aimShot(native, projmeta, worldmeta, tool)
+            -- Rewrites the game's launch table so the projectile heads for the predicted intercept
+            local function aimShot(native, selfController, projmeta, worldmeta, tool, shootpos)
+                if not shouldWork() then
+                    return nil
+                end
                 local cam = Workspace.CurrentCamera
-                if not cam or typeof(native.initialVelocity) ~= "Vector3" or typeof(native.positionFrom) ~= "Vector3" then
+                local _, _, myRoot = Util.GetCharacter(LocalPlayer)
+                if not cam or not myRoot then
                     return nil
                 end
+                local originPos = (typeof(shootpos) == "Vector3" and shootpos) or myRoot.Position
+
+                local entry = pickTarget(originPos, cam)
+                if not entry then
+                    lockedRandomPart = nil
+                    return nil
+                end
+                local root, hum = entry.Root, entry.Humanoid
+                sampleRoot(root)
+
                 local projectileName = tostring(projmeta and projmeta.projectile or ""):lower()
-                if blacklist[projectileName] then
+                if isBlacklisted(projectileName) then
                     return nil
                 end
-                -- Exclude list: only skips matching PROJECTILE IDS (e.g. fireball, telepearl).
-                -- Never matches tool names ("bow", "wood") — that used to disable every shot.
-                -- Match is exact (squashed) or exclude-word is a clear id fragment of the projectile.
-                if cfg.ExcludeItems and cfg.ExcludeItems:match("%S") then
-                    local function squash(s)
-                        return tostring(s or ""):lower():gsub("[^%a%d]", "")
-                    end
-                    local proj = squash(projectileName)
-                    if proj ~= "" then
-                        for raw in cfg.ExcludeItems:gmatch("[^,;]+") do
-                            local word = squash(raw:match("^%s*(.-)%s*$") or "")
-                            if #word >= 3 then
-                                local hit = false
-                                if proj == word then
-                                    hit = true
-                                elseif #word >= 4 and #proj >= 4 then
-                                    -- fragment match only when the word is a real chunk of the id
-                                    -- (fireball → fireball / splashfireball), not a tiny accidental substring
-                                    local at = proj:find(word, 1, true)
-                                    if at and (#word >= math.min(6, #proj) or #word / #proj >= 0.5) then
-                                        hit = true
-                                    end
-                                end
-                                if hit then
-                                    return nil
-                                end
-                            end
-                        end
-                    end
+
+                local part = choosePart(entry, projmeta, tool, cam)
+                if not part then
+                    return nil
+                end
+                if (part.Position - originPos).Magnitude > (tonumber(cfg.Range) or 100) then
+                    return nil
                 end
 
-                local from = native.positionFrom
-                local speed = native.initialVelocity.Magnitude
-                if speed < 1 then return nil end
-
-                -- Meta (CatVape: ProjectileMeta + multipliers)
+                -- Projectile data
                 local meta, overrides = {}, {}
                 pcall(function()
                     if projmeta and type(projmeta.getProjectileMeta) == "function" then
@@ -6245,92 +6616,147 @@ do
                 if type(meta) ~= "table" then meta = {} end
                 if type(overrides) ~= "table" then overrides = {} end
 
-                local gravityMult = tonumber(projmeta and projmeta.gravityMultiplier) or 1
-                local velMult = tonumber(projmeta and projmeta.velocityMultiplier) or 1
-                local gravity = tonumber(native.gravitationalAcceleration)
-                    or ((tonumber(meta.gravitationalAcceleration) or 196.2) * gravityMult)
-                local metaSpeed = tonumber(meta.launchVelocity)
-                if metaSpeed and metaSpeed > 10 then
-                    speed = metaSpeed * math.max(velMult, 0.25)
-                else
-                    speed = speed * math.max(velMult, 0.25)
+                local predictionLifetime = tonumber(overrides.predictionLifetimeOverride) or tonumber(meta.predictionLifetimeSec)
+                local normalLifetime = tonumber(overrides.lifetimeOverride) or tonumber(meta.lifetimeSec) or 3
+                local lifetime = worldmeta and (predictionLifetime or normalLifetime) or normalLifetime
+                local gravityMultiplier = tonumber(projmeta and projmeta.gravityMultiplier) or 1
+                local gravity = (tonumber(meta.gravitationalAcceleration) or 196.2) * gravityMultiplier
+                if type(native.gravitationalAcceleration) == "number" then
+                    gravity = native.gravitationalAcceleration
                 end
 
-                local lifetime = tonumber(overrides.lifetimeOverride) or tonumber(meta.lifetimeSec) or 3
-                if worldmeta then
-                    lifetime = tonumber(overrides.predictionLifetimeOverride) or tonumber(meta.predictionLifetimeSec) or lifetime
-                end
-                lifetime = math.min(lifetime, 4)
+                local toolMeta = tool and Bedwars.ItemMeta[tool.Name]
+                local sourceMeta = toolMeta and toolMeta.projectileSource
+                local maxDraw = tonumber(sourceMeta and sourceMeta.maxStrengthChargeSec)
+                    or tonumber(sourceMeta and sourceMeta.maxDrawDurationSeconds)
+                    or (projectileName:find("arrow", 1, true) and 0.65 or 0.8)
+                local minScalar = tonumber(sourceMeta and sourceMeta.minStrengthScalar) or 1
+                local baseSpeed = tonumber(overrides.launchVelocityOverride) or tonumber(meta.launchVelocity) or 100
 
-                local entry, part = pickTarget(from, cam, projmeta, tool)
-                if not entry then return nil end
-
-                local root, hum = entry.Root, entry.Humanoid
-                sampleRoot(root)
-
-                -- Velocity: blend ALV + measured (CatVape uses ALV; measured fills replication holes)
-                local velocity = part.AssemblyLinearVelocity
-                if projectileName == "telepearl" then
-                    velocity = Vector3.zero
+                -- Shot strength: AutoCharge fires at the chosen draw, otherwise the game's own draw is kept
+                local speed, drawDuration
+                if cfg.AutoCharge then
+                    local pct = math.clamp((tonumber(cfg.ChargePercent) or 100) / 100, 0, 1)
+                    speed = baseSpeed * (minScalar + (1 - minScalar) * pct)
+                    drawDuration = maxDraw * pct
                 else
-                    local measured = measuredVelocity(root)
-                    if measured then
-                        -- Light blend only when ALV is clearly lagging (CatVape relies on ALV first)
-                        local alvH = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-                        local mH = Vector3.new(measured.X, 0, measured.Z).Magnitude
-                        if mH > alvH + 3 then
-                            velocity = velocity:Lerp(measured, 0.45)
-                        elseif alvH < 1 and mH > 2 then
-                            velocity = measured
+                    if typeof(native.initialVelocity) == "Vector3" and native.initialVelocity.Magnitude > 0 then
+                        speed = native.initialVelocity.Magnitude
+                    else
+                        local liveDraw = tonumber(projmeta and projmeta.drawDurationSeconds) or 0
+                        local livePct = maxDraw > 0 and math.clamp(liveDraw / maxDraw, 0, 1) or 0
+                        speed = baseSpeed * (minScalar + (1 - minScalar) * livePct)
+                    end
+                    drawDuration = tonumber(native.drawDurationSeconds) or tonumber(projmeta and projmeta.drawDurationSeconds) or 0
+                end
+
+                -- Where the projectile actually leaves from
+                local launchOrigin
+                if typeof(native.positionFrom) == "Vector3" then
+                    launchOrigin = native.positionFrom
+                else
+                    local pos
+                    pcall(function()
+                        pos = selfController:getLaunchPosition(tool)
+                    end)
+                    pos = pos or originPos
+                    local offset = projmeta and projmeta.fromPositionOffset
+                    launchOrigin = pos + (typeof(offset) == "Vector3" and offset or Vector3.new(0, 2, 0))
+                end
+
+                -- Target motion
+                local char = entry.Model
+                local playerGravity = Workspace.Gravity
+                local balloons = char:GetAttribute("InflatedBalloons")
+                if type(balloons) == "number" and balloons > 0 then
+                    playerGravity = balloonGravity(balloons, char)
+                end
+                if char.PrimaryPart and char.PrimaryPart:FindFirstChild(FLOATY_MARKER) then
+                    playerGravity = 6
+                end
+                if entry.Player and entry.Player:GetAttribute("IsOwlTarget") then
+                    for _, owl in ipairs(CollectionService:GetTagged("Owl")) do
+                        if owl:GetAttribute("Target") == entry.Player.UserId and owl:GetAttribute("Status") == 2 then
+                            playerGravity = 0
+                            break
                         end
                     end
                 end
 
-                -- Player gravity modifiers (balloons / owl) — CatVape
-                local playerGravity = Workspace.Gravity
-                local balloons = entry.Model:GetAttribute("InflatedBalloons")
-                if type(balloons) == "number" and balloons > 0 then
-                    local factor = balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975
-                    playerGravity = Workspace.Gravity * (1 - factor)
-                end
-                pcall(function()
-                    if root:FindFirstChild("rbxassetid://8200754399") then
-                        playerGravity = 6
+                local rawVel = root.AssemblyLinearVelocity
+                if (rawVel * Vector3.new(1, 0, 1)).Magnitude < 1 then
+                    local measured = measuredVelocity(root)
+                    if measured and (measured * Vector3.new(1, 0, 1)).Magnitude > 2 and measured.Magnitude < 130 then
+                        rawVel = Vector3.new(measured.X, rawVel.Y, measured.Z)
                     end
-                end)
-                if entry.Player and entry.Player:GetAttribute("IsOwlTarget") then
-                    playerGravity = 0
+                end
+                local hip = hum.HipHeight or 2
+                local aimTarget = part.Position
+                if projectileName:find("fireball", 1, true) then
+                    aimTarget = splashAimPoint(root, hip) or aimTarget
                 end
 
-                local airborne = hum.FloorMaterial == Enum.Material.Air or math.abs(root.AssemblyLinearVelocity.Y) > 0.01
+                local vel = projectileName == "telepearl" and Vector3.zero or rawVel
+                local airborne = hum.FloorMaterial == Enum.Material.Air or math.abs(rawVel.Y) > 0.01
                 local jumping = false
                 pcall(function()
                     jumping = hum:GetState() == Enum.HumanoidStateType.Jumping
                 end)
-                local jumpVel = jumping and JUMP_SPEED or nil
-                local hip = hum.HipHeight or 2
+                local jumpVel = (jumping and not airborne) and JUMP_SPEED or nil
+                if cfg.CustomPredictions and projectileName ~= "telepearl" then
+                    local horizontal = (tonumber(cfg.PredictHorizontal) or 100) / 100
+                    local vertical = (tonumber(cfg.PredictVertical) or 100) / 100
+                    vel = Vector3.new(vel.X * horizontal, vel.Y * vertical, vel.Z * horizontal)
+                end
 
-                local hx = (cfg.XPredict or 85) / 100
-                local hy = (cfg.YPredict or 85) / 100
-                -- CatVape Horizontal/Vertical = 1 means "use solver as-is". Values below 1 reduce lead.
-                local scaledVel = Vector3.new(velocity.X * hx, (airborne and velocity.Y or 0) * hy, velocity.Z * hx)
+                local flat = Vector3.new(vel.X, 0, vel.Z)
+                if flat.Magnitude > MAX_LEAD_SPEED then
+                    flat = flat.Unit * MAX_LEAD_SPEED
+                end
+                local moving = airborne or jumpVel ~= nil
+                local vy = airborne and vel.Y or (jumpVel or 0)
+                local floorY = moving and floorLevel(root, hip, aimTarget.Y) or nil
 
-                local aimPoint, impact, travel, launchVel = SolveTrajectory(
-                    from, speed, gravity, part.Position, scaledVel, playerGravity, hip, jumpVel, nil, airborne, root.Position, root
-                )
-                -- Optional second pass only when user asks for EXTRA lead (>100%)
-                if aimPoint and travel and (hx > 1.01 or hy > 1.01) then
-                    local rise = (velocity.Y * travel) - (playerGravity * travel * travel * 0.5)
-                    local lead = Vector3.new(velocity.X * travel * (hx - 1), rise * (hy - 1), velocity.Z * travel * (hx - 1))
-                    local a2, _, t2, lv2 = SolveTrajectory(
-                        from, speed, gravity, part.Position + lead, scaledVel, playerGravity, hip, jumpVel, nil, airborne, root.Position, root
-                    )
-                    if a2 and lv2 then
-                        aimPoint, travel, launchVel = a2, t2 or travel, lv2
+                local function pathFor(offset)
+                    local base = aimTarget + (offset or Vector3.zero)
+                    return function(t)
+                        local y = base.Y
+                        if moving then
+                            y = base.Y + vy * t - 0.5 * playerGravity * t * t
+                            if floorY and y < floorY + (offset and offset.Y or 0) then
+                                y = floorY + (offset and offset.Y or 0)
+                            end
+                        end
+                        return Vector3.new(base.X + flat.X * t, y, base.Z + flat.Z * t)
                     end
                 end
 
-                if not aimPoint or not travel or not launchVel or travel > lifetime then
+                local maxTime = math.min(lifetime, 5)
+                local launch, flight = solveLaunch(launchOrigin, speed, gravity, pathFor(nil), maxTime)
+                if not launch then
+                    return nil
+                end
+
+                -- Blocked by a wall? Try a few nearby aim points that have a clear arc
+                if not worldmeta and not arcIsClear(launchOrigin, launch, gravity, flight) then
+                    local los = (aimTarget - launchOrigin) * Vector3.new(1, 0, 1)
+                    local side = los.Magnitude > 0.01 and Vector3.new(-los.Z, 0, los.X).Unit or Vector3.new(1, 0, 0)
+                    local up = Vector3.new(0, 1, 0)
+                    for _, offset in ipairs({
+                        up * 0.8, up * -0.8, side * 0.9, side * -0.9, up * 1.6, up * -1.6,
+                        side * 0.9 + up * 1.2, side * -0.9 + up * 1.2, up * 2.1, up * -2.4,
+                        side * 0.9 - up * 1.2, side * -0.9 - up * 1.2,
+                    }) do
+                        local altLaunch, altFlight = solveLaunch(launchOrigin, speed, gravity, pathFor(offset), maxTime)
+                        if altLaunch and arcIsClear(launchOrigin, altLaunch, gravity, altFlight) then
+                            launch, flight = altLaunch, altFlight
+                            break
+                        end
+                    end
+                end
+
+                local returnDist = tonumber(overrides.returnDistanceOverride) or tonumber(meta.returnDistance)
+                if flight > lifetime or (returnDist and speed * flight > returnDist - 2) then
                     return nil
                 end
 
@@ -6343,12 +6769,11 @@ do
                 for k, v in pairs(native) do
                     result[k] = v
                 end
-                result.initialVelocity = launchVel
-                result.positionFrom = from
+                result.initialVelocity = launch
+                result.positionFrom = launchOrigin
+                result.deltaT = lifetime
                 result.gravitationalAcceleration = gravity
-                if result.deltaT ~= nil then
-                    result.deltaT = lifetime
-                end
+                result.drawDurationSeconds = drawDuration
                 return result
             end
 
@@ -6357,11 +6782,11 @@ do
                 if not active or type(nativeResult) ~= "table" then
                     return nativeResult
                 end
-                local _, projmeta, worldmeta, tool = ...
+                local selfController, projmeta, worldmeta, tool, shootpos = ...
                 if typeof(tool) ~= "Instance" then
                     tool = nil
                 end
-                local ok, modified = pcall(aimShot, nativeResult, projmeta, worldmeta, tool)
+                local ok, modified = pcall(aimShot, nativeResult, selfController, projmeta, worldmeta, tool, shootpos)
                 if ok and modified then
                     return modified
                 end
@@ -6389,18 +6814,63 @@ do
                 return true
             end
 
+            -- Hide Cursor ----------------------------------------------------------------
+            local function holdingProjectileWeapon()
+                local name = heldName()
+                local meta = name and Bedwars.ItemMeta and Bedwars.ItemMeta[name]
+                local source = meta and meta.projectileSource
+                return source ~= nil and type(source.ammoItemTypes) == "table" and table.find(source.ammoItemTypes, "arrow") ~= nil
+            end
+
+            local function shouldHideCursor()
+                if not cfg.HideCursor then
+                    return false
+                end
+                local first = Util.IsFirstPerson()
+                if cfg.CursorShowGUI and first and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+                    return false
+                end
+                if cfg.CursorLimitBow and not holdingProjectileWeapon() then
+                    return false
+                end
+                local mode = cfg.CursorViewMode or "First Person"
+                if mode == "First Person" then
+                    return first
+                elseif mode == "Third Person" then
+                    return not first
+                end
+                return true
+            end
+
             -- The hook goes in as soon as the game's controllers exist (retries until then)
             local lastSampleAt = 0
             mod.Maid:Give(RunService.Heartbeat:Connect(function()
                 local cam = Workspace.CurrentCamera
-                -- keep a short movement history of nearby targets (used for measured velocity)
                 local now = os.clock()
+
+                -- Cursor
+                if cfg.HideCursor and installed then
+                    local hide = shouldHideCursor()
+                    if hide ~= cursorHidden then
+                        cursorHidden = hide
+                        pcall(function()
+                            UserInputService.MouseIconEnabled = not hide
+                        end)
+                    end
+                elseif cursorHidden then
+                    cursorHidden = false
+                    pcall(function()
+                        UserInputService.MouseIconEnabled = true
+                    end)
+                end
+
+                -- Keep a short movement history of nearby targets
                 if installed and now - lastSampleAt >= 0.05 then
                     lastSampleAt = now
                     local _, _, myRoot = Util.GetCharacter(LocalPlayer)
                     if myRoot then
                         for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                            if entry.Root and (entry.Root.Position - myRoot.Position).Magnitude <= (cfg.Range or 250) * 1.5 then
+                            if entry.Root and (entry.Root.Position - myRoot.Position).Magnitude <= (tonumber(cfg.Range) or 100) * 1.5 then
                                 sampleRoot(entry.Root)
                             end
                         end
@@ -6414,7 +6884,7 @@ do
                     circle.Radius = cfg.FOV
                 end
 
-                if cfg.ShowTarget and lastTarget and os.clock() - lastTargetAt < 1.2
+                if cfg.ShowTarget and lastTarget and now - lastTargetAt < 1.2
                     and lastTarget.Root and lastTarget.Root.Parent then
                     box.Adornee = lastTarget.Root
                 else
@@ -6422,8 +6892,8 @@ do
                 end
 
                 if not installed then
-                    if os.clock() - lastTryAt >= 1.5 then
-                        lastTryAt = os.clock()
+                    if now - lastTryAt >= 1.5 then
+                        lastTryAt = now
                         local ok, why = install()
                         if ok then
                             installed = true
@@ -6435,7 +6905,7 @@ do
                     return
                 end
 
-                if os.clock() - lastTargetAt < 1.2 and lastTarget then
+                if now - lastTargetAt < 1.2 and lastTarget then
                     setStatus(cfg.StatusLine, "aimed at " .. tostring(lastTarget.Name))
                 elseif cam then
                     setStatus(cfg.StatusLine, "ready (" .. (Util.IsFirstPerson() and "first" or "third") .. " person)")
@@ -6444,6 +6914,9 @@ do
 
             mod.Maid:Give(function()
                 active = false
+                pcall(function()
+                    UserInputService.MouseIconEnabled = true
+                end)
                 if installed and controller and rawget(controller, "calculateImportantLaunchValues") == wrapper then
                     pcall(function()
                         if hadOwn then
@@ -6457,19 +6930,38 @@ do
         end,
     })
 
+    aim:AddSection("Targeting")
     aim:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
-    aim:AddTextBox({ Label = "Exclude Items", Key = "ExcludeItems", Default = "", Placeholder = "fireball, telepearl", Tip = "Comma-separated projectile ids only (not tool names). Example: fireball skips fireballs; arrows still aim." })
-    aim:AddSlider({ Label = "Range", Key = "Range", Min = 20, Max = 1000, Default = 1000, Step = 10, Suffix = " studs", Tip = "How far away a target can be picked up. The actual shot is still limited by the projectile's real speed and gravity." })
-    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 40, Max = 1000, Default = 1000, Step = 5, Suffix = " px" })
-    aim:AddSlider({ Label = "X Predict", Key = "XPredict", Min = 0, Max = 150, Default = 85, Step = 5, Suffix = "%", Tip = "How far ahead to lead sideways. ~90% often tracks better than full 100%." })
-    aim:AddSlider({ Label = "Y Predict", Key = "YPredict", Min = 0, Max = 150, Default = 85, Step = 5, Suffix = "%", Tip = "How far ahead to lead jumps/falls. ~90% often tracks better than full 100%." })
+    aim:AddOption({
+        Label = "Part", Key = "Part", Options = { "Dynamic", "RootPart", "Head", "Closest", "Randomize" }, Default = "RootPart",
+        Tip = "Where on the target to aim. Dynamic picks the head for Headhunter shots, the body otherwise. Closest is the body part nearest your cursor.",
+    })
+    aim:AddSlider({ Label = "Head Chance", Key = "HeadChance", Min = 0, Max = 100, Default = 50, Step = 5, Suffix = "%", ShowIf = function(c) return c.Part == "Randomize" end })
+    aim:AddSlider({ Label = "Torso Chance", Key = "TorsoChance", Min = 0, Max = 100, Default = 50, Step = 5, Suffix = "%", ShowIf = function(c) return c.Part == "Randomize" end, Tip = "Whatever head + torso don't add up to goes to the root part." })
+    aim:AddOption({ Label = "Sort Method", Key = "Sort", Options = { "Cursor", "Distance", "Health" }, Default = "Cursor" })
+    aim:AddOption({ Label = "Work Mode", Key = "WorkMode", Options = { "Both", "First Person", "Third Person" }, Default = "Both", Tip = "Only redirect shots in this camera mode." })
+    aim:AddSlider({ Label = "Range", Key = "Range", Min = 10, Max = 500, Default = 100, Step = 5, Suffix = " studs", Tip = "How far away a target can be picked up. The shot is still limited by the projectile's real speed and gravity." })
+    aim:AddSlider({ Label = "FOV", Key = "FOV", Min = 1, Max = 1000, Default = 300, Step = 5, Suffix = " px", Tip = "How close to your crosshair a target has to be." })
     aim:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, Tip = "Only lock targets you can see (line of sight)." })
     aim:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
+    aim:AddSection("Projectiles")
+    aim:AddToggle({ Label = "Other Projectiles", Key = "OtherProjectiles", Default = true, Tip = "Also aim fireballs and other projectiles, not just arrows." })
+    aim:AddTextBox({ Label = "Blacklist", Key = "Blacklist", Default = "telepearl", Placeholder = "telepearl, fireball", ShowIf = function(c) return c.OtherProjectiles end, Tip = "Comma-separated projectile ids to leave alone (not tool names)." })
+    aim:AddToggle({ Label = "AutoCharge", Key = "AutoCharge", Default = true, Tip = "Fires every shot at the Charge Percent below, no need to hold the bow back." })
+    aim:AddSlider({ Label = "Charge Percent", Key = "ChargePercent", Min = 1, Max = 100, Default = 100, Step = 1, Suffix = "%", ShowIf = function(c) return c.AutoCharge end })
+    aim:AddToggle({ Label = "Custom Predictions", Key = "CustomPredictions", Default = false, Tip = "Lets you control how far ahead of the target it leads." })
+    aim:AddSlider({ Label = "Horizontal", Key = "PredictHorizontal", Min = 0, Max = 300, Default = 100, Step = 5, Suffix = "%", ShowIf = function(c) return c.CustomPredictions end })
+    aim:AddSlider({ Label = "Vertical", Key = "PredictVertical", Min = 0, Max = 300, Default = 100, Step = 5, Suffix = "%", ShowIf = function(c) return c.CustomPredictions end })
+    aim:AddSection("Cursor")
+    aim:AddToggle({ Label = "Hide Cursor", Key = "HideCursor", Default = false, Tip = "Hides your cursor while aiming." })
+    aim:AddOption({ Label = "Cursor View Mode", Key = "CursorViewMode", Options = { "First Person", "Third Person", "Both" }, Default = "First Person", ShowIf = function(c) return c.HideCursor end })
+    aim:AddToggle({ Label = "Limit to Bow", Key = "CursorLimitBow", Default = false, ShowIf = function(c) return c.HideCursor end })
+    aim:AddToggle({ Label = "Show on GUI", Key = "CursorShowGUI", Default = false, ShowIf = function(c) return c.HideCursor end, Tip = "Shows the cursor again while a menu is open." })
+    aim:AddSection("Visuals")
     aim:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
     aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
-    aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Keeps the game's own draw strength and timing. Wall check, ping compensation, and measured velocity are still tuned automatically.")
-
+    aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Wall check and velocity handling are tuned automatically.")
 end
 
 -- ====================== MODULE: AUTO CAITLYN ======================
@@ -8640,85 +9132,87 @@ do
 end
 
 -- ====================== MODULE: NUKER ======================
--- Digs through a bed's defence: finds the cheapest path of blocks from the outside to the target
--- and breaks the block at the outer end of that path, over and over.
+-- Digs through a bed's defence: finds the cheapest route of blocks from the outside to the target
+-- and breaks the block at the outer end of that route, over and over. Also breaks lucky blocks,
+-- iron ore and a few kit objects around you.
 do
     local CollectionService = service("CollectionService")
     local ReplicatedStorage = service("ReplicatedStorage")
 
-    local SIDES = {
+    local FACES = {
         Vector3.new(3, 0, 0), Vector3.new(-3, 0, 0),
         Vector3.new(0, 3, 0), Vector3.new(0, -3, 0),
         Vector3.new(0, 0, 3), Vector3.new(0, 0, -3),
     }
     local FLAT = Vector3.new(1, 0, 1)
-    local BREAK_CACHE_TTL = 0.5
+    local TRACKED_NAMES = { "bed", "tesla_trap", "beehive", "pinata", "carrot", "melon", "pumpkin", "snow_pile" }
 
     local nuker
-    local pathCache = {}
+    local parts = {}                 -- path preview boxes
+    local highlightBox
+    local plan                       -- { target, route, anchor, time, blatant }
+    local lastHit, lastAbility = 0, 0
     local breakableCache = setmetatable({}, { __mode = "k" })
-    local toolDamage = {}           -- breakType -> { damage, item } (rebuilt every loop)
-    local highlight = nil
-    local bedMarker = nil
-    local lastEquip = 0
-    local stats = { Tracked = 0, InRange = 0, Rejected = 0, Nearest = nil, Sent = 0, Reply = "none yet", Beds = {},
-        Replies = {}, Cells = {}, Distinct = 0 }
-    local activeLock = nil          -- { target, anchor, exit, exitTime } while a target is being dug
-    local MIN_BED_GAP = 0.28         -- the game's own hit cooldown; faster hits on a bed get dropped
-    local MAX_STICK = 6             -- seconds one entry block is kept before the path is re-checked
+    local recentlyHit = setmetatable({}, { __mode = "k" }) -- [block] = time of our last hit on it
+    local toolCache, toolStamp = {}, 0
+    local stats = { Sent = 0, Reply = "none yet", Replies = {} }
 
     -- Blocks ---------------------------------------------------------------------------
-    -- The game's block engine is used when it can be found. If it can't, blocks are looked up
-    -- straight from the map (placed blocks carry the "block" tag), so digging still works.
-    local function cellOf(position)
+    local function getPlacedBlock(position)
         local controller = Bedwars.BlockController
-        if controller then
-            local ok, cell = pcall(controller.getBlockPosition, controller, position)
-            if ok and cell then
-                return cell
-            end
+        if not position or not controller then
+            return nil
         end
-        return Vector3.new(math.floor(position.X / 3 + 0.5), math.floor(position.Y / 3 + 0.5), math.floor(position.Z / 3 + 0.5))
+        local cell = controller:getBlockPosition(position)
+        return controller:getStore():getBlockAt(cell), cell
     end
 
-    local overlap
-    local function mapBlockAt(cell)
-        if not overlap then
-            overlap = OverlapParams.new()
-        end
-        local ok, parts = pcall(function()
-            return Workspace:GetPartBoundsInBox(CFrame.new(cell * 3), Vector3.new(2.2, 2.2, 2.2), overlap)
-        end)
-        if ok and type(parts) == "table" then
-            for _, part in ipairs(parts) do
-                if CollectionService:HasTag(part, "block") or CollectionService:HasTag(part, "bed") then
-                    return part
-                end
-            end
-        end
-        return nil
+    local function heldItemName()
+        local char = LocalPlayer.Character
+        local hand = char and char:FindFirstChild("HandInvItem")
+        local item = hand and hand.Value
+        return item and item.Name or nil
     end
 
-    local function blockAt(worldPosition)
-        local cell = cellOf(worldPosition)
-        local controller = Bedwars.BlockController
-        if controller then
-            local ok, block = pcall(function()
-                return controller:getStore():getBlockAt(cell)
-            end)
-            if ok then
-                return block, cell
-            end
-        end
-        return mapBlockAt(cell), cell
+    local function holdingBreakTool()
+        local name = heldItemName()
+        local meta = name and Bedwars.ItemMeta and Bedwars.ItemMeta[name]
+        return meta ~= nil and meta.breakBlock ~= nil
     end
 
     local function breakTypeOf(block)
+        if not block then
+            return nil
+        end
         if block.Name == "gumdrop_bounce_pad" then
             return "stone"
         end
         local meta = Bedwars.ItemMeta and Bedwars.ItemMeta[block.Name]
         return meta and meta.block and meta.block.breakType
+    end
+
+    -- Best tool in your inventory for a break type (rebuilt twice a second)
+    local function bestToolFor(breakType)
+        if os.clock() - toolStamp > 0.5 then
+            toolCache, toolStamp = {}, os.clock()
+        end
+        local cached = toolCache[breakType]
+        if cached then
+            return cached.Item, cached.Damage
+        end
+        local inventory = Bedwars.GetInventory()
+        local bestItem, bestDamage = nil, 0
+        if inventory then
+            for _, item in pairs(inventory.inventory.items or {}) do
+                local meta = Bedwars.ItemMeta[item.itemType]
+                local damage = meta and meta.breakBlock and meta.breakBlock[breakType] or 0
+                if damage > bestDamage then
+                    bestItem, bestDamage = item, damage
+                end
+            end
+        end
+        toolCache[breakType] = { Item = bestItem, Damage = bestDamage }
+        return bestItem, bestDamage
     end
 
     local function healthOf(block, cell)
@@ -8737,183 +9231,26 @@ do
         return (meta and meta.block and meta.block.health) or 10
     end
 
-    local function bestToolFor(breakType)
-        local cached = toolDamage[breakType]
-        if cached then
-            return cached.Item, cached.Damage
-        end
-        local inventory = Bedwars.GetInventory()
-        local bestItem, bestDamage = nil, 0
-        if inventory then
-            for _, item in pairs(inventory.inventory.items or {}) do
-                local meta = Bedwars.ItemMeta[item.itemType]
-                local damage = meta and meta.breakBlock and meta.breakBlock[breakType] or 0
-                if damage > bestDamage then
-                    bestItem, bestDamage = item, damage
-                end
-            end
-        end
-        toolDamage[breakType] = { Item = bestItem, Damage = bestDamage }
-        return bestItem, bestDamage
+    local function toolDamage(itemType, breakType)
+        local meta = itemType and Bedwars.ItemMeta[itemType]
+        return meta and meta.breakBlock and breakType and meta.breakBlock[breakType] or 2
     end
 
+    -- How many hits it takes to break a block with the best tool you own
     local function hitsToBreak(block, worldPosition)
         local breakType = breakTypeOf(block)
-        local _, damage = nil, 2
+        local damage = 2
         if breakType then
             local _, best = bestToolFor(breakType)
             if best and best > 0 then
                 damage = best
             end
         end
-        local cell = cellOf(worldPosition)
+        local cell = Bedwars.BlockController:getBlockPosition(worldPosition)
         return healthOf(block, cell) / damage
     end
 
-    -- Path search ------------------------------------------------------------------------
-    -- Starts at the target and spreads through solid blocks (cost = hits needed to break each).
-    -- The best "exit" is a block that touches open air; `anchor` biases the search toward the
-    -- side you are standing on.
-    local function findPath(target, startPosition, angle, anchor)
-        local cached = pathCache[startPosition]
-        if cached then
-            local age = os.clock() - cached.Time
-            local sameAnchor = (not anchor and not cached.Anchor)
-                or (anchor and cached.Anchor and (anchor - cached.Anchor).Magnitude < 1.5)
-            if sameAnchor and age < (anchor and 0.5 or 1) then
-                return cached.Exit, cached.Cost
-            elseif age >= 1 then
-                pathCache[startPosition] = nil
-            end
-        end
-
-        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not root then
-            return nil
-        end
-        local origin = root.Position
-        local camera = Workspace.CurrentCamera
-        local camFlat = camera and (camera.CFrame.LookVector * FLAT) or Vector3.new(0, 0, 0)
-        local useAngle = angle < 360 and camFlat.Magnitude > 0.01
-        local halfAngle = math.rad(angle) / 2
-
-        local visited, distances, open = {}, { [startPosition] = 0 }, { startPosition }
-        local exit, cost = nil, math.huge
-
-        for _ = 1, 4000 do
-            local bestIndex, bestDistance = nil, math.huge
-            for index = 1, #open do
-                local distance = distances[open[index]]
-                if distance < bestDistance then
-                    bestIndex, bestDistance = index, distance
-                end
-            end
-            if not bestIndex then
-                break
-            end
-            local node = open[bestIndex]
-            open[bestIndex] = open[#open]
-            open[#open] = nil
-
-            if not visited[node] then
-                visited[node] = true
-                if bestDistance >= cost then
-                    break
-                end
-                for _, side in ipairs(SIDES) do
-                    local neighbor = node + side
-                    if not visited[neighbor] then
-                        local block = blockAt(neighbor)
-                        if not block then
-                            -- `node` touches open air: it is a candidate block to break
-                            local score = bestDistance
-                            if anchor then
-                                local delta = node - anchor
-                                local near = (delta * FLAT).Magnitude + math.abs(delta.Y) * 2
-                                score = bestDistance + near * 1.5
-                            end
-                            if score < cost then
-                                exit, cost = node, score
-                            end
-                        elseif block ~= target and not block:GetAttribute("NoBreak")
-                            and (neighbor - origin).Magnitude <= 30 then
-                            local allowed = true
-                            if useAngle then
-                                local flat = (neighbor - origin) * FLAT
-                                if flat.Magnitude > 0.01
-                                    and math.acos(math.clamp(camFlat.Unit:Dot(flat.Unit), -1, 1)) > halfAngle then
-                                    allowed = false
-                                end
-                            end
-                            if allowed then
-                                local total = hitsToBreak(block, neighbor) + bestDistance
-                                if total < (distances[neighbor] or math.huge) then
-                                    distances[neighbor] = total
-                                    open[#open + 1] = neighbor
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        if exit then
-            pathCache[startPosition] = { Exit = exit, Cost = cost, Time = os.clock(), Anchor = anchor }
-            return exit, cost
-        end
-        return nil
-    end
-
-    -- Hand / tools ---------------------------------------------------------------------------
-    local function heldItemName()
-        local char = LocalPlayer.Character
-        local hand = char and char:FindFirstChild("HandInvItem")
-        local item = hand and hand.Value
-        return item and item.Name or nil
-    end
-
-    -- Switches your hotbar to the best tool for this block (not while you are swinging a sword)
-    local function equipFor(block)
-        local cfg = nuker.Config
-        local breakType = breakTypeOf(block)
-        if not breakType then
-            return true
-        end
-        local tool = bestToolFor(breakType)
-        if not tool then
-            return true
-        end
-        if not cfg.AutoTool then
-            return heldItemName() == tool.itemType
-        end
-        if heldItemName() == tool.itemType then
-            return true
-        end
-        local sword = Bedwars.SwordController
-        local lastAttack = sword and tonumber(sword.lastAttack) or 0
-        if Workspace:GetServerTimeNow() - lastAttack <= 0.4 or os.clock() - lastEquip < 0.25 then
-            return true
-        end
-        local inventory = Bedwars.GetInventory()
-        if inventory and Bedwars.Store then
-            for index, slot in ipairs(inventory.hotbar or {}) do
-                if slot.item and slot.item.itemType == tool.itemType then
-                    if inventory.hotbarSlot ~= index - 1 then
-                        lastEquip = os.clock()
-                        pcall(function()
-                            Bedwars.Store:dispatch({ type = "InventorySelectHotbarSlot", slot = index - 1 })
-                        end)
-                        task.wait(0.05)
-                    end
-                    break
-                end
-            end
-        end
-        return true
-    end
-
-    -- Target filtering --------------------------------------------------------------------
+    -- Team / protection checks -----------------------------------------------------------
     local function teamKey(value)
         if value == nil then
             return nil
@@ -8924,13 +9261,15 @@ do
         return tostring(value)
     end
 
-    local function myTeam()
-        return teamKey(LocalPlayer:GetAttribute("Team") or LocalPlayer:GetAttribute("TeamId")
-            or LocalPlayer:GetAttribute("TeamID") or LocalPlayer.Team)
+    local function playerTeamKey(plr)
+        if not plr then
+            return nil
+        end
+        return teamKey(plr:GetAttribute("Team") or plr:GetAttribute("TeamId") or plr:GetAttribute("TeamID") or plr.Team)
     end
 
     local function isOwnTeamBlock(block)
-        local mine = myTeam()
+        local mine = playerTeamKey(LocalPlayer)
         local blockTeam = teamKey(block:GetAttribute("Team") or block:GetAttribute("TeamId") or block:GetAttribute("TeamID"))
         if mine and blockTeam and mine == blockTeam then
             return true
@@ -8939,393 +9278,636 @@ do
         if placedBy == LocalPlayer.UserId then
             return true
         end
-        if placedBy then
-            local owner = Players:GetPlayerByUserId(placedBy)
-            local theirs = owner and teamKey(owner:GetAttribute("Team") or owner:GetAttribute("TeamId") or owner.Team)
-            if mine and theirs and mine == theirs then
+        local placer = placedBy and Players:GetPlayerByUserId(placedBy)
+        local theirs = placer and playerTeamKey(placer)
+        return mine ~= nil and theirs ~= nil and mine == theirs
+    end
+
+    local function blockAllowed(block)
+        if not block or not block.Parent or block:GetAttribute("NoBreak") then
+            return false
+        end
+        local mine = LocalPlayer:GetAttribute("Team")
+        if mine and block:GetAttribute("Team" .. tostring(mine) .. "NoBreak") then
+            return false
+        end
+        return nuker.Config.SelfBreak or not isOwnTeamBlock(block)
+    end
+
+    -- The game's own "can this be broken" check, cached for half a second. If the check can't
+    -- run at all, the block is treated as breakable and the server decides.
+    local function isBreakable(block)
+        -- The game's check can flip to false while a block is mid-break, which used to end the dig
+        -- after one hit. Anything we hit in the last few seconds stays breakable.
+        if os.clock() - (recentlyHit[block] or -10) < 4 then
+            return true
+        end
+        local cached = breakableCache[block]
+        if cached and os.clock() - cached.t < 0.5 then
+            return cached.v
+        end
+        local ok, result = pcall(function()
+            local controller = Bedwars.BlockController
+            return controller:isBlockBreakable({ blockPosition = controller:getBlockPosition(block.Position) }, LocalPlayer)
+        end)
+        local value = true
+        if ok and result ~= nil then
+            value = result and true or false
+        end
+        breakableCache[block] = { v = value, t = os.clock() }
+        return value
+    end
+
+    local function containedCells(block)
+        local out = {}
+        local ok, handler = pcall(function()
+            return Bedwars.BlockController:getHandlerRegistry():getHandler(block.Name)
+        end)
+        if ok and handler then
+            local ok2, cells = pcall(function()
+                return handler:getContainedPositions(block)
+            end)
+            if ok2 and cells then
+                for _, cell in pairs(cells) do
+                    out[#out + 1] = cell * 3
+                end
+            end
+        end
+        if #out == 0 then
+            out[1] = Bedwars.BlockController:getBlockPosition(block.Position) * 3
+        end
+        return out
+    end
+
+    local function nearestCellDistance(block, origin)
+        local best = math.huge
+        for _, cell in ipairs(containedCells(block)) do
+            best = math.min(best, (cell - origin).Magnitude)
+        end
+        return best
+    end
+
+    -- Route planning -------------------------------------------------------------------------
+    local function heapPush(heap, node)
+        local i = #heap + 1
+        heap[i] = node
+        while i > 1 do
+            local parent = i // 2
+            if heap[parent][1] <= node[1] then
+                break
+            end
+            heap[i], heap[parent] = heap[parent], node
+            i = parent
+        end
+    end
+
+    local function heapPop(heap)
+        local top = heap[1]
+        local last = table.remove(heap)
+        if #heap > 0 then
+            heap[1] = last
+            local i = 1
+            while true do
+                local child = i * 2
+                if child > #heap then
+                    break
+                end
+                if child < #heap and heap[child + 1][1] < heap[child][1] then
+                    child = child + 1
+                end
+                if heap[i][1] <= heap[child][1] then
+                    break
+                end
+                heap[i], heap[child] = heap[child], heap[i]
+                i = child
+            end
+        end
+        return top
+    end
+
+    -- Cheapest list of block cells from the outside to `target`. route[1] is the block to hit now.
+    -- opts: origin, anchor, nearFirst, angle, filter(block) -> bool
+    local function planRoute(target, opts)
+        local _, _, root = Util.GetCharacter(LocalPlayer)
+        local cam = Workspace.CurrentCamera
+        if not root or not target or not cam then
+            return nil
+        end
+        local origin = opts.origin or root.Position
+        local anchor = opts.anchor or origin
+        local nearFirst = opts.nearFirst
+        local filter = opts.filter
+        local angle = opts.angle or 360
+        local cells = containedCells(target)
+        local targetCells = {}
+        for _, cell in ipairs(cells) do
+            targetCells[cell] = true
+        end
+
+        -- Is this cell connected to open air (not enclosed)?
+        local airMemo = {}
+        local function openAir(cell)
+            local known = airMemo[cell]
+            if known ~= nil then
+                return known
+            end
+            local seen, queue, head, open = { [cell] = true }, { cell }, 1, false
+            while queue[head] do
+                local current = queue[head]
+                head = head + 1
+                if airMemo[current] ~= nil then
+                    open = airMemo[current]
+                    break
+                end
+                if (current - cell).Magnitude > 15 or head > 250 then
+                    open = true
+                    break
+                end
+                for _, face in ipairs(FACES) do
+                    local nxt = current + face
+                    if not seen[nxt] and not getPlacedBlock(nxt) then
+                        seen[nxt] = true
+                        queue[#queue + 1] = nxt
+                    end
+                end
+            end
+            for c in pairs(seen) do
+                airMemo[c] = open
+            end
+            return open
+        end
+
+        local function exposed(cell)
+            for _, face in ipairs(FACES) do
+                local nxt = cell + face
+                if not targetCells[nxt] and not getPlacedBlock(nxt) and openAir(nxt) then
+                    return true
+                end
+            end
+            return false
+        end
+
+        local hitMemo = {}
+        local function hits(block, cell)
+            local known = hitMemo[cell]
+            if known then
+                return known
+            end
+            known = math.max(math.ceil(hitsToBreak(block, cell)), 1)
+            hitMemo[cell] = known
+            return known
+        end
+
+        -- Target already reachable from outside: just hit it
+        local direct, directDist
+        for _, cell in ipairs(cells) do
+            local d = (cell - anchor).Magnitude
+            if (cell - origin).Magnitude <= 30 and exposed(cell) and (not direct or d < directDist) then
+                direct, directDist = cell, d
+            end
+        end
+        if direct then
+            return { direct }, 0
+        end
+
+        local camFlat = cam.CFrame.LookVector * FLAT
+        local useAngle = angle < 360 and camFlat.Magnitude > 0.01
+        local halfAngle = math.rad(angle) / 2
+        local function passable(block, cell)
+            if (cell - origin).Magnitude > 30 or block:GetAttribute("NoBreak") then
+                return false
+            end
+            if filter then
+                local ok, allowed = pcall(filter, block)
+                if not ok or not allowed then
+                    return false
+                end
+            end
+            if useAngle then
+                local flat = (cell - origin) * FLAT
+                if flat.Magnitude > 0.01 and math.acos(math.clamp(camFlat.Unit:Dot(flat.Unit), -1, 1)) > halfAngle then
+                    return false
+                end
+            end
+            return true
+        end
+
+        -- nearFirst: walk a line of blocks from your eyes to the target (what you could actually dig)
+        if nearFirst then
+            local function bound(index, component, delta)
+                if delta == 0 then
+                    return 0, math.huge, math.huge
+                end
+                local step = delta > 0 and 1 or -1
+                return step, (((index + step * 0.5) * 3) - component) / delta, 3 / math.abs(delta)
+            end
+            local function traceLine(from, aim)
+                local start = Bedwars.BlockController:getBlockPosition(from)
+                local dir = aim - from
+                local x, y, z = start.X, start.Y, start.Z
+                local sx, nx, dx = bound(x, from.X, dir.X)
+                local sy, ny, dy = bound(y, from.Y, dir.Y)
+                local sz, nz, dz = bound(z, from.Z, dir.Z)
+                local route, cost = {}, 0
+                for _ = 1, 120 do
+                    local cell = Vector3.new(x, y, z) * 3
+                    if targetCells[cell] then
+                        route[#route + 1] = cell
+                        return route, cost
+                    end
+                    local block = getPlacedBlock(cell)
+                    if block then
+                        if block == target then
+                            route[#route + 1] = cell
+                            return route, cost
+                        end
+                        if not passable(block, cell) then
+                            return nil
+                        end
+                        cost = cost + hits(block, cell)
+                        route[#route + 1] = cell
+                    end
+                    if nx > 1 and ny > 1 and nz > 1 then
+                        return nil
+                    end
+                    if nx <= ny and nx <= nz then
+                        x, nx = x + sx, nx + dx
+                    elseif ny <= nz then
+                        y, ny = y + sy, ny + dy
+                    else
+                        z, nz = z + sz, nz + dz
+                    end
+                end
+                return nil
+            end
+            local eyes = { origin }
+            local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+            if head then
+                eyes[#eyes + 1] = head.Position
+            end
+            eyes[#eyes + 1] = cam.CFrame.Position
+            local bestRoute, bestCost, bestDist
+            for _, eye in ipairs(eyes) do
+                for _, cell in ipairs(cells) do
+                    for ox = -1, 1 do
+                        for oy = -1, 1 do
+                            for oz = -1, 1 do
+                                local route, cost = traceLine(eye, cell + Vector3.new(ox, oy, oz) * 1.35)
+                                if route and route[1] then
+                                    local d = (route[1] - anchor).Magnitude
+                                    if (route[1] - origin).Magnitude <= 30
+                                        and (not bestCost or cost < bestCost or (cost == bestCost and d < bestDist)) then
+                                        bestRoute, bestCost, bestDist = route, cost, d
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if bestRoute then
+                return bestRoute, bestCost
+            end
+        end
+
+        -- Otherwise: cheapest path through the blocks around the target (Dijkstra)
+        local dist, prev, visited, heap = {}, {}, {}, {}
+        for _, cell in ipairs(cells) do
+            dist[cell] = 0
+            heapPush(heap, { 0, cell })
+        end
+        local bestEntry, bestScore, bestCost
+        local steps = 0
+        while #heap > 0 and steps < 6000 do
+            steps = steps + 1
+            local node = heapPop(heap)
+            local d, cell = node[1], node[2]
+            if not visited[cell] then
+                visited[cell] = true
+                if not nearFirst and bestScore and d >= bestScore then
+                    break
+                end
+                if not targetCells[cell] and getPlacedBlock(cell) and exposed(cell) then
+                    local near = (cell - anchor).Magnitude
+                    local score = nearFirst and (near + d * 0.25) or (d + near * 0.01)
+                    if not bestScore or score < bestScore then
+                        bestEntry, bestScore, bestCost = cell, score, d
+                    end
+                end
+                for _, face in ipairs(FACES) do
+                    local nxt = cell + face
+                    if not visited[nxt] and not targetCells[nxt] then
+                        local block = getPlacedBlock(nxt)
+                        local step
+                        if block then
+                            if block ~= target and passable(block, nxt) then
+                                step = hits(block, nxt)
+                            end
+                        elseif not openAir(nxt) then
+                            step = 0
+                        end
+                        if step then
+                            local nd = d + step
+                            if nd < (dist[nxt] or math.huge) then
+                                dist[nxt], prev[nxt] = nd, cell
+                                heapPush(heap, { nd, nxt })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not bestEntry then
+            return nil
+        end
+        local route, current, guard = {}, bestEntry, 0
+        while current and guard < 128 do
+            route[#route + 1] = current
+            if targetCells[current] then
+                break
+            end
+            current = prev[current]
+            guard = guard + 1
+        end
+        return route, bestCost
+    end
+
+    -- First block of a route that is still standing: (cell, block), or nil when the route is stale
+    local function frontOf(current)
+        for _, cell in ipairs(current.route) do
+            local block = getPlacedBlock(cell)
+            if block then
+                if block == current.target then
+                    return cell, block
+                end
+                if not blockAllowed(block) then
+                    return nil
+                end
+                return cell, block
+            end
+        end
+        return nil
+    end
+
+    -- Visuals --------------------------------------------------------------------------------
+    local function ensureParts(count)
+        while #parts < count do
+            local part = Instance.new("Part")
+            part.Anchored = true
+            part.CanQuery = false
+            part.CanCollide = false
+            part.Transparency = 1
+            part.Position = Vector3.zero
+            part.Parent = Workspace.CurrentCamera or Workspace
+            local adorn = Instance.new("BoxHandleAdornment")
+            adorn.Name = "Box"
+            adorn.Size = Vector3.one
+            adorn.AlwaysOnTop = true
+            adorn.ZIndex = 1
+            adorn.Transparency = 0.5
+            adorn.Adornee = part
+            adorn.Parent = part
+            parts[#parts + 1] = part
+        end
+    end
+
+    local function hideParts()
+        for _, part in ipairs(parts) do
+            part.Position = Vector3.zero
+        end
+    end
+
+    local function destroyParts()
+        for _, part in ipairs(parts) do
+            pcall(function()
+                part:Destroy()
+            end)
+        end
+        table.clear(parts)
+    end
+
+    local function drawRoute(route, active)
+        if not nuker.Config.ShowPath or not route then
+            hideParts()
+            return
+        end
+        local index = 1
+        for _, cell in ipairs(route) do
+            if index > #parts then
+                break
+            end
+            if getPlacedBlock(cell) then
+                local part = parts[index]
+                part.Position = cell
+                part.Box.Color3 = (cell == active) and Color3.new(1, 0.2, 0.2) or Color3.new(0.2, 1, 0.2)
+                index = index + 1
+            end
+        end
+        for i = index, #parts do
+            parts[i].Position = Vector3.zero
+        end
+    end
+
+    local function setHighlight(block)
+        if not nuker.Config.Highlight or not block or not block.Parent then
+            if highlightBox then
+                highlightBox.Adornee = nil
+            end
+            return
+        end
+        if not highlightBox then
+            highlightBox = Instance.new("BoxHandleAdornment")
+            highlightBox.AlwaysOnTop = true
+            highlightBox.ZIndex = 10
+            highlightBox.Transparency = 0.3
+            highlightBox.Color3 = Theme.Accent
+            highlightBox.Parent = Workspace.CurrentCamera or Workspace
+        end
+        highlightBox.Size = block.Size + Vector3.new(0.05, 0.05, 0.05)
+        highlightBox.Adornee = block
+    end
+
+    local function clearVisuals()
+        hideParts()
+        setHighlight(nil)
+    end
+
+    local function cleanupAll()
+        plan = nil
+        table.clear(breakableCache)
+        if highlightBox then
+            pcall(function()
+                highlightBox:Destroy()
+            end)
+            highlightBox = nil
+        end
+        destroyParts()
+    end
+
+    -- Kit abilities ----------------------------------------------------------------------------
+    local function kitIs(name)
+        local raw = LocalPlayer:GetAttribute("PlayingAsKits")
+        return type(raw) == "string" and string.find(raw, name, 1, true) ~= nil
+    end
+
+    local function fireAbility(name)
+        pcall(function()
+            ReplicatedStorage:WaitForChild("events-@easy-games/game-core:shared/game-core-networking@getEvents.Events", 1)
+                :WaitForChild("useAbility", 1):FireServer(name)
+        end)
+    end
+
+    local function useKitAbilities(cfg)
+        if os.clock() - lastAbility < 1 then
+            return
+        end
+        if cfg.RagnarBreaker and kitIs("berserker") then
+            lastAbility = os.clock()
+            fireAbility("berserker_rage")
+        end
+        if cfg.YetiBreaker and kitIs("yeti") then
+            lastAbility = os.clock()
+            task.spawn(fireAbility, "yeti_glacial_roar")
+        end
+    end
+
+    -- Hitting ---------------------------------------------------------------------------------
+    local function faceNormal(cell, origin)
+        local d = origin - cell
+        local ax, ay, az = math.abs(d.X), math.abs(d.Y), math.abs(d.Z)
+        if ay >= ax and ay >= az then
+            return Vector3.new(0, d.Y >= 0 and 1 or -1, 0)
+        elseif ax >= az then
+            return Vector3.new(d.X >= 0 and 1 or -1, 0, 0)
+        end
+        return Vector3.new(0, 0, d.Z >= 0 and 1 or -1)
+    end
+
+    local function holdingCorrectTool(cfg, block)
+        if cfg.AutoTool then
+            return true
+        end
+        local breakType = breakTypeOf(block)
+        local correct = breakType and bestToolFor(breakType)
+        if not correct then
+            return true
+        end
+        return heldItemName() == correct.itemType
+    end
+
+    local function switchToHotbarItem(itemType)
+        local inventory = Bedwars.GetInventory()
+        if not (inventory and Bedwars.Store) then
+            return false
+        end
+        for index, slot in ipairs(inventory.hotbar or {}) do
+            if slot.item and slot.item.itemType == itemType then
+                pcall(function()
+                    Bedwars.Store:dispatch({ type = "InventorySelectHotbarSlot", slot = index - 1 })
+                end)
                 return true
             end
         end
         return false
     end
 
-    local function isBreakable(block)
-        if not block or not block.Parent then
-            return false
-        end
-        if block:GetAttribute("NoBreak") then
-            return false
-        end
-        -- Always try tagged blocks/beds. BlockController returns false mid-break and caused 1-tap stop.
-        if CollectionService:HasTag(block, "bed") or CollectionService:HasTag(block, "block")
-            or block.Name == "bed" or block.Name == "LuckyBlock"
-            or (block.Parent and (CollectionService:HasTag(block.Parent, "bed") or block.Parent.Name == "bed")) then
-            return true
-        end
-        return not block:GetAttribute("NoBreak")
-    end
+    local function hitCell(cfg, cell, block, origin)
+        local controller = Bedwars.BlockController
+        local blockPos = controller:getBlockPosition(cell)
+        local breakType = breakTypeOf(block)
+        local hitType = heldItemName()
 
-    local function passesChecks(block)
-        local cfg = nuker.Config
-        if block:GetAttribute("NoBreak") then
-            return false
-        end
-        if (block:GetAttribute("BedShieldEndTime") or 0) > Workspace:GetServerTimeNow() then
-            return false
-        end
-        local mine = myTeam()
-        if mine and block:GetAttribute("Team" .. mine .. "NoBreak") then
-            return false
-        end
-        if not cfg.SelfBreak and isOwnTeamBlock(block) then
-            return false
-        end
-        if cfg.LimitToItems then
-            local name = heldItemName()
-            local meta = name and Bedwars.ItemMeta[name]
-            if not (meta and meta.breakBlock) then
-                return false
+        if cfg.AutoTool and holdingBreakTool() then
+            local lastAttack = tonumber(Bedwars.SwordController and Bedwars.SwordController.lastAttack) or 0
+            if Workspace:GetServerTimeNow() - lastAttack > 0.4 then
+                local tool = breakType and bestToolFor(breakType)
+                if tool and tool.itemType ~= hitType and switchToHotbarItem(tool.itemType) then
+                    hitType = tool.itemType
+                    task.wait(0.06)
+                end
             end
         end
-        return true
-    end
 
-    -- Highlight -----------------------------------------------------------------------------
-    local function setHighlight(block)
-        if not highlight then
-            return
-        end
-        if block and nuker.Config.Highlight and block:IsA("BasePart") then
-            highlight.Adornee = block
-            highlight.Size = block.Size
-            highlight.Color3 = Theme.Accent
-        else
-            highlight.Adornee = nil
-        end
-    end
-
-    -- Resolve DamageBlock every way CatVape / Bedwars expose it
-    local rawRemote
-    local function getRawRemote()
-        if rawRemote ~= nil then
-            return rawRemote or nil
-        end
-        rawRemote = false
-        local paths = {
-            { "rbxts_include", "node_modules", "@easy-games", "block-engine", "out", "shared", "remotes" },
-            { "rbxts_include", "node_modules", "@easy-games", "block-engine", "node_modules", "@rbxts", "net", "out", "_NetManaged", "DamageBlock" },
-        }
-        for _, path in ipairs(paths) do
-            pcall(function()
-                local node = ReplicatedStorage
-                for _, name in ipairs(path) do
-                    node = node and node:FindFirstChild(name)
-                end
-                if not node then
-                    return
-                end
-                if node.Name == "DamageBlock" then
-                    rawRemote = node
-                    return
-                end
-                local ok, client = pcall(function()
-                    return require(node).BlockEngineRemotes.Client
+        if cfg.Animation and os.clock() - (stats.LastAnimation or 0) >= 0.18 then
+            stats.LastAnimation = os.clock()
+            task.spawn(function()
+                local animation
+                pcall(function()
+                    animation = Bedwars.AnimationUtil:playAnimation(LocalPlayer, controller:getAnimationController():getAssetId(1))
                 end)
-                if ok and client and type(client.Get) == "function" then
-                    local h = client:Get("DamageBlock")
-                    if h then
-                        rawRemote = h
-                    end
+                pcall(function()
+                    Bedwars.ViewmodelController:playAnimation(15)
+                end)
+                task.wait(0.3)
+                if animation then
+                    pcall(function()
+                        animation:Stop()
+                        animation:Destroy()
+                    end)
                 end
             end)
-            if rawRemote and rawRemote ~= false then
-                break
-            end
-        end
-        return rawRemote or nil
-    end
-
-    local function fireDamage(remote, payload)
-        if not remote then
-            return false
-        end
-        local ok = pcall(function()
-            if type(remote.CallServerAsync) == "function" then
-                remote:CallServerAsync(payload)
-            elseif type(remote.CallServer) == "function" then
-                remote:CallServer(payload)
-            elseif type(remote.InvokeServer) == "function" then
-                remote:InvokeServer(payload)
-            elseif type(remote.FireServer) == "function" then
-                remote:FireServer(payload)
-            elseif remote:IsA("RemoteFunction") then
-                remote:InvokeServer(payload)
-            elseif remote:IsA("RemoteEvent") then
-                remote:FireServer(payload)
-            else
-                error("no send method")
-            end
-        end)
-        return ok
-    end
-
-    -- Pending hits: don't spam the same cell until the previous request finishes / times out
-    local pendingHits = {} -- [cellKey] = expireTime
-    local lastGlobalHit = 0
-
-    local function sendHit(block, cell, worldPos)
-        if not block or not block.Parent then
-            return false
-        end
-        local pos = block.Position
-        worldPos = worldPos or pos
-        if not cell then
-            cell = cellOf(pos)
-        end
-        local key = string.format("%d,%d,%d", cell.X, cell.Y, cell.Z)
-        local now = os.clock()
-        if pendingHits[key] and now < pendingHits[key] then
-            return true -- still waiting on previous hit; treat as active so loop keeps this target
-        end
-        if now - lastGlobalHit < 0.05 then
-            return true
         end
 
-        -- CatVape exact layout: blockPosition = grid cell, hitPosition = world position of block
-        local payload = {
-            blockRef = { blockPosition = cell },
-            hitPosition = worldPos,
-            hitNormal = Vector3.new(0, 1, 0),
-        }
-
-        local remote = nil
-        if Bedwars.DamageBlockRemotes then
-            pcall(function()
-                remote = Bedwars.DamageBlockRemotes:Get("DamageBlock")
-            end)
-        end
-        if not remote then
-            remote = getRawRemote()
-        end
-        if not remote then
-            return false
-        end
-
-        local sent = false
-        local promise
-        pcall(function()
-            if type(remote.CallServerAsync) == "function" then
-                promise = remote:CallServerAsync(payload)
-                sent = true
-            elseif type(remote.CallServer) == "function" then
-                remote:CallServer(payload)
-                sent = true
-            elseif type(remote.InvokeServer) == "function" then
-                remote:InvokeServer(payload)
-                sent = true
-            elseif type(remote.FireServer) == "function" then
-                remote:FireServer(payload)
-                sent = true
-            elseif remote:IsA("RemoteFunction") then
-                remote:InvokeServer(payload)
-                sent = true
-            elseif remote:IsA("RemoteEvent") then
-                remote:FireServer(payload)
-                sent = true
-            end
-        end)
-
-        if sent then
-            lastGlobalHit = now
-            -- Hold this cell for ~game cooldown so we don't cancel mid-break
-            pendingHits[key] = now + 0.32
-            if type(promise) == "table" and type(promise.andThen) == "function" then
-                promise:andThen(function(result)
-                    stats.Reply = tostring(result)
-                    -- Allow re-hit quickly after server answers
-                    pendingHits[key] = os.clock() + 0.05
-                    if result == "destroyed" or result == "cancelled" then
-                        pathCache = {}
-                        if activeLock then
-                            activeLock.hitCell = nil
-                            activeLock.exit = nil
-                        end
+        recentlyHit[block] = os.clock()
+        local before = healthOf(block, blockPos)
+        local damage = toolDamage(hitType, breakType)
+        local remote = Bedwars.DamageBlockRemotes:Get("DamageBlock")
+        local promise = remote:CallServerAsync({
+            blockRef = { blockPosition = blockPos },
+            hitPosition = cell,
+            hitNormal = faceNormal(cell, origin),
+        })
+        stats.Sent = stats.Sent + 1
+        if type(promise) == "table" and type(promise.andThen) == "function" then
+            promise:andThen(function(result)
+                stats.Reply = tostring(result)
+                stats.Replies[stats.Reply] = (stats.Replies[stats.Reply] or 0) + 1
+                if result == "cancelled" then
+                    return
+                end
+                if not cfg.Effects then
+                    return
+                end
+                local predicted = math.max(before - damage, 0)
+                local after = (result == "destroyed") and 0 or math.min(healthOf(block, blockPos) or predicted, predicted)
+                local meta = Bedwars.ItemMeta[block.Name]
+                local maxHealth = block:GetAttribute("MaxHealth") or (meta and meta.block and meta.block.health) or math.max(before, 1)
+                pcall(function()
+                    Bedwars.BlockBreaker.updateHealthbar(Bedwars.BlockBreaker, { blockPosition = blockPos }, before, maxHealth, math.max(before - after, 0), block)
+                end)
+                pcall(function()
+                    if after <= 0 then
+                        Bedwars.BlockBreaker.breakEffect:playBreak(block.Name, blockPos, LocalPlayer)
+                    else
+                        Bedwars.BlockBreaker.breakEffect:playHit(block.Name, blockPos, LocalPlayer)
                     end
                 end)
-            end
+            end)
         end
-        return sent
     end
 
-    local function sendRaw(block, cell)
-        return sendHit(block, cell, block and block.Position)
-    end
-
-    -- Breaking ----------------------------------------------------------------------------------
-    -- Returns (true, description) when it sent a hit, (false, reason) otherwise
-    local function breakTarget(target, anchor, lock)
-        local cfg = nuker.Config
-        local handler
-        pcall(function()
-            handler = Bedwars.BlockController:getHandlerRegistry():getHandler(target.Name)
-        end)
-        local positions = {}
-        local ok, contained = pcall(function()
-            return handler and handler:getContainedPositions(target)
-        end)
-        if ok and type(contained) == "table" and next(contained) ~= nil then
-            for _, cell in pairs(contained) do
-                positions[#positions + 1] = cell * 3
-            end
-        else
-            positions[1] = cellOf(target.Position) * 3
-        end
-
-        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not root then
-            return false, "no character"
-        end
-
-        -- Keep hitting the same entry block until it is gone. Re-planning every tick made the
-        -- chosen block flip between neighbours as you moved, so each one only got a single hit.
-        local bestExit, block, cell
-        if lock and lock.exit and os.clock() - (lock.exitTime or 0) < MAX_STICK
-            and (root.Position - lock.exit).Magnitude <= 30 then
-            local held, heldCell = blockAt(lock.exit)
-            if held and held.Parent and not held:GetAttribute("NoBreak") and heldCell then
-                bestExit, block, cell = lock.exit, held, heldCell
-            else
-                lock.exit = nil
-            end
-        end
-
-        if not bestExit then
-            local bestCost = math.huge
-            for _, worldPosition in ipairs(positions) do
-                local exit, cost = findPath(target, worldPosition, cfg.Angle, anchor)
-                if exit and cost < bestCost then
-                    bestExit, bestCost = exit, cost
-                end
-            end
-            if not bestExit then
-                -- Fallback: hammer the target itself (works on exposed beds)
-                bestExit = target.Position
-                block, cell = target, cellOf(target.Position)
-            else
-                if (root.Position - bestExit).Magnitude > 35 then
-                    return false, "too far from the entry block"
-                end
-                block, cell = blockAt(bestExit)
-                if not block then
-                    block, cell = target, cellOf(target.Position)
-                end
-            end
-            if lock then
-                lock.exit, lock.exitTime = bestExit, os.clock()
-            end
-        end
-        if not block then
-            block, cell = target, cellOf(target.Position)
-        end
-        if not cell then
-            cell = cellOf(block.Position)
-        end
-        if block:GetAttribute("NoBreak") then
-            if lock then
-                lock.exit = nil
-            end
-            return false, "entry block can't be broken"
-        end
-        if not cfg.SelfBreak and block ~= target and isOwnTeamBlock(block) then
-            if lock then
-                lock.exit = nil
-            end
-            return false, "entry block is your team's"
-        end
-        if not equipFor(block) then
-            return false, "hold the right tool (Auto Tool is off)"
-        end
-
-        setHighlight(block)
-
-        -- Stick to the same world cell until it's gone (CatVape BreakFocus style)
-        if lock and lock.hitCell then
-            local world = lock.hitCell * 3
-            local still, stillCell = blockAt(world)
-            if still and still.Parent and not still:GetAttribute("NoBreak") then
-                block, cell, bestExit = still, stillCell or lock.hitCell, world
-            else
-                lock.hitCell = nil
-                lock.exit = nil
-            end
-        end
-
-        local worldHit = bestExit or block.Position
-        local sent = sendHit(block, cell, worldHit)
-
-        if sent then
-            stats.Sent = (stats.Sent or 0) + 1
-            if lock then
-                lock.hitCell = cell
-                lock.hitAt = os.clock()
-                lock.exit = worldHit
-                lock.exitTime = os.clock()
-            end
-            local key = tostring(cell)
-            if not stats.Cells[key] then
-                stats.Cells[key] = true
-                stats.Distinct = (stats.Distinct or 0) + 1
-            end
-        else
-            return false, "couldn't send the hit (remote missing?)"
-        end
-        local label = (block == target) and "breaking it" or ("digging " .. tostring(block.Name))
-        return true, label .. " x" .. tostring(stats.Sent) .. " (" .. tostring(stats.Reply) .. ")"
-    end
-
-    -- Candidates -----------------------------------------------------------------------------
-    -- A tagged object can be the block itself or a model that contains it; we always want a part.
-    local function asPart(inst)
-        if typeof(inst) ~= "Instance" then
+    -- Legit mode: only the block under your cursor
+    local cursorParams = RaycastParams.new()
+    cursorParams.FilterType = Enum.RaycastFilterType.Exclude
+    local function cursorBlock()
+        local cam = Workspace.CurrentCamera
+        if not cam then
             return nil
         end
-        if inst:IsA("BasePart") then
-            return inst
+        local point = UserInputService.TouchEnabled and cam.ViewportSize / 2 or UserInputService:GetMouseLocation()
+        local ray = cam:ViewportPointToRay(point.X, point.Y, 0)
+        local ignore = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character then
+                ignore[#ignore + 1] = plr.Character
+            end
         end
-        local found
-        pcall(function()
-            found = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
-        end)
-        return found
+        cursorParams.FilterDescendantsInstances = ignore
+        local result = Workspace:Raycast(ray.Origin, ray.Direction * 999, cursorParams)
+        return result and result.Instance, result and result.Position
     end
 
-    -- Keeps a live list of everything carrying one of the tags
-    local function trackTags(mod, tags)
-        local list = {}
-        local function add(inst)
-            local part = asPart(inst)
-            if part and not table.find(list, part) then
-                list[#list + 1] = part
-            end
-        end
-        local function remove(inst)
-            local part = asPart(inst) or inst
-            local index = table.find(list, part)
-            if index then
-                table.remove(list, index)
-            end
-        end
-        for _, tag in ipairs(tags) do
-            mod.Maid:Give(CollectionService:GetInstanceAddedSignal(tag):Connect(add))
-            mod.Maid:Give(CollectionService:GetInstanceRemovedSignal(tag):Connect(remove))
-            for _, inst in ipairs(CollectionService:GetTagged(tag)) do
-                add(inst)
-            end
-        end
-        return list, add, remove
-    end
-
-    -- One-click self check: shows what Nova can and can't see, and copies the report to the clipboard
+    -- Self check -------------------------------------------------------------------------------
     local function runDiagnostics()
         local lines = {}
         local function add(label, ok, detail)
@@ -9333,56 +9915,36 @@ do
         end
         local ready, reason = Bedwars.ResolveExtras()
         add("Bedwars found", Bedwars.Ready == true, reason)
-        add("Block engine", Bedwars.BlockController ~= nil, Bedwars.BlockController and nil or "using map lookup instead")
-        add("Hit remote (game)", Bedwars.DamageBlockRemotes ~= nil)
-        add("Hit remote (direct)", getRawRemote() ~= nil)
-        add("Item data", Bedwars.ItemMeta ~= nil)
+        add("Block engine", Bedwars.BlockController ~= nil)
+        add("Hit remote", Bedwars.DamageBlockRemotes ~= nil)
         add("Inventory", Bedwars.GetInventory() ~= nil, Bedwars.Store and nil or "store not found")
-        local tagged = #CollectionService:GetTagged("bed")
-        local named = 0
-        pcall(function()
-            for _, inst in ipairs(Workspace:GetDescendants()) do
-                if inst.Name == "bed" then
-                    named = named + 1
-                end
-            end
-        end)
-        add("Beds named 'bed' in map", named > 0, named)
-        add("Beds tagged in game", tagged > 0, tagged)
-        add("Blocks tagged in game", #CollectionService:GetTagged("block") > 0, #CollectionService:GetTagged("block"))
-        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local _, _, root = Util.GetCharacter(LocalPlayer)
         add("Your character", root ~= nil)
-        if root then
-            local nearest, nearestDistance
-            for _, inst in ipairs(CollectionService:GetTagged("bed")) do
-                local part = asPart(inst)
-                if part then
-                    local distance = (part.Position - root.Position).Magnitude
-                    if not nearestDistance or distance < nearestDistance then
-                        nearest, nearestDistance = part, distance
-                    end
+        local nearest, nearestDistance
+        for _, obj in ipairs(Workspace:GetChildren()) do
+            if obj.Name == "bed" and obj:IsA("BasePart") and root then
+                local d = (obj.Position - root.Position).Magnitude
+                if not nearestDistance or d < nearestDistance then
+                    nearest, nearestDistance = obj, d
                 end
-            end
-            if nearest then
-                add("Nearest bed", true, string.format("%.0f studs, team %s", nearestDistance, tostring(nearest:GetAttribute("Team"))))
-                local atBed, bedCell = blockAt(nearest.Position)
-                add("Bed found as a block", atBed ~= nil, bedCell and tostring(bedCell) or nil)
-                add("Not blocked (shield / own team)", passesChecks(nearest))
-                add("Game says it is breakable", isBreakable(nearest))
-                local ok2, exit = pcall(function()
-                    return findPath(nearest, cellOf(nearest.Position) * 3, 360, nil)
-                end)
-                add("Way in found", ok2 and exit ~= nil, ok2 and (exit == nil and "blocked or too far" or nil) or exit)
             end
         end
-        add("Hits sent", stats.Sent > 0, tostring(stats.Sent) .. ", last reply: " .. stats.Reply)
+        add("Beds in the map", nearest ~= nil or #CollectionService:GetTagged("bed") > 0, nearest and string.format("nearest %.0f studs", nearestDistance) or nil)
+        if nearest and Bedwars.BlockController then
+            add("Bed allowed (not shielded / not yours)", blockAllowed(nearest))
+            add("Game says it's breakable", isBreakable(nearest))
+            local ok, route = pcall(planRoute, nearest, { nearFirst = true, angle = 360, filter = blockAllowed })
+            add("Way in found", ok and route ~= nil, ok and (route == nil and "blocked or too far" or #route .. " blocks") or tostring(route))
+        end
         local counts = {}
         for reply, amount in pairs(stats.Replies) do
             counts[#counts + 1] = reply .. " x" .. amount
         end
         table.sort(counts)
+        add("Hits sent", stats.Sent > 0, tostring(stats.Sent) .. ", last reply: " .. stats.Reply)
+        add("Last idle reason", stats.LastIdle == nil, stats.LastIdle)
+        add("Loop restarts", (stats.Restarts or 0) == 0, tostring(stats.Restarts or 0))
         add("Server replies", #counts > 0, #counts > 0 and table.concat(counts, ", ") or "none yet")
-        add("Different blocks hit", true, tostring(stats.Distinct) .. " (a high number next to few 'destroyed' means hits are spread out)")
         local text = table.concat(lines, "\n")
         local copied = false
         if type(setclipboard) == "function" then
@@ -9395,300 +9957,863 @@ do
         Name = "Nuker",
         Description = "Digs through defences and breaks beds near you (Bedwars).",
         OnEnable = function(mod)
-            Bedwars.WaitExtras(4)
-            local loaded, why = Bedwars.Resolve()
-            assert(loaded, why or "Bedwars isn't loaded yet - join a match first")
-            pcall(Bedwars.ResolveExtras)
-            rawRemote = nil -- force re-resolve
-            if not Bedwars.DamageBlockRemotes and not getRawRemote() then
-                for _ = 1, 6 do
-                    task.wait(0.4)
-                    pcall(Bedwars.ResolveExtras)
-                    rawRemote = nil
-                    if Bedwars.DamageBlockRemotes or getRawRemote() then
-                        break
-                    end
-                end
-            end
-            if not (Bedwars.DamageBlockRemotes or getRawRemote()) then
-                Nova.Notify("Nuker", "DamageBlock remote not ready — will keep trying.", 5, "warn")
-            end
-
             local cfg = mod.Config
-            pathCache, toolDamage = {}, {}
-            activeLock = nil
-            stats.Replies, stats.Cells, stats.Distinct, stats.Sent = {}, {}, 0, 0
+            local alive = true
             local setStatus = makeStatusLabel(mod, "Nuker", -160)
+            plan = nil
+            lastHit = 0
+            table.clear(breakableCache)
+            stats.Sent, stats.Reply, stats.Replies, stats.LastIdle, stats.Restarts = 0, "none yet", {}, nil, 0
 
-            highlight = New("BoxHandleAdornment", {
-                Name = "NovaNuker",
-                AlwaysOnTop = true,
-                ZIndex = 2,
-                Transparency = 0.55,
-                Color3 = Theme.Accent,
-                Size = Vector3.new(3, 3, 3),
-                Parent = Workspace.CurrentCamera or Workspace,
-            })
-            mod.Maid:Give(highlight)
-            -- A tall beam on whatever bed Nova currently thinks is nearest, in range or not, so you
-            -- can see at a glance whether it's looking at the right spot.
-            bedMarker = New("BoxHandleAdornment", {
-                Name = "NovaNukerBedMarker",
-                AlwaysOnTop = true,
-                ZIndex = 1,
-                Transparency = 0.45,
-                Color3 = Theme.Warn,
-                Size = Vector3.new(1.4, 200, 1.4),
-                Adornee = nil,
-                Parent = Workspace.CurrentCamera or Workspace,
-            })
-            mod.Maid:Give(bedMarker)
             mod.Maid:Give(function()
-                highlight = nil
-                bedMarker = nil
-                pathCache = {}
-                activeLock = nil
+                alive = false
+                cleanupAll()
             end)
 
-            -- Beds: the game tags them "bed". As a backup also look for anything named "bed" in the map.
-            local beds, addBed, removeBed = trackTags(mod, { "bed" })
-            local function addNamedBed(inst)
-                if inst.Name == "bed" then
-                    addBed(inst)
+            -- Everything breakable that gets tracked while the module is on
+            local beds = {}
+            local function bedAdd(obj)
+                if obj.Name == "bed" and obj:IsA("BasePart") and not table.find(beds, obj) then
+                    beds[#beds + 1] = obj
                 end
             end
-            pcall(function()
-                for _, inst in ipairs(Workspace:GetDescendants()) do
-                    addNamedBed(inst)
+            local function bedRemove(obj)
+                local index = table.find(beds, obj)
+                if index then
+                    table.remove(beds, index)
+                end
+            end
+            for _, obj in ipairs(Workspace:GetChildren()) do
+                bedAdd(obj)
+            end
+            mod.Maid:Give(Workspace.ChildAdded:Connect(bedAdd))
+            mod.Maid:Give(Workspace.ChildRemoved:Connect(bedRemove))
+
+            local function tagList(tag)
+                local list = {}
+                local function add(inst)
+                    if inst:IsA("BasePart") and not table.find(list, inst) then
+                        list[#list + 1] = inst
+                    end
+                end
+                mod.Maid:Give(CollectionService:GetInstanceAddedSignal(tag):Connect(add))
+                mod.Maid:Give(CollectionService:GetInstanceRemovedSignal(tag):Connect(function(inst)
+                    local index = table.find(list, inst)
+                    if index then
+                        table.remove(list, index)
+                    end
+                end))
+                for _, inst in ipairs(CollectionService:GetTagged(tag)) do
+                    add(inst)
+                end
+                return list
+            end
+            local taggedBeds = tagList("bed")
+            local luckyBlocks = tagList("LuckyBlock")
+            local ironOre = tagList("iron_ore_mesh_block")
+
+            local tracked = {}
+            for _, name in ipairs(TRACKED_NAMES) do
+                tracked[name] = {}
+            end
+            local function trackAdd(obj)
+                local list = tracked[obj.Name]
+                if not list or (obj.Name == "bed" and not obj:IsA("BasePart")) then
+                    return
+                end
+                local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+                if part and not table.find(list, part) then
+                    list[#list + 1] = part
+                end
+            end
+            local function trackRemove(obj)
+                local list = tracked[obj.Name]
+                if not list then
+                    return
+                end
+                local part = obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")) or obj
+                local index = part and table.find(list, part)
+                if index then
+                    table.remove(list, index)
+                end
+                breakableCache[obj] = nil
+            end
+            mod.Maid:Give(Workspace.DescendantAdded:Connect(trackAdd))
+            mod.Maid:Give(Workspace.DescendantRemoving:Connect(trackRemove))
+            -- Scan what's already there, a slice per frame so it doesn't hitch
+            task.spawn(function()
+                local stack = { Workspace }
+                local budget = 0
+                while #stack > 0 and alive do
+                    local node = table.remove(stack)
+                    local kids = node:GetChildren()
+                    for i = 1, #kids do
+                        stack[#stack + 1] = kids[i]
+                        trackAdd(kids[i])
+                    end
+                    budget = budget + #kids
+                    if budget >= 700 then
+                        budget = 0
+                        task.wait()
+                    end
                 end
             end)
-            mod.Maid:Give(Workspace.DescendantAdded:Connect(addNamedBed))
-            mod.Maid:Give(Workspace.DescendantRemoving:Connect(removeBed))
-            -- Backup finder: looks at what is physically around you, so a bed is found even when the
-            -- game's tag or its model name isn't what we expect.
-            local scanParams
-            local lastScan = -10
-            local function looksLikeBed(inst)
-                if not inst then
-                    return false
-                end
-                if inst.Name == "bed" or CollectionService:HasTag(inst, "bed") then
-                    return true
-                end
-                -- last resort for a renamed/retagged bed: anything with "bed" in its name, excluding
-                -- obvious unrelated matches like "bedrock"
-                if nuker.Config.BroadBedMatch then
-                    local lower = string.lower(inst.Name)
-                    if string.find(lower, "bed", 1, true) and not string.find(lower, "bedrock", 1, true) then
-                        return true
-                    end
-                end
-                return false
-            end
-            local function scanForBeds(position, force)
-                if not force and os.clock() - lastScan < 1.5 then
-                    return
-                end
-                lastScan = os.clock()
-                scanParams = scanParams or OverlapParams.new()
-                local ok, parts = pcall(function()
-                    return Workspace:GetPartBoundsInRadius(position, math.max(cfg.Range, 20) + 10, scanParams)
-                end)
-                if not ok or type(parts) ~= "table" then
-                    return
-                end
-                for _, part in ipairs(parts) do
-                    local owner
-                    if looksLikeBed(part) then
-                        owner = part
-                    else
-                        local parent = part.Parent
-                        if parent and parent ~= Workspace and looksLikeBed(parent) then
-                            owner = parent
-                        elseif parent and parent.Parent and parent.Parent ~= Workspace and looksLikeBed(parent.Parent) then
-                            owner = parent.Parent
-                        end
-                    end
-                    if owner then
-                        addBed(owner)
-                    end
-                end
-            end
-            local luckyBlocks = trackTags(mod, { "LuckyBlock" })
-            local ironOre = trackTags(mod, { "iron-ore", "iron_ore_mesh_block" })
-            stats.Beds = beds
+            ensureParts(24)
 
-            local function pickTarget(position)
-                -- keep digging the same target until it is gone / out of reach
-                local held = activeLock and activeLock.target
-                if held and held.Parent and (held.Position - position).Magnitude < cfg.Range
-                    and passesChecks(held) and isBreakable(held) then
-                    return held
-                end
+            local function candidateLists()
                 local lists = {}
-                if cfg.Beds then lists[#lists + 1] = beds end
+                if cfg.Beds then
+                    lists[#lists + 1] = beds
+                    lists[#lists + 1] = tracked.bed
+                    lists[#lists + 1] = taggedBeds
+                end
+                if cfg.Tesla then lists[#lists + 1] = tracked.tesla_trap end
+                if cfg.Hive then lists[#lists + 1] = tracked.beehive end
                 if cfg.LuckyBlocks then lists[#lists + 1] = luckyBlocks end
                 if cfg.IronOre then lists[#lists + 1] = ironOre end
+                if cfg.Snow then lists[#lists + 1] = tracked.snow_pile end
+                if cfg.Pinata then lists[#lists + 1] = tracked.pinata end
+                if cfg.Crops then
+                    lists[#lists + 1] = tracked.carrot
+                    lists[#lists + 1] = tracked.melon
+                    lists[#lists + 1] = tracked.pumpkin
+                end
+                return lists
+            end
 
-                local best, bestValue = nil, math.huge
-                stats.Tracked, stats.InRange, stats.Rejected, stats.Nearest = 0, 0, 0, nil
-                stats.NearestBed, stats.NearestBedOwn = nil, false
-                for _, list in ipairs(lists) do
+            local rejects = {}   -- reason -> count, for the last target search
+            local function invalidReason(block, origin)
+                if not block or not block.Parent then
+                    return "gone"
+                end
+                if (block:GetAttribute("BedShieldEndTime") or 0) > Workspace:GetServerTimeNow() then
+                    return "bed shield up"
+                end
+                if nearestCellDistance(block, origin) >= cfg.Range then
+                    return "out of range"
+                end
+                if not blockAllowed(block) then
+                    return "protected (own team / NoBreak)"
+                end
+                -- The game's "breakable" flag is only trusted for picking a NEW target. A bed, or the
+                -- target we are already digging at, is never dropped because of it.
+                if block.Name ~= "bed" and not (plan and plan.target == block) and not isBreakable(block) then
+                    return "game says not breakable"
+                end
+                return nil
+            end
+
+            local function valid(block, origin)
+                return invalidReason(block, origin) == nil
+            end
+
+            local function pickTarget(origin)
+                table.clear(rejects)
+                if plan and plan.blatant and valid(plan.target, origin) then
+                    return plan.target
+                end
+                local best, bestValue
+                local byHealth = cfg.Mode ~= "Legit" and cfg.TargetMode == "Health"
+                for _, list in ipairs(candidateLists()) do
                     for _, block in ipairs(list) do
-                        local distance = block.Parent and (block.Position - position).Magnitude
-                        if distance and list == beds and (not stats.NearestBed or distance < stats.NearestBed) then
-                            stats.NearestBed = distance
-                            stats.NearestBedOwn = isOwnTeamBlock(block)
-                            stats.NearestBedPart = block
-                        end
-                        if distance then
-                            stats.Tracked = stats.Tracked + 1
-                            if not stats.Nearest or distance < stats.Nearest then
-                                stats.Nearest = distance
-                            end
-                            if distance < cfg.Range then
-                                stats.InRange = stats.InRange + 1
-                            end
-                        end
-                        if distance and distance < cfg.Range
-                            and passesChecks(block) and isBreakable(block) then
+                        local why = invalidReason(block, origin)
+                        if why then
+                            local key = tostring(block.Name) .. ": " .. why
+                            rejects[key] = (rejects[key] or 0) + 1
+                        else
                             local value
-                            if cfg.TargetMode == "Health" then
-                                local cell = cellOf(block.Position)
-                                value = healthOf(block, cell)
+                            if byHealth then
+                                value = block:GetAttribute("Health") or 0
                             else
-                                value = (block.Position - position).Magnitude
+                                value = nearestCellDistance(block, origin)
                             end
-                            if value < bestValue then
+                            if not bestValue or value < bestValue then
                                 best, bestValue = block, value
                             end
-                        elseif distance and distance < cfg.Range then
-                            stats.Rejected = stats.Rejected + 1
                         end
                     end
                 end
                 return best
             end
 
-            mod.Maid:Give(task.spawn(function()
-                while mod.Enabled do
-                    task.wait(1 / 30)
-                    if not mod.Enabled then
+            -- The loop runs as numbered "generations". If it ever stalls (a call that never returns),
+            -- the watchdog below starts a fresh one, so Nuker keeps going without toggling it.
+            local generation, loopStamp = 0, os.clock()
+            local function startLoop()
+                generation = generation + 1
+                local mine = generation
+                loopStamp = os.clock()
+                task.spawn(function()
+                while alive and mod.Enabled and mine == generation do
+                    task.wait(1 / math.max(tonumber(cfg.UpdateRate) or 60, 1))
+                    if not (alive and mod.Enabled and mine == generation) then
                         break
                     end
-                    toolDamage = {}
-                    breakableCache = setmetatable({}, { __mode = "k" })
+                    loopStamp = os.clock()
+
+                    if not (Bedwars.BlockController and Bedwars.DamageBlockRemotes) then
+                        pcall(Bedwars.ResolveExtras)
+                        setStatus(cfg.StatusLine ~= false, "waiting for the game's block system...")
+                        continue
+                    end
+
                     local _, _, root = Util.GetCharacter(LocalPlayer)
-                    local acted = false
+                    local blocked
                     if not root then
-                        setStatus(cfg.StatusLine ~= false, "waiting for character")
-                    elseif LocalPlayer:GetAttribute("DenyBlockBreak") then
-                        setStatus(cfg.StatusLine ~= false, "can't break blocks right now")
+                        blocked = "waiting for character"
                     elseif cfg.RequireMouseDown and not Util.IsMouseDown(false) then
-                        setStatus(cfg.StatusLine ~= false, "hold left click")
-                    else
-                        local ok, result, info = pcall(function()
-                            if cfg.Beds then
-                                scanForBeds(root.Position)
-                            end
-                            local target = pickTarget(root.Position)
-                            if bedMarker then
-                                local part = cfg.ShowNearestBed and stats.NearestBedPart
-                                -- Size.Y = 200 and no CFrame offset centers the pillar on the bed itself,
-                                -- so it reaches well above and below it either way.
-                                bedMarker.Adornee = (part and part.Parent) and part or nil
-                            end
-                            if not target then
-                                activeLock = nil
-                                if stats.Tracked == 0 then
-                                    return false, "no beds/blocks found in this match yet"
-                                elseif stats.InRange == 0 then
-                                    if stats.NearestBed then
-                                        return false, string.format("no bed in range - nearest is %.0f studs away%s (range %d)",
-                                            stats.NearestBed, stats.NearestBedOwn and ", your team's" or "", cfg.Range)
-                                    end
-                                    return false, string.format("no bed found yet, nearest block %.0f studs (range %d)",
-                                        stats.Nearest or 0, cfg.Range)
-                                end
-                                return false, string.format("%d in range but not breakable (team/shield/protected)", stats.Rejected)
-                            end
+                        blocked = "hold left click"
+                    elseif cfg.LimitToItems and not holdingBreakTool() then
+                        blocked = "hold a tool that breaks blocks"
+                    elseif LocalPlayer:GetAttribute("DenyBlockBreak") then
+                        blocked = "can't break blocks right now"
+                    end
+                    if blocked then
+                        clearVisuals()
+                        setStatus(cfg.StatusLine ~= false, blocked)
+                        continue
+                    end
 
-                            -- Stay on one target (and one side of it) until it is gone, so the entry
-                            -- block doesn't change while you move.
-                            local lock = activeLock
-                            if lock and lock.target ~= target then
-                                lock = nil
+                    local ok, err = pcall(function()
+                        local origin = root.Position
+                        local target = pickTarget(origin)
+                        if not target then
+                            plan = nil
+                            clearVisuals()
+                            local why = {}
+                            for reason, amount in pairs(rejects) do
+                                why[#why + 1] = reason .. " x" .. amount
                             end
-                            if lock and lock.anchor and (lock.anchor - root.Position).Magnitude > 12 then
-                                lock.anchor = root.Position
-                                lock.exit = nil
-                            end
-                            if not lock then
-                                lock = { target = target, anchor = root.Position }
-                            end
-                            activeLock = lock
-
-                            local anchor = (cfg.TargetMode == "Distance") and lock.anchor or nil
-                            local sent, text = breakTarget(target, anchor, lock)
-                            -- Always pace hits — server drops anything faster than ~0.28s on beds
-                            local pause = math.max(tonumber(cfg.BreakSpeed) or 0.12, MIN_BED_GAP)
-                            if sent then
-                                setStatus(cfg.StatusLine ~= false, string.format("%s %.0f studs · %s", target.Name,
-                                    (target.Position - root.Position).Magnitude, tostring(text)))
-                                task.wait(pause)
-                                return true
-                            end
-                            task.wait(pause * 0.5)
-                            return false, text
-                        end)
-                        if ok then
-                            acted = result and true or false
-                            if not acted then
-                                setStatus(cfg.StatusLine ~= false, tostring(info or "idle"))
-                            end
-                        else
-                            pathCache = {}
-                            local message = tostring(result)
-                            setStatus(cfg.StatusLine ~= false, "error: " .. string.sub(message, 1, 80))
+                            table.sort(why)
+                            stats.LastIdle = #why > 0 and table.concat(why, ", ") or "no targets tracked"
+                            setStatus(cfg.StatusLine ~= false, string.format("idle - %s (last reply: %s)", string.sub(stats.LastIdle, 1, 70), stats.Reply))
+                            return
                         end
+                        local cursorMode = cfg.Mode == "Legit"
+                        local nearFirst = cursorMode or cfg.TargetMode == "Distance"
+                        local blatant = not cursorMode and nearFirst and cfg.BreakType == "Blatant"
+                        local stale = not plan or plan.target ~= target or plan.blatant ~= blatant
+                        if not stale and not blatant and ((plan.anchor - origin).Magnitude > 3 or os.clock() - plan.time > 1) then
+                            stale = true
+                        end
+                        local front, frontBlock
+                        if not stale then
+                            front, frontBlock = frontOf(plan)
+                            stale = front == nil
+                        end
+                        if stale then
+                            local route = planRoute(target, {
+                                origin = origin,
+                                anchor = origin,
+                                nearFirst = nearFirst,
+                                angle = cfg.Angle,
+                                filter = blockAllowed,
+                            })
+                            if not route then
+                                plan = nil
+                                clearVisuals()
+                                setStatus(cfg.StatusLine ~= false, tostring(target.Name) .. ": no way in")
+                                return
+                            end
+                            plan = { target = target, route = route, anchor = origin, time = os.clock(), blatant = blatant }
+                            front, frontBlock = frontOf(plan)
+                            if not front then
+                                plan = nil
+                                clearVisuals()
+                                return
+                            end
+                        end
+                        if (front - origin).Magnitude > 30 then
+                            plan = nil
+                            clearVisuals()
+                            return
+                        end
+                        drawRoute(plan.route, front)
+                        if cursorMode then
+                            local raw, hitPos = cursorBlock()
+                            local aimed = (raw and (raw == frontBlock or raw:IsDescendantOf(frontBlock)))
+                                or (hitPos and (hitPos - front).Magnitude <= 2.6)
+                            if not aimed then
+                                setHighlight(nil)
+                                setStatus(cfg.StatusLine ~= false, "aim at the highlighted block")
+                                return
+                            end
+                        end
+                        setHighlight(frontBlock)
+                        local gap = tonumber(cfg.BreakSpeed) or 0.25
+                        if cfg.BedCheck and frontBlock == target and target.Name == "bed" then
+                            gap = math.max(gap, 0.3)
+                        end
+                        if os.clock() - lastHit >= gap and holdingCorrectTool(cfg, frontBlock) then
+                            lastHit = os.clock()
+                            recentlyHit[target] = os.clock()
+                            stats.LastIdle = nil
+                            useKitAbilities(cfg)
+                            task.spawn(function()
+                                local hitOk, hitErr = pcall(hitCell, cfg, front, frontBlock, origin)
+                                if not hitOk then
+                                    stats.Reply = "hit error: " .. string.sub(tostring(hitErr), 1, 60)
+                                end
+                            end)
+                        end
+                        setStatus(cfg.StatusLine ~= false, string.format("%s %.0f studs - %s x%d (%s)",
+                            tostring(frontBlock == target and "breaking" or "digging"), (target.Position - origin).Magnitude,
+                            tostring(frontBlock.Name), stats.Sent, stats.Reply))
+                    end)
+                    if not ok then
+                        plan = nil
+                        table.clear(breakableCache)
+                        setStatus(cfg.StatusLine ~= false, "error: " .. string.sub(tostring(err), 1, 80))
                     end
-                    if not acted then
-                        setHighlight(nil)
+                end
+                end)
+            end
+            startLoop()
+            task.spawn(function()
+                while alive and mod.Enabled do
+                    task.wait(0.5)
+                    if alive and mod.Enabled and os.clock() - loopStamp > 1.5 then
+                        stats.Restarts = (stats.Restarts or 0) + 1
+                        startLoop()
                     end
+                end
+            end)
+        end,
+    })
+
+    nuker:AddSection("Mode")
+    nuker:AddOption({
+        Label = "Mode", Key = "Mode", Options = { "Normal", "Legit" }, Default = "Normal",
+        Tip = "Normal digs to the block on its own. Legit only breaks what your cursor is on.",
+    })
+    nuker:AddOption({
+        Label = "Target Mode", Key = "TargetMode", Options = { "Distance", "Health" }, Default = "Distance",
+        ShowIf = function(c) return c.Mode ~= "Legit" end,
+        Tip = "Distance digs in from the side closest to you. Health goes through the weakest blocks.",
+    })
+    nuker:AddOption({
+        Label = "Break Type", Key = "BreakType", Options = { "Legit", "Blatant" }, Default = "Legit",
+        ShowIf = function(c) return c.Mode ~= "Legit" and c.TargetMode == "Distance" end,
+        Tip = "Legit re-picks the best path near you as you move. Blatant picks one and sticks to it.",
+    })
+    nuker:AddSection("Range & Speed")
+    nuker:AddSlider({ Label = "Break Range", Key = "Range", Min = 1, Max = 30, Default = 30, Step = 1, Suffix = " studs", Tip = "How far away a block can be for you to hit it." })
+    nuker:AddSlider({ Label = "Break Angle", Key = "Angle", Min = 0, Max = 360, Default = 360, Step = 5, Suffix = "°", Tip = "Only dig through blocks inside this cone in front of your camera." })
+    nuker:AddSlider({ Label = "Break Speed", Key = "BreakSpeed", Min = 0, Max = 0.3, Default = 0.25, Step = 0.01, Suffix = "s", Tip = "Wait between hits. Lower is faster." })
+    nuker:AddSlider({ Label = "Update Rate", Key = "UpdateRate", Min = 1, Max = 120, Default = 60, Step = 1, Tip = "How often it checks for blocks." })
+    nuker:AddSection("Targets")
+    nuker:AddToggle({ Label = "Break Bed", Key = "Beds", Default = true })
+    nuker:AddToggle({ Label = "Bed Check", Key = "BedCheck", Default = false, ShowIf = function(c) return c.Beds end, Tip = "Slows down to the normal speed once you're actually hitting the bed." })
+    nuker:AddToggle({ Label = "Break Lucky Block", Key = "LuckyBlocks", Default = true })
+    nuker:AddToggle({ Label = "Break Iron Ore", Key = "IronOre", Default = true })
+    nuker:AddToggle({ Label = "Break Snow", Key = "Snow", Default = false })
+    nuker:AddToggle({ Label = "Break Tesla", Key = "Tesla", Default = true })
+    nuker:AddToggle({ Label = "Break Hive", Key = "Hive", Default = true })
+    nuker:AddToggle({ Label = "Break Pinata", Key = "Pinata", Default = false })
+    nuker:AddToggle({ Label = "Break Crops", Key = "Crops", Default = false, Tip = "Breaks Farmer Cletus crops (carrot and so on)." })
+    nuker:AddToggle({ Label = "Self Break", Key = "SelfBreak", Default = false, Tip = "Also break your own bed and blocks you or your team placed." })
+    nuker:AddSection("Behaviour")
+    nuker:AddToggle({ Label = "Auto Tool", Key = "AutoTool", Default = true, Tip = "Swaps to the right tool while you're holding a tool. Off = it waits until you hold the right one." })
+    nuker:AddToggle({ Label = "Limit to Items", Key = "LimitToItems", Default = false, Tip = "Only works while you hold something that can break blocks." })
+    nuker:AddToggle({ Label = "Require Mouse Down", Key = "RequireMouseDown", Default = false, Tip = "Only digs while you hold left click." })
+    nuker:AddToggle({ Label = "Yeti Breaker", Key = "YetiBreaker", Default = false, Tip = "Uses the Yeti roar while you're nuking." })
+    nuker:AddToggle({ Label = "Ragnar", Key = "RagnarBreaker", Default = false, Tip = "Uses the Berserker rage while you're nuking." })
+    nuker:AddSection("Visuals")
+    nuker:AddToggle({ Label = "Show Healthbar & Effects", Key = "Effects", Default = true, Tip = "The game's own block health bar and break effects." })
+    nuker:AddToggle({ Label = "Animation", Key = "Animation", Default = false, Tip = "Plays the swing animation while you dig." })
+    nuker:AddToggle({ Label = "Show Path", Key = "ShowPath", Default = true, Tip = "Shows the blocks it's digging through." })
+    nuker:AddToggle({ Label = "Block Highlight", Key = "Highlight", Default = true, Tip = "Box around the block being hit." })
+    nuker:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
+    nuker:AddButton({ Label = "Run Self Check", Tip = "Tests every step Nuker needs and reports which one fails.", Callback = runDiagnostics })
+    nuker:AddNote("Bedwars only. It never touches your own team's blocks unless Self Break is on.")
+end
+
+-- ====================== MODULE: CLOSET PACK ======================
+-- Low-key helpers meant to look like normal play: Auto Clicker, Trigger Bot, Pickup Range, Scaffold
+-- and Block In. Ported from aerov4 and rewritten against Nova's own Bedwars bridge. Nothing here
+-- flies, teleports or changes your movement.
+do
+    local CollectionService = service("CollectionService")
+    local ReplicatedStorage = service("ReplicatedStorage")
+    local rng = Random.new()
+
+    -- Shared helpers ---------------------------------------------------------------------------
+    local function heldName()
+        local char = LocalPlayer.Character
+        local hand = char and char:FindFirstChild("HandInvItem")
+        local item = hand and hand.Value
+        return item and item.Name or nil
+    end
+
+    local function metaOf(name)
+        return name and Bedwars.ItemMeta and Bedwars.ItemMeta[name] or nil
+    end
+
+    local function holdingSword()
+        local item = Bedwars.GetHeldSword and Bedwars.GetHeldSword()
+        return item ~= nil
+    end
+
+    local function uiBusy()
+        if UserInputService:GetFocusedTextBox() then
+            return true
+        end
+        local ok, open = pcall(function()
+            local state = Bedwars.Store and Bedwars.Store:getState()
+            return state and state.Inventory and state.Inventory.open
+        end)
+        return ok and open == true
+    end
+
+    local function pickBetween(low, high)
+        low, high = tonumber(low) or 7, tonumber(high) or 7
+        if high < low then
+            low, high = high, low
+        end
+        if high - low < 0.01 then
+            return low
+        end
+        return rng:NextNumber(low, high)
+    end
+
+    local function sameTeam(plr)
+        local mine, theirs = LocalPlayer:GetAttribute("Team"), plr and plr:GetAttribute("Team")
+        if mine ~= nil and theirs ~= nil then
+            return mine == theirs
+        end
+        return plr ~= nil and Util.IsTeammate(plr)
+    end
+
+    local function worldBlockAt(position)
+        local controller = Bedwars.BlockController
+        if not controller then
+            return nil
+        end
+        return controller:getStore():getBlockAt(controller:getBlockPosition(position))
+    end
+
+    local function snap(position)
+        return Vector3.new(math.round(position.X / 3) * 3, math.round(position.Y / 3) * 3, math.round(position.Z / 3) * 3)
+    end
+
+    -- Block placing: the game's own BlockPlacer (same thing the client uses when you right-click)
+    local placer, placerRetry = nil, 0
+    local function getPlacer()
+        if placer then
+            return placer
+        end
+        if os.clock() < placerRetry then
+            return nil
+        end
+        placerRetry = os.clock() + 2
+        local ok, value = pcall(function()
+            local engine = require(LocalPlayer.PlayerScripts.TS.lib["block-engine"]["client-block-engine"]).ClientBlockEngine
+            local class = require(ReplicatedStorage.rbxts_include.node_modules["@easy-games"]["block-engine"].out.client.placement["block-placer"]).BlockPlacer
+            return class.new(engine, "wool_white")
+        end)
+        if ok then
+            placer = value
+        end
+        return placer
+    end
+
+    local function placeBlockAt(position, itemType)
+        local active = getPlacer()
+        if not (active and Bedwars.BlockController) then
+            return false
+        end
+        active.blockType = itemType
+        local ok, result = pcall(function()
+            return active:placeBlock(Bedwars.BlockController:getBlockPosition(position))
+        end)
+        return ok and result
+    end
+
+    -- A block item to place with. `heldOnly` = only what you're already holding.
+    local function pickBlockItem(heldOnly)
+        local held = heldName()
+        local heldMeta = metaOf(held)
+        if heldMeta and heldMeta.block then
+            return held
+        end
+        if heldOnly or holdingSword() then
+            return nil
+        end
+        local inventory = Bedwars.GetInventory()
+        local fallback
+        for _, item in pairs(inventory and inventory.inventory.items or {}) do
+            local meta = metaOf(item.itemType)
+            if meta and meta.block and (item.amount or 0) > 0 then
+                if string.find(item.itemType, "wool", 1, true) then
+                    return item.itemType
+                end
+                fallback = fallback or item.itemType
+            end
+        end
+        return fallback
+    end
+
+    -- Auto Clicker ----------------------------------------------------------------------------------
+    local function placeAtMouse()
+        local controller = Bedwars.Knit and Bedwars.Knit.Controllers.BlockPlacementController
+        local blockPlacer = controller and controller.blockPlacer
+        if not blockPlacer then
+            return
+        end
+        local info = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0)
+        if info and info.placementPosition == info.placementPosition then
+            task.spawn(blockPlacer.placeBlock, blockPlacer, info.placementPosition)
+        end
+    end
+
+    local autoClicker = Tabs.Combat:CreateModule({
+        Name = "Auto Clicker",
+        Description = "Hold left click and it keeps swinging or placing at a steady, slightly random CPS.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            pcall(Bedwars.ResolveExtras)
+            local pressedAt
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    local wait = 0.03
+                    local down = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                    if down and not uiBusy() then
+                        pressedAt = pressedAt or os.clock()
+                        -- A normal quick click is left alone; it only takes over once you hold
+                        if os.clock() - pressedAt >= 0.12 and Bedwars.Ready then
+                            local meta = metaOf(heldName())
+                            local cps
+                            if meta and meta.block and cfg.PlaceBlocks then
+                                pcall(placeAtMouse)
+                                cps = pickBetween(cfg.BlockMin, cfg.BlockMax)
+                            elseif cfg.SwingSwords and holdingSword() then
+                                pcall(function()
+                                    Bedwars.SwordController:swingSwordAtMouse(0.39)
+                                end)
+                                cps = pickBetween(cfg.MinCPS, cfg.MaxCPS)
+                            end
+                            if cps then
+                                wait = 1 / math.max(cps, 1)
+                            end
+                        end
+                    else
+                        pressedAt = nil
+                    end
+                    task.wait(wait)
                 end
             end))
         end,
     })
+    autoClicker:AddSection("Sword")
+    autoClicker:AddToggle({ Label = "Swing Swords", Key = "SwingSwords", Default = true })
+    autoClicker:AddSlider({ Label = "Min CPS", Key = "MinCPS", Min = 1, Max = 12, Default = 7, Step = 0.5, ShowIf = function(c) return c.SwingSwords ~= false end })
+    autoClicker:AddSlider({ Label = "Max CPS", Key = "MaxCPS", Min = 1, Max = 12, Default = 8, Step = 0.5, ShowIf = function(c) return c.SwingSwords ~= false end })
+    autoClicker:AddSection("Blocks")
+    autoClicker:AddToggle({ Label = "Place Blocks", Key = "PlaceBlocks", Default = true })
+    autoClicker:AddSlider({ Label = "Block Min CPS", Key = "BlockMin", Min = 1, Max = 20, Default = 10, Step = 1, ShowIf = function(c) return c.PlaceBlocks ~= false end })
+    autoClicker:AddSlider({ Label = "Block Max CPS", Key = "BlockMax", Min = 1, Max = 20, Default = 12, Step = 1, ShowIf = function(c) return c.PlaceBlocks ~= false end })
+    autoClicker:AddNote("Bedwars only. Only starts after you hold the button for a moment, so normal clicks stay normal.")
 
-    nuker:AddSection("Targets")
-    nuker:AddToggle({ Label = "Break Beds", Key = "Beds", Default = true })
-    nuker:AddToggle({ Label = "Break Lucky Blocks", Key = "LuckyBlocks", Default = true })
-    nuker:AddToggle({ Label = "Break Iron Ore", Key = "IronOre", Default = true })
-    nuker:AddToggle({ Label = "Self Break", Key = "SelfBreak", Default = false, Tip = "Also break your own bed and blocks you or your team placed." })
-    nuker:AddOption({
-        Label = "Target Mode", Key = "TargetMode", Options = { "Distance", "Health" }, Default = "Distance",
-        Tip = "Distance digs in from the side closest to you. Health goes through the weakest blocks.",
+    -- Trigger Bot ----------------------------------------------------------------------------------
+    local triggerBot = Tabs.Combat:CreateModule({
+        Name = "Trigger Bot",
+        Description = "Swings your sword on its own when an enemy is in range and you're facing them.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            pcall(Bedwars.ResolveExtras)
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    local swung = false
+                    if Bedwars.Ready and not uiBusy() and holdingSword() then
+                        local _, _, root = Util.GetCharacter(LocalPlayer)
+                        local cam = Workspace.CurrentCamera
+                        if root and cam then
+                            local look = cam.CFrame.LookVector
+                            local limit = math.cos(math.rad(math.clamp(tonumber(cfg.Angle) or 30, 5, 180)))
+                            for _, entry in ipairs(Util.GetTargets(cfg.NPCs and "Players + NPCs" or "Players")) do
+                                local offset = entry.Root.Position - root.Position
+                                local distance = offset.Magnitude
+                                if distance <= (cfg.Range or 12) and distance > 0.05
+                                    and not (entry.Player and sameTeam(entry.Player))
+                                    and look:Dot(offset.Unit) >= limit then
+                                    pcall(function()
+                                        Bedwars.SwordController:swingSwordAtMouse()
+                                    end)
+                                    swung = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    task.wait(swung and 1 / math.max(pickBetween(cfg.MinCPS, cfg.MaxCPS), 1) or 0.05)
+                end
+            end))
+        end,
     })
-    nuker:AddSection("Range")
-    nuker:AddSlider({ Label = "Range", Key = "Range", Min = 1, Max = 50, Default = 30, Step = 1, Suffix = " studs", Tip = "How far away a target can be." })
-    nuker:AddToggle({
-        Label = "Show Nearest Bed", Key = "ShowNearestBed", Default = true,
-        Tip = "Draws a tall marker through whichever bed Nova currently thinks is closest, in range or not - use it to check Nova is looking at the right one.",
+    triggerBot:AddSlider({ Label = "Range", Key = "Range", Min = 3, Max = 18, Default = 12, Step = 0.5, Suffix = " studs" })
+    triggerBot:AddSlider({ Label = "Facing Angle", Key = "Angle", Min = 5, Max = 180, Default = 30, Step = 5, Suffix = "°", Tip = "How close to the middle of your screen they have to be." })
+    triggerBot:AddSlider({ Label = "Min CPS", Key = "MinCPS", Min = 1, Max = 12, Default = 7, Step = 0.5 })
+    triggerBot:AddSlider({ Label = "Max CPS", Key = "MaxCPS", Min = 1, Max = 12, Default = 8, Step = 0.5 })
+    triggerBot:AddToggle({ Label = "Include NPCs", Key = "NPCs", Default = false })
+
+    -- Pickup Range ---------------------------------------------------------------------------------
+    local pickupRemote
+    local function getPickupRemote()
+        if pickupRemote and pickupRemote.Parent then
+            return pickupRemote
+        end
+        local node = ReplicatedStorage
+        for _, name in ipairs({ "rbxts_include", "node_modules", "@rbxts", "net", "out", "_NetManaged", "PickupItemDrop" }) do
+            node = node and node:FindFirstChild(name)
+        end
+        pickupRemote = node
+        return pickupRemote
+    end
+
+    local pickup = Tabs.Utility:CreateModule({
+        Name = "Pickup Range",
+        Description = "Picks up dropped items from farther away than normal.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local pending = setmetatable({}, { __mode = "k" })
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    local _, hum, root = Util.GetCharacter(LocalPlayer)
+                    local remote = getPickupRemote()
+                    if root and hum and hum.Health > 0 and remote then
+                        local range = cfg.Range or 10
+                        local now = tick()
+                        local drops = CollectionService:GetTagged("ItemDrop")
+                        if #drops == 0 then
+                            local cache = Workspace:FindFirstChild("ItemDropsCache")
+                            drops = cache and cache:GetChildren() or {}
+                        end
+                        for _, drop in ipairs(drops) do
+                            if drop:IsA("BasePart") and drop.Parent
+                                and (not pending[drop] or pending[drop] < now)
+                                and now - (drop:GetAttribute("ClientDropTime") or 0) >= 2
+                                and (drop.Position - root.Position).Magnitude <= range
+                                and not (cfg.FeetCheck and root.Position.Y - drop.Position.Y < hum.HipHeight - 1) then
+                                pending[drop] = now + 0.5
+                                task.spawn(function()
+                                    local delay = (cfg.Delay or 0) / 1000
+                                    if delay > 0 then
+                                        task.wait(delay)
+                                    end
+                                    pcall(function()
+                                        remote:InvokeServer({ itemDrop = drop })
+                                    end)
+                                end)
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+            end))
+        end,
     })
-    nuker:AddToggle({
-        Label = "Broad Bed Match", Key = "BroadBedMatch", Default = false,
-        Tip = "If the marker above never lines up with a real bed, try this: it matches anything with \"bed\" in its name, not just the game's own tag.",
+    pickup:AddSlider({ Label = "Range", Key = "Range", Min = 1, Max = 10, Default = 10, Step = 1, Suffix = " studs" })
+    pickup:AddSlider({ Label = "Delay", Key = "Delay", Min = 0, Max = 500, Default = 0, Step = 10, Suffix = " ms" })
+    pickup:AddToggle({ Label = "Feet Check", Key = "FeetCheck", Default = false, Tip = "Ignore items below your feet." })
+
+    -- Scaffold ---------------------------------------------------------------------------------------
+    local NEIGHBOURS = {}
+    for x = -3, 3, 3 do
+        for y = -3, 3, 3 do
+            for z = -3, 3, 3 do
+                if x ~= 0 or y ~= 0 or z ~= 0 then
+                    NEIGHBOURS[#NEIGHBOURS + 1] = Vector3.new(x, y, z)
+                end
+            end
+        end
+    end
+    local SIDES = { Vector3.new(3, 0, 0), Vector3.new(-3, 0, 0), Vector3.new(0, 0, 3), Vector3.new(0, 0, -3) }
+
+    local function touchesBlock(position)
+        for _, offset in ipairs(NEIGHBOURS) do
+            if worldBlockAt(position + offset) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function supported(position)
+        if worldBlockAt(position - Vector3.new(0, 3, 0)) then
+            return true
+        end
+        for _, offset in ipairs(SIDES) do
+            if worldBlockAt(position + offset) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function nearCorner(cell, position)
+        local low, high = cell - Vector3.new(3, 3, 3), cell + Vector3.new(3, 3, 3)
+        local away = position - cell
+        if away.Magnitude < 0.001 then
+            return position
+        end
+        local target = cell + away.Unit * 100
+        return Vector3.new(math.clamp(target.X, low.X, high.X), math.clamp(target.Y, low.Y, high.Y), math.clamp(target.Z, low.Z, high.Z))
+    end
+
+    -- Nearest spot around `position` where a block could actually be attached
+    local function closestAttachPoint(position)
+        local controller = Bedwars.BlockController
+        if not controller then
+            return nil
+        end
+        local radius = Vector3.new(21, 21, 21)
+        local from = controller:getBlockPosition(position - radius)
+        local to = controller:getBlockPosition(position + radius)
+        local store = controller:getStore()
+        local best, bestDistance = nil, 60
+        for x = from.X, to.X do
+            for y = from.Y, to.Y do
+                for z = from.Z, to.Z do
+                    local cell = Vector3.new(x, y, z)
+                    if store:getBlockAt(cell) then
+                        local point = nearCorner(cell * 3, position)
+                        local distance = (position - point).Magnitude
+                        if distance < bestDistance and supported(point) then
+                            best, bestDistance = point, distance
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local scaffold = Tabs.World:CreateModule({
+        Name = "Scaffold",
+        Description = "Places blocks under your feet as you walk, so you can bridge without stopping.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            pcall(Bedwars.ResolveExtras)
+            local lastPlace, nextSearch = 0, 0
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    local _, hum, root = Util.GetCharacter(LocalPlayer)
+                    if Bedwars.Ready and root and hum and hum.Health > 0 and not uiBusy()
+                        and not (cfg.RequireMouse and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)) then
+                        local item = pickBlockItem(cfg.LimitToItems)
+                        if item then
+                            if cfg.Tower and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                                local v = root.AssemblyLinearVelocity
+                                root.AssemblyLinearVelocity = Vector3.new(v.X, 38, v.Z)
+                            end
+                            local down = cfg.Downwards and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                            for step = math.floor(cfg.Expand or 1), 1, -1 do
+                                local spot = snap(root.Position - Vector3.new(0, hum.HipHeight + (down and 4.5 or 1.5), 0) + hum.MoveDirection * (step * 3))
+                                if not worldBlockAt(spot) and os.clock() - lastPlace >= (cfg.Delay or 0) / 1000 then
+                                    local target
+                                    if touchesBlock(spot) then
+                                        target = spot
+                                    elseif os.clock() >= nextSearch then
+                                        target = closestAttachPoint(spot)
+                                        if not target then
+                                            nextSearch = os.clock() + 0.25   -- nothing to attach to, don't rescan every tick
+                                        end
+                                    end
+                                    if target then
+                                        task.spawn(placeBlockAt, target, item)
+                                        lastPlace = os.clock()
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.03)
+                end
+            end))
+        end,
     })
-    nuker:AddSlider({ Label = "Break Angle", Key = "Angle", Min = 0, Max = 360, Default = 360, Step = 5, Suffix = "°", Tip = "Only dig through blocks inside this cone in front of your camera." })
-    nuker:AddSlider({ Label = "Break Speed", Key = "BreakSpeed", Min = 0, Max = 0.3, Default = 0.12, Step = 0.01, Suffix = "s", Tip = "Wait between hits. Lower is faster." })
-    nuker:AddSection("Behaviour")
-    nuker:AddToggle({ Label = "Auto Tool", Key = "AutoTool", Default = true, Tip = "Swaps to the right tool by itself. Off = it waits until you hold it." })
-    nuker:AddToggle({ Label = "Require Mouse Down", Key = "RequireMouseDown", Default = false, Tip = "Only dig while you hold left click." })
-    nuker:AddToggle({ Label = "Limit to Items", Key = "LimitToItems", Default = false, Tip = "Only dig while you hold something that can break blocks." })
-    nuker:AddToggle({ Label = "Block Highlight", Key = "Highlight", Default = true, Tip = "Box the block being hit." })
-    nuker:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
-    nuker:AddButton({ Label = "Run Self Check", Tip = "Tests every step Nuker needs and reports which one fails.", Callback = runDiagnostics })
-    nuker:AddNote("Bedwars only. It never touches your own team's blocks unless Self Break is on.")
+    scaffold:AddSlider({ Label = "Expand", Key = "Expand", Min = 1, Max = 6, Default = 1, Step = 1, Suffix = " blocks", Tip = "How many blocks ahead of you it places." })
+    scaffold:AddSlider({ Label = "Place Delay", Key = "Delay", Min = 0, Max = 200, Default = 0, Step = 10, Suffix = " ms" })
+    scaffold:AddToggle({ Label = "Downwards", Key = "Downwards", Default = true, Tip = "Hold shift to place lower." })
+    scaffold:AddToggle({ Label = "Tower", Key = "Tower", Default = false, Tip = "Hold space to build straight up." })
+    scaffold:AddToggle({ Label = "Limit to Items", Key = "LimitToItems", Default = true, Tip = "Only places while you are holding blocks." })
+    scaffold:AddToggle({ Label = "Require Mouse Down", Key = "RequireMouse", Default = false })
+
+    -- Block In ---------------------------------------------------------------------------------------
+    local BLOCK_IN_CELLS = {
+        Vector3.new(0, 0, 3), Vector3.new(0, 3, 3),
+        Vector3.new(-3, 0, 0), Vector3.new(-3, 3, 0),
+        Vector3.new(0, 0, -3), Vector3.new(0, 3, -3),
+        Vector3.new(3, 0, 0), Vector3.new(3, 3, 0),
+        Vector3.new(3, 6, 0), Vector3.new(0, 6, 0),
+    }
+
+    local blockIn
+    blockIn = Tabs.World:CreateModule({
+        Name = "Block In",
+        Description = "One press: walls yourself in with the strongest blocks you have, then switches itself off.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            pcall(Bedwars.ResolveExtras)
+            task.spawn(function()
+                local _, hum, root = Util.GetCharacter(LocalPlayer)
+                if not (Bedwars.Ready and root and hum and hum.Health > 0) then
+                    Nova.Notify("Block In", "Not ready (need to be alive in a Bedwars match).", 3, "warn")
+                elseif cfg.LimitToItems and not (metaOf(heldName()) and metaOf(heldName()).block) then
+                    Nova.Notify("Block In", "Hold a block first.", 3, "warn")
+                else
+                    -- Strongest block first
+                    local choices = {}
+                    local held = heldName()
+                    if cfg.LimitToItems then
+                        choices[1] = { type = held, health = 0 }
+                    else
+                        local inventory = Bedwars.GetInventory()
+                        for _, item in pairs(inventory and inventory.inventory.items or {}) do
+                            local meta = metaOf(item.itemType)
+                            if meta and meta.block and (item.amount or 0) > 0
+                                and item.itemType ~= "tnt" and item.itemType ~= "siege_tnt" and item.itemType ~= "cannon" then
+                                choices[#choices + 1] = { type = item.itemType, health = meta.block.health or 0 }
+                            end
+                        end
+                        table.sort(choices, function(a, b)
+                            return a.health > b.health
+                        end)
+                    end
+                    if #choices == 0 then
+                        Nova.Notify("Block In", "No blocks to use.", 3, "warn")
+                    else
+                        local base = Bedwars.BlockController:getBlockPosition(root.Position) * 3
+                        for _ = 1, 3 do
+                            for _, cell in ipairs(BLOCK_IN_CELLS) do
+                                if not mod.Enabled then
+                                    break
+                                end
+                                local spot = base + cell
+                                if not worldBlockAt(spot) then
+                                    for _, choice in ipairs(choices) do
+                                        if placeBlockAt(spot, choice.type) then
+                                            break
+                                        end
+                                    end
+                                    local delay = cfg.PlaceSpeed or 0.07
+                                    if delay > 0 then
+                                        task.wait(delay)
+                                    end
+                                end
+                            end
+                            task.wait(0.08)
+                        end
+                    end
+                end
+                if mod.Enabled then
+                    mod:SetEnabled(false, true)
+                end
+            end)
+        end,
+    })
+    blockIn:AddSlider({ Label = "Place Speed", Key = "PlaceSpeed", Min = 0, Max = 0.5, Default = 0.07, Step = 0.01, Suffix = " s" })
+    blockIn:AddToggle({ Label = "Limit to Items", Key = "LimitToItems", Default = false, Tip = "Only use the block you are holding." })
 end
 
 -- ====================== MODULE: STAFF DETECTOR ======================
@@ -11957,84 +13082,96 @@ do
     antiEffect:AddToggle({ Label = "Fix WalkSpeed", Key = "FixSpeed", Default = true })
     antiEffect:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = false })
 
-    -- Reach: raises client sword ray distance + Bedwars.ReachLimit used by KA spoof math display
+    -- Reach: raises the client's own RAYCAST_SWORD_CHARACTER_DISTANCE constant, the way aero's
+    -- "Attack Range" does - bedwars.CombatConstant.RAYCAST_SWORD_CHARACTER_DISTANCE = value.
+    -- This is a DIFFERENT code path from Kill Aura: KA builds and sends its own SendHit payload
+    -- with a spoofed position (see the Range slider on Kill Aura/SERVER_SLACK above) and never
+    -- reads this constant at all, because it prefers the sword's own attackRange field whenever
+    -- the game provides one. This module instead widens the distance the CLIENT lets a *manual*
+    -- swing (click without Kill Aura) or a block-mine register at, by changing the one shared
+    -- table the game's own SwordController/BlockBreaker read that distance from. The previous
+    -- version here fell back silently whenever the write didn't stick, which looked identical to
+    -- "doing nothing" - this one resolves the table once, reapplies every frame the way aero's
+    -- does (the game can reset it), and reads the value back after writing so a rejected write
+    -- (a frozen/read-only table) shows up on the status line instead of just failing quietly.
     local reach = Tabs.Combat:CreateModule({
         Name = "Reach",
-        Description = "Extends client sword ray distance (closet — keep Extra low).",
+        Description = "Extends the client's own sword/mine reach constant (closet — keep Extra low).",
         OnEnable = function(mod)
             local cfg = mod.Config
             local setStatus = makeStatusLabel(mod, "Reach", -220)
-            local constTable, constKey, oldValue = nil, nil, nil
-            local applied = false
+            local cc, key, baseValue = nil, nil, nil
+            local lastWritten = nil
 
-            local function apply()
-                local extra = tonumber(cfg.Extra) or 1.2
-                local ready = Bedwars.Resolve()
-                if not ready then
-                    setStatus(cfg.StatusLine, "waiting for Bedwars")
-                    return
+            local function resolve()
+                if cc and key then
+                    return true
                 end
-                -- Prefer the live value Bedwars already read
-                local base = (type(Bedwars.ReachLimit) == "number" and Bedwars.ReachLimit > 0) and Bedwars.ReachLimit or 14.4
-                pcall(function()
-                    local TS = game:GetService("ReplicatedStorage"):FindFirstChild("TS")
+                local ok = pcall(function()
+                    local TS = ReplicatedStorage:FindFirstChild("TS")
                     local modu = TS and TS:FindFirstChild("combat") and TS.combat:FindFirstChild("combat-constant")
-                    if not modu then return end
-                    local ok, pack = pcall(require, modu)
-                    if not ok or type(pack) ~= "table" then return end
-                    local cc = pack.CombatConstant or pack
-                    if type(cc) ~= "table" then return end
-                    -- Find the numeric reach field (name can shift between updates)
-                    local key = "RAYCAST_SWORD_CHARACTER_DISTANCE"
-                    if type(cc[key]) ~= "number" then
-                        for k, v in pairs(cc) do
+                    if not modu then
+                        return
+                    end
+                    local pack = require(modu)
+                    local pickedCc = (type(pack) == "table" and pack.CombatConstant) or pack
+                    if type(pickedCc) ~= "table" then
+                        return
+                    end
+                    local pickedKey = "RAYCAST_SWORD_CHARACTER_DISTANCE"
+                    if type(pickedCc[pickedKey]) ~= "number" then
+                        -- Field name can shift between game updates - fall back to scanning for it
+                        for k, v in pairs(pickedCc) do
                             if type(v) == "number" and v > 10 and v < 30 and type(k) == "string"
                                 and (k:lower():find("sword", 1, true) or k:lower():find("ray", 1, true)) then
-                                key = k
+                                pickedKey = k
                                 break
                             end
                         end
                     end
-                    if type(cc[key]) == "number" then
-                        if not oldValue then
-                            oldValue = cc[key]
-                            constTable, constKey = cc, key
-                        end
-                        local target = math.clamp((oldValue or base) + extra, 12, 20)
-                        cc[key] = target
-                        Bedwars.ReachLimit = target
-                        applied = true
-                        setStatus(cfg.StatusLine, string.format("%.1f studs (+%.1f)", target, extra))
+                    if type(pickedCc[pickedKey]) == "number" then
+                        cc, key, baseValue = pickedCc, pickedKey, pickedCc[pickedKey]
                     end
                 end)
-                if not applied then
-                    -- Fallback: only bump the value KA uses for spoof ceiling awareness
-                    Bedwars.ReachLimit = math.clamp(base + extra, 12, 20)
-                    setStatus(cfg.StatusLine, string.format("limit %.1f (const missing)", Bedwars.ReachLimit))
-                end
+                return ok and cc ~= nil
             end
 
-            apply()
             mod.Maid:Give(RunService.Heartbeat:Connect(function()
-                -- Re-apply every few seconds in case the game resets the constant
-                if not mod._reachTick or os.clock() - mod._reachTick > 2 then
-                    mod._reachTick = os.clock()
-                    apply()
+                if not Bedwars.Resolve() then
+                    setStatus(cfg.StatusLine, "waiting for Bedwars")
+                    return
+                end
+                if not resolve() then
+                    setStatus(cfg.StatusLine, "combat-constant not found (Bedwars update?)")
+                    return
+                end
+                local extra = tonumber(cfg.Extra) or 1.5
+                local target = math.clamp(baseValue + extra, 12, 20)
+                if cc[key] ~= target then
+                    pcall(function()
+                        cc[key] = target
+                    end)
+                end
+                lastWritten = target
+                Bedwars.ReachLimit = target
+                if cc[key] == target then
+                    setStatus(cfg.StatusLine, string.format("%.1f studs (base %.1f +%.1f)", target, baseValue, extra))
+                else
+                    -- Write didn't stick - most likely the table is read-only on this game version
+                    setStatus(cfg.StatusLine, string.format("blocked by the game (still %.1f)", tonumber(cc[key]) or -1))
                 end
             end))
             mod.Maid:Give(function()
                 pcall(function()
-                    if constTable and constKey and oldValue then
-                        constTable[constKey] = oldValue
-                    end
-                    if type(oldValue) == "number" then
-                        Bedwars.ReachLimit = oldValue
+                    if cc and key and baseValue and cc[key] == lastWritten then
+                        cc[key] = baseValue
                     end
                 end)
+                Bedwars.ReachLimit = (type(baseValue) == "number") and baseValue or Bedwars.ReachLimit
             end)
         end,
     })
-    reach:AddSlider({ Label = "Extra Reach", Key = "Extra", Min = 0, Max = 4, Default = 1.5, Step = 0.1, Suffix = " studs", Tip = "Added on top of the game's ~14.4. Keep ≤2 for closet." })
+    reach:AddSlider({ Label = "Extra Reach", Key = "Extra", Min = 0, Max = 4, Default = 1.5, Step = 0.1, Suffix = " studs", Tip = "Added on top of the real value (reads it live, usually ~12-14.4). Only affects manual swings/mining, not Kill Aura. Keep ≤2 for closet." })
     reach:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
 
 
@@ -13247,6 +14384,8 @@ do
     local statusLabel
     local rows = {}
     local COLUMNS = 6
+    local placePanel      -- defined below ensureGui
+    local cachedUtil
 
     local function cellSize()
         return (invEsp and invEsp.Config and invEsp.Config.Size) or 28
@@ -13257,6 +14396,9 @@ do
     end
 
     local function resolveInventoryUtil()
+        if cachedUtil then
+            return cachedUtil
+        end
         local util
         local function try(path)
             local ok, mod = pcall(function()
@@ -13278,6 +14420,9 @@ do
             if mod then
                 util = try(mod)
             end
+        end
+        if util and type(util.getInventory) == "function" then
+            cachedUtil = util
         end
         return util
     end
@@ -13398,9 +14543,12 @@ do
 
     local function collect(plr)
         -- Merge all sources (Util / folder / character) so something always shows
-        local list = collectCatVape(plr)
-        local folderList = collectFolder(plr)
-        local charList = collectCharacter(plr)
+        local okA, list = pcall(collectCatVape, plr)
+        local okB, folderList = pcall(collectFolder, plr)
+        local okC, charList = pcall(collectCharacter, plr)
+        list = okA and list or {}
+        folderList = okB and folderList or {}
+        charList = okC and charList or {}
         local seen = {}
         local merged = {}
         for _, src in ipairs({ list, folderList, charList }) do
@@ -13485,7 +14633,7 @@ do
         return panel
     end
 
-    function placePanel()
+    placePanel = function()
         if not panel then return end
         local left = invEsp and invEsp.Config and invEsp.Config.Side == "Left"
         panel.AnchorPoint = Vector2.new(left and 0 or 1, 0)
@@ -13683,7 +14831,16 @@ do
             Nova.Maid:Give(shutdown)
             mod.Maid:Give(task.spawn(function()
                 while alive and mod.Enabled and not Nova.Unloaded do
-                    pcall(refreshPanel)
+                    local ok, err = pcall(refreshPanel)
+                    if not ok then
+                        -- show the failure on the panel instead of silently drawing nothing
+                        pcall(function()
+                            ensureGui()
+                            if statusLabel then
+                                statusLabel.Text = "Inv ESP error: " .. string.sub(tostring(err), 1, 70)
+                            end
+                        end)
+                    end
                     task.wait(0.3)
                 end
                 destroyInvGui()
@@ -13890,19 +15047,51 @@ do
     end
 
     -- Inventory-derived data ---------------------------------------------------------------------
+    local function inventoriesFolder()
+        return ReplicatedStorage:FindFirstChild("Inventories")
+    end
+
+    -- itemType -> amount for a player. Reads the game's InventoryUtil first (same source as the
+    -- Inventory ESP panel), falls back to ReplicatedStorage.Inventories. Cached for a moment.
+    local countsCache = setmetatable({}, { __mode = "k" })
     local function countsOf(plr)
-        local counts = {}
-        local folder = inventoriesFolder()
-        local inventory = folder and folder:FindFirstChild(plr.Name)
-        if inventory then
-            for _, child in ipairs(inventory:GetChildren()) do
-                local amount = child:GetAttribute("Amount")
-                if amount == nil and child:IsA("ValueBase") then
-                    amount = child.Value
-                end
-                counts[child.Name] = tonumber(amount) or 1
-            end
+        local cached = countsCache[plr]
+        if cached and os.clock() - cached.t < 0.25 then
+            return cached.v
         end
+        local counts = {}
+        pcall(function()
+            local util = resolveInventoryUtil()
+            if util and type(util.getInventory) == "function" then
+                if setthreadidentity then
+                    pcall(setthreadidentity, 8)
+                end
+                local inv = util.getInventory(plr)
+                if type(inv) == "table" and type(inv.items) == "table" then
+                    for _, item in pairs(inv.items) do
+                        if type(item) == "table" and item.itemType then
+                            counts[item.itemType] = (counts[item.itemType] or 0) + (tonumber(item.amount) or 1)
+                        end
+                    end
+                end
+            end
+        end)
+        if next(counts) == nil then
+            pcall(function()
+                local folder = inventoriesFolder()
+                local inventory = folder and (folder:FindFirstChild(plr.Name) or folder:FindFirstChild(tostring(plr.UserId)))
+                if inventory then
+                    for _, child in ipairs(inventory:GetChildren()) do
+                        local amount = child:GetAttribute("Amount") or child:GetAttribute("amount")
+                        if amount == nil and child:IsA("ValueBase") then
+                            amount = child.Value
+                        end
+                        counts[child.Name] = tonumber(amount) or 1
+                    end
+                end
+            end)
+        end
+        countsCache[plr] = { v = counts, t = os.clock() }
         return counts
     end
 
@@ -14075,6 +15264,22 @@ do
     end
 
     -- Tag construction -------------------------------------------------------------------------------
+    -- Billboards live in a plain Folder inside the hidden-gui container (no ScreenGui in between),
+    -- so they keep rendering when the Nova window is hidden.
+    local function ensureTagFolder()
+        if tagFolder and tagFolder.Parent then
+            return tagFolder
+        end
+        tagFolder = Instance.new("Folder")
+        tagFolder.Name = "NovaNameTags"
+        local parent
+        pcall(function()
+            parent = getGuiParent()
+        end)
+        tagFolder.Parent = parent or LocalPlayer:WaitForChild("PlayerGui")
+        return tagFolder
+    end
+
     local function buildTag(entry)
         local cfg = cfgOf()
         local size = iconSize()
@@ -14083,23 +15288,7 @@ do
         end)
         font = fontOk and font or FONT.Bold
 
-        if not tagFolder or not tagFolder.Parent then
-            -- rebuilt by OnEnable ensureFolder; last-resort parent
-            local parentGui = nil
-            pcall(function()
-                parentGui = getGuiParent()
-            end)
-            parentGui = parentGui or LocalPlayer:FindFirstChildOfClass("PlayerGui")
-            local host = Instance.new("ScreenGui")
-            host.Name = "NovaNameTagsGui"
-            host.ResetOnSpawn = false
-            host.IgnoreGuiInset = true
-            host.DisplayOrder = 99990
-            host.Parent = parentGui
-            tagFolder = Instance.new("Folder")
-            tagFolder.Name = "NovaNameTags"
-            tagFolder.Parent = host
-        end
+        ensureTagFolder()
         local gui = New("BillboardGui", {
             Name = "NovaTag",
             Size = UDim2.fromOffset(520, 220),
@@ -14113,7 +15302,7 @@ do
         local stack = New("Frame", {
             Name = "Stack",
             AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.fromScale(0.5, 1),
+            Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromOffset(0, 0),
             AutomaticSize = Enum.AutomaticSize.XY,
             BackgroundTransparency = 1,
@@ -14475,7 +15664,12 @@ do
             return true
         end
 
-        local tag = tags[entry.key] or buildTag(entry)
+        local tag = tags[entry.key]
+        if tag and not tag.gui.Parent then
+            tags[entry.key] = nil
+            tag = nil
+        end
+        tag = tag or buildTag(entry)
         tags[entry.key] = tag
         tag.gui.Adornee = head
         tag.gui.Enabled = inRange
@@ -14599,30 +15793,8 @@ do
             pcall(Bedwars.ResolveExtras)
             pcall(Bedwars.Resolve)
 
-            local tagGui
             local function ensureFolder()
-                if tagFolder and tagFolder.Parent then
-                    return tagFolder
-                end
-                -- Own ScreenGui so tags stay visible when the main Nova UI is hidden
-                if not (tagGui and tagGui.Parent) then
-                    tagGui = Instance.new("ScreenGui")
-                    tagGui.Name = "NovaNameTagsGui"
-                    tagGui.ResetOnSpawn = false
-                    tagGui.IgnoreGuiInset = true
-                    tagGui.DisplayOrder = 99990
-                    tagGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-                    pcall(function()
-                        tagGui.Parent = getGuiParent()
-                    end)
-                    if not tagGui.Parent then
-                        tagGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-                    end
-                end
-                tagFolder = Instance.new("Folder")
-                tagFolder.Name = "NovaNameTags"
-                tagFolder.Parent = tagGui
-                return tagFolder
+                return ensureTagFolder()
             end
             ensureFolder()
 
