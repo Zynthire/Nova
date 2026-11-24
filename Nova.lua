@@ -3915,6 +3915,37 @@ do
         },
     })
 
+    Controls.Section(host, "Mobile")
+    Controls.Toggle(host, {
+        Label = "Mobile Button", Key = "MobileButton", Default = true,
+        Tip = "A small draggable button to open/close Nova (RightShift doesn't exist on a touchscreen). Shown automatically on touch-only devices.",
+        Callback = function()
+            if UI.RefreshMobileButton then
+                UI.RefreshMobileButton()
+            end
+        end,
+    })
+    Controls.Toggle(host, {
+        Label = "Force On PC", Key = "MobileButtonForcePC", Default = false,
+        Tip = "Show the mobile button even with a keyboard/mouse connected.",
+        Callback = function()
+            if UI.RefreshMobileButton then
+                UI.RefreshMobileButton()
+            end
+        end,
+    })
+    Controls.ButtonRow(host, {
+        {
+            Label = "Reset Button Position",
+            Tip = "Puts the mobile button back on the right edge if it's been dragged somewhere awkward.",
+            Callback = function()
+                if UI.ResetMobileButtonPosition then
+                    UI.ResetMobileButtonPosition()
+                end
+            end,
+        },
+    })
+
     host:RefreshVisibility()
 end
 
@@ -3992,6 +4023,23 @@ Nova.Maid:Give(UserInputService.InputChanged:Connect(function(input)
         )
         UI:ClampWindow()
     end
+    -- Mobile open/close button: same drag pattern as the window above, kept separate so moving
+    -- it never touches UI.WindowDrag or the window's own position.
+    local btnDrag = UI.MobileBtnDrag
+    if btnDrag then
+        local delta = input.Position - btnDrag.StartMouse
+        if not btnDrag.Moved and delta.Magnitude > 6 then
+            btnDrag.Moved = true
+        end
+        local newPos = UDim2.new(
+            btnDrag.StartPos.X.Scale, btnDrag.StartPos.X.Offset + delta.X,
+            btnDrag.StartPos.Y.Scale, btnDrag.StartPos.Y.Offset + delta.Y
+        )
+        if UI.ClampMobileButton then
+            newPos = UI.ClampMobileButton(newPos)
+        end
+        UI.MobileBtn.Position = newPos
+    end
 end))
 
 Nova.Maid:Give(UserInputService.InputEnded:Connect(function(input)
@@ -4003,6 +4051,20 @@ Nova.Maid:Give(UserInputService.InputEnded:Connect(function(input)
         UI.WindowDrag = nil
         if release then
             pcall(release)
+        end
+        local btnDrag = UI.MobileBtnDrag
+        if btnDrag then
+            UI.MobileBtnDrag = nil
+            if btnDrag.Moved then
+                local pos = UI.MobileBtn.Position
+                Nova.Config.UI.MobileButtonPos = {
+                    XS = pos.X.Scale, XO = pos.X.Offset,
+                    YS = pos.Y.Scale, YO = pos.Y.Offset,
+                }
+            else
+                -- A tap, not a drag: open/close Nova like RightShift does.
+                UI:SetVisible(not UI.Visible)
+            end
         end
     end
 end))
@@ -4069,6 +4131,100 @@ Nova.Maid:Give(UserInputService.InputBegan:Connect(function(input)
         end
     end
 end))
+
+-- ---------------------------------------------------------------------
+-- Mobile open/close button
+-- ---------------------------------------------------------------------
+-- RightShift has nothing to bind to on a touchscreen, so this is the only way a touch-only
+-- player can open Nova at all. It's a small round button, parented to the same hidden gui as
+-- the rest of Nova (so it's no more visible to anyone else than the window is), that you can
+-- drag anywhere on screen; a tap that doesn't move it toggles the window, same as RightShift.
+-- Shown automatically on touch-only devices, and the Settings > Mobile section can force it
+-- on or off for any device, or reset its position if it gets dragged somewhere awkward.
+do
+    local BTN_SIZE = 52
+    local DEFAULT_POS = UDim2.new(1, -16, 0.6, 0)
+
+    local function isTouchOnly()
+        local ok, touch, keyboard = pcall(function()
+            return UserInputService.TouchEnabled, UserInputService.KeyboardEnabled
+        end)
+        return ok and touch and not keyboard
+    end
+
+    local btn = New("TextButton", {
+        Name = "MobileButton",
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = DEFAULT_POS,
+        Size = UDim2.fromOffset(BTN_SIZE, BTN_SIZE),
+        BackgroundColor3 = Theme.Card,
+        AutoButtonColor = false,
+        Text = "N",
+        Font = FONT.Bold,
+        TextSize = 20,
+        TextColor3 = Theme.Text,
+        Visible = false,
+        ZIndex = 50,
+        Parent = UI.Gui,
+    }, { Round(26), Stroke(Theme.StrokeHover, 1) })
+    onTheme(function()
+        btn.BackgroundColor3 = Theme.Card
+        btn.TextColor3 = Theme.Text
+    end)
+    UI.MobileBtn = btn
+
+    function UI.ClampMobileButton(pos)
+        local cam = Workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+        local ax, ay = btn.AnchorPoint.X, btn.AnchorPoint.Y
+        local minX, maxX = ax * BTN_SIZE, vp.X - (1 - ax) * BTN_SIZE
+        local minY, maxY = ay * BTN_SIZE, vp.Y - (1 - ay) * BTN_SIZE
+        local x = math.clamp(pos.X.Scale * vp.X + pos.X.Offset, minX, maxX) - ax * vp.X
+        local y = math.clamp(pos.Y.Scale * vp.Y + pos.Y.Offset, minY, maxY) - ay * vp.Y
+        return UDim2.new(pos.X.Scale, x, pos.Y.Scale, y)
+    end
+
+    local function resetPosition()
+        Nova.Config.UI.MobileButtonPos = nil
+        btn.Position = UI.ClampMobileButton(DEFAULT_POS)
+    end
+
+    local saved = Nova.Config.UI.MobileButtonPos
+    if type(saved) == "table" and saved.XS then
+        btn.Position = UI.ClampMobileButton(UDim2.new(saved.XS, saved.XO, saved.YS, saved.YO))
+    else
+        btn.Position = UI.ClampMobileButton(DEFAULT_POS)
+    end
+
+    local function refreshVisible()
+        local wanted = Nova.Config.UI.MobileButton ~= false and (isTouchOnly() or Nova.Config.UI.MobileButtonForcePC)
+        btn.Visible = wanted and true or false
+    end
+    UI.RefreshMobileButton = refreshVisible
+    refreshVisible()
+
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            UI.MobileBtnDrag = { StartMouse = input.Position, StartPos = btn.Position, Moved = false }
+        end
+    end)
+    UI:AttachTip(btn, "Drag to move, tap to open/close Nova")
+
+    Nova.Maid:Give(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+        btn.Position = UI.ClampMobileButton(btn.Position)
+    end))
+    local function watchViewport()
+        local cam = Workspace.CurrentCamera
+        if cam then
+            Nova.Maid:Give(cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                btn.Position = UI.ClampMobileButton(btn.Position)
+            end))
+        end
+    end
+    watchViewport()
+
+    UI.ResetMobileButtonPosition = resetPosition
+end
 
 -- ====================== MODULE: LIFECYCLE ======================
 function Nova.Unload(keepSaved)
@@ -9398,6 +9554,11 @@ do
         local nearFirst = opts.nearFirst
         local filter = opts.filter
         local angle = opts.angle or 360
+        local range = opts.range or 30
+        -- Why a candidate block got turned away, so a dead-end search can say something more
+        -- useful than just "no way in": diag.Seen is every breakable-looking block the Dijkstra
+        -- touched; the rest are how many of those it had to reject, and why.
+        local diag = { Seen = 0, Far = 0, Protected = 0, Angle = 0, Sealed = 0, NoLOS = 0 }
         local cells = containedCells(target)
         local targetCells = {}
         for _, cell in ipairs(cells) do
@@ -9419,7 +9580,7 @@ do
                     open = airMemo[current]
                     break
                 end
-                if (current - cell).Magnitude > 15 or head > 250 then
+                if (current - cell).Magnitude > 20 or head > 400 then
                     open = true
                     break
                 end
@@ -9458,11 +9619,17 @@ do
             return known
         end
 
-        -- Target already reachable from outside: just hit it
+        -- Target already reachable from outside: just hit it. "exposed" alone only means the cell
+        -- is topologically connected to open air *somewhere* through the structure (a flood fill,
+        -- not a straight line) - that let this fire on a bed that was still behind a wall from
+        -- where you were actually standing, and the real swing then failed because there was no
+        -- real line to it. A real line-of-sight check from the camera is what actually decides if
+        -- you can reach it right now.
         local direct, directDist
         for _, cell in ipairs(cells) do
             local d = (cell - anchor).Magnitude
-            if (cell - origin).Magnitude <= 30 and exposed(cell) and (not direct or d < directDist) then
+            if (cell - origin).Magnitude <= range and exposed(cell) and (not direct or d < directDist)
+                and Util.HasLineOfSight(cam.CFrame.Position, cell) then
                 direct, directDist = cell, d
             end
         end
@@ -9474,18 +9641,26 @@ do
         local useAngle = angle < 360 and camFlat.Magnitude > 0.01
         local halfAngle = math.rad(angle) / 2
         local function passable(block, cell)
-            if (cell - origin).Magnitude > 30 or block:GetAttribute("NoBreak") then
+            diag.Seen = diag.Seen + 1
+            if (cell - origin).Magnitude > range then
+                diag.Far = diag.Far + 1
+                return false
+            end
+            if block:GetAttribute("NoBreak") then
+                diag.Protected = diag.Protected + 1
                 return false
             end
             if filter then
                 local ok, allowed = pcall(filter, block)
                 if not ok or not allowed then
+                    diag.Protected = diag.Protected + 1
                     return false
                 end
             end
             if useAngle then
                 local flat = (cell - origin) * FLAT
                 if flat.Magnitude > 0.01 and math.acos(math.clamp(camFlat.Unit:Dot(flat.Unit), -1, 1)) > halfAngle then
+                    diag.Angle = diag.Angle + 1
                     return false
                 end
             end
@@ -9578,7 +9753,7 @@ do
         end
         local bestEntry, bestScore, bestCost
         local steps = 0
-        while #heap > 0 and steps < 6000 do
+        while #heap > 0 and steps < 15000 do
             steps = steps + 1
             local node = heapPop(heap)
             local d, cell = node[1], node[2]
@@ -9587,11 +9762,22 @@ do
                 if not nearFirst and bestScore and d >= bestScore then
                     break
                 end
-                if not targetCells[cell] and getPlacedBlock(cell) and exposed(cell) then
-                    local near = (cell - anchor).Magnitude
-                    local score = nearFirst and (near + d * 0.25) or (d + near * 0.01)
-                    if not bestScore or score < bestScore then
-                        bestEntry, bestScore, bestCost = cell, score, d
+                if not targetCells[cell] and getPlacedBlock(cell) then
+                    if not exposed(cell) then
+                        diag.Sealed = diag.Sealed + 1
+                    -- exposed() is a flood fill: it only proves this block touches open air
+                    -- *somewhere* through the structure, not that you can actually see/reach it
+                    -- from where you're standing right now (that was the "picks a block it then
+                    -- can't really hit" bug). A real line-of-sight check from the camera is the
+                    -- only part of this that matches what the server will actually accept.
+                    elseif not Util.HasLineOfSight(cam.CFrame.Position, cell) then
+                        diag.NoLOS = diag.NoLOS + 1
+                    else
+                        local near = (cell - anchor).Magnitude
+                        local score = nearFirst and (near + d * 0.25) or (d + near * 0.01)
+                        if not bestScore or score < bestScore then
+                            bestEntry, bestScore, bestCost = cell, score, d
+                        end
                     end
                 end
                 for _, face in ipairs(FACES) do
@@ -9618,7 +9804,7 @@ do
             end
         end
         if not bestEntry then
-            return nil
+            return nil, nil, diag
         end
         local route, current, guard = {}, bestEntry, 0
         while current and guard < 128 do
@@ -9772,15 +9958,36 @@ do
     end
 
     -- Hitting ---------------------------------------------------------------------------------
+    -- The old version guessed the hit face purely from the player's dominant axis of approach,
+    -- with no idea whether that face actually had anything open behind it. Against a block tucked
+    -- around a corner (the last layer of a defense is exactly that) it would often claim a face
+    -- that was still covered by another block, and the server silently drops a hit on a face that
+    -- isn't really open - that's the "ghosting" where Nuker keeps swinging and nothing happens.
+    -- This checks which of the 6 faces are actually empty first, and only picks among those.
     local function faceNormal(cell, origin)
-        local d = origin - cell
-        local ax, ay, az = math.abs(d.X), math.abs(d.Y), math.abs(d.Z)
-        if ay >= ax and ay >= az then
-            return Vector3.new(0, d.Y >= 0 and 1 or -1, 0)
-        elseif ax >= az then
-            return Vector3.new(d.X >= 0 and 1 or -1, 0, 0)
+        local toPlayer = origin - cell
+        local toPlayerUnit = toPlayer.Magnitude > 0.01 and toPlayer.Unit or Vector3.new(0, 1, 0)
+        local bestFace, bestDot
+        for _, face in ipairs(FACES) do
+            if not getPlacedBlock(cell + face) then
+                local unit = face.Unit
+                local dot = unit:Dot(toPlayerUnit)
+                if not bestFace or dot > bestDot then
+                    bestFace, bestDot = unit, dot
+                end
+            end
         end
-        return Vector3.new(0, 0, d.Z >= 0 and 1 or -1)
+        if bestFace then
+            return bestFace
+        end
+        -- Every face reads as occupied (stale block cache, most likely) - fall back to the old guess.
+        local ax, ay, az = math.abs(toPlayer.X), math.abs(toPlayer.Y), math.abs(toPlayer.Z)
+        if ay >= ax and ay >= az then
+            return Vector3.new(0, toPlayer.Y >= 0 and 1 or -1, 0)
+        elseif ax >= az then
+            return Vector3.new(toPlayer.X >= 0 and 1 or -1, 0, 0)
+        end
+        return Vector3.new(0, 0, toPlayer.Z >= 0 and 1 or -1)
     end
 
     local function holdingCorrectTool(cfg, block)
@@ -10202,17 +10409,36 @@ do
                             stale = front == nil
                         end
                         if stale then
-                            local route = planRoute(target, {
+                            local route, _, diag = planRoute(target, {
                                 origin = origin,
                                 anchor = origin,
                                 nearFirst = nearFirst,
                                 angle = cfg.Angle,
+                                range = cfg.Range,
                                 filter = blockAllowed,
                             })
                             if not route then
                                 plan = nil
                                 clearVisuals()
-                                setStatus(cfg.StatusLine ~= false, tostring(target.Name) .. ": no way in")
+                                -- Say *why* instead of just "no way in" - this is the only signal we get
+                                -- back from a failed search without being able to watch it run live.
+                                local why = "no breakable blocks found nearby"
+                                if diag then
+                                    local kinds = (diag.Sealed > 0 and 1 or 0) + (diag.Protected > 0 and 1 or 0)
+                                        + (diag.Far > 0 and 1 or 0) + (diag.NoLOS > 0 and 1 or 0)
+                                    if diag.NoLOS > 0 and kinds == 1 then
+                                        why = string.format("found %d block(s) through the gap, but can't actually see/reach any of them from here - try a different angle", diag.NoLOS)
+                                    elseif diag.Sealed > 0 and kinds == 1 then
+                                        why = string.format("fully enclosed - %d breakable block(s) found, none touch open air", diag.Sealed)
+                                    elseif diag.Protected > 0 and kinds == 1 then
+                                        why = string.format("blocked - every nearby block is protected/no-break (%d)", diag.Protected)
+                                    elseif diag.Far > 0 and kinds == 1 then
+                                        why = string.format("out of Break Range (%d block(s) further than %d studs)", diag.Far, cfg.Range or 30)
+                                    elseif diag.Seen > 0 then
+                                        why = string.format("blocked - sealed %d, protected %d, out of range %d, no line of sight %d", diag.Sealed, diag.Protected, diag.Far, diag.NoLOS)
+                                    end
+                                end
+                                setStatus(cfg.StatusLine ~= false, tostring(target.Name) .. ": no way in (" .. why .. ")")
                                 return
                             end
                             plan = { target = target, route = route, anchor = origin, time = os.clock(), blatant = blatant }
@@ -10297,7 +10523,7 @@ do
         Tip = "Legit re-picks the best path near you as you move. Blatant picks one and sticks to it.",
     })
     nuker:AddSection("Range & Speed")
-    nuker:AddSlider({ Label = "Break Range", Key = "Range", Min = 1, Max = 30, Default = 30, Step = 1, Suffix = " studs", Tip = "How far away a block can be for you to hit it." })
+    nuker:AddSlider({ Label = "Break Range", Key = "Range", Min = 1, Max = 45, Default = 30, Step = 1, Suffix = " studs", Tip = "How far away a block can be for you to hit it. Also caps how far the dig path can reach through a defense - raise this if a thick/distant defense says there's no way in." })
     nuker:AddSlider({ Label = "Break Angle", Key = "Angle", Min = 0, Max = 360, Default = 360, Step = 5, Suffix = "°", Tip = "Only dig through blocks inside this cone in front of your camera." })
     nuker:AddSlider({ Label = "Break Speed", Key = "BreakSpeed", Min = 0, Max = 0.3, Default = 0.25, Step = 0.01, Suffix = "s", Tip = "Wait between hits. Lower is faster." })
     nuker:AddSlider({ Label = "Update Rate", Key = "UpdateRate", Min = 1, Max = 120, Default = 60, Step = 1, Tip = "How often it checks for blocks." })
