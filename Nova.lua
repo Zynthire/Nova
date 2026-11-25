@@ -18299,16 +18299,39 @@ do
 end
 
 -- ====================== MODULE: DOG ======================
--- Puts your own avatar into a dog pose (on all fours) and makes it dance: it hops, spins, wiggles,
--- bows and begs in a random order with random sizes/directions, so it never loops the same way.
--- Your real character is hidden (LocalTransparencyModifier) and a copy of it - same look, same
--- clothes and accessories - is posed instead, so nothing the game does to your real joints can
--- undo the pose. All on your side only: other players see you normally. Asks before turning on.
+-- Plays the Good Boy Dog emote on your character on loop. It's a catalog emote, so its animation
+-- is owned by Roblox: it plays in any game and every player sees it, with or without Nova. Asks
+-- before turning on. A nod to the viral dog clip.
 do
     local SoundService = service("SoundService")
-    local HALF_PI, TAU = math.pi / 2, math.pi * 2
+    local EMOTE_CATALOG_ID = "100737291015384" -- Good Boy Dog Emote
 
-    local current -- the running dog, so the music settings can update it live
+    -- The catalog number is the emote item, not the animation: the real animation id is read out
+    -- of the item once (falls back to using the number directly).
+    local emoteAnimationId
+    local function resolveEmote()
+        if emoteAnimationId then
+            return emoteAnimationId
+        end
+        local found
+        pcall(function()
+            for _, root in ipairs(game:GetObjects("rbxassetid://" .. EMOTE_CATALOG_ID)) do
+                local candidates = { root }
+                for _, inst in ipairs(root:GetDescendants()) do
+                    candidates[#candidates + 1] = inst
+                end
+                for _, inst in ipairs(candidates) do
+                    if inst:IsA("Animation") and inst.AnimationId ~= "" then
+                        if not found or string.find(string.lower(inst.Name), "r15", 1, true) then
+                            found = inst.AnimationId
+                        end
+                    end
+                end
+            end
+        end)
+        emoteAnimationId = found or ("rbxassetid://" .. EMOTE_CATALOG_ID)
+        return emoteAnimationId
+    end
 
     -- "Are you sure?" popup in its own ScreenGui, above Nova's window and the Vape GUI
     local function askConfirm(maid, title, text, yesText, onAnswer)
@@ -18409,458 +18432,35 @@ do
         end)
     end
 
-    -- Joints by role, found by the body part they move (R15 or R6), not by name. Characters can
-    -- be built from classic Motor6Ds or from AnimationConstraints (Roblox's newer joint system);
-    -- both are handled: a Motor6D gets its C0 bent, an AnimationConstraint gets its Transform set.
-    local ROLE_BY_PART = {
-        LowerTorso = "Root", Torso = "Root",
-        Head = "Neck",
-        LeftUpperArm = "LeftArm", ["Left Arm"] = "LeftArm",
-        RightUpperArm = "RightArm", ["Right Arm"] = "RightArm",
-        LeftUpperLeg = "LeftLeg", ["Left Leg"] = "LeftLeg",
-        RightUpperLeg = "RightLeg", ["Right Leg"] = "RightLeg",
-        LeftLowerLeg = "LeftKnee", RightLowerLeg = "RightKnee",
-        LeftLowerArm = "LeftElbow", RightLowerArm = "RightElbow",
-    }
 
-    local function findJoints(char)
-        local found, count, kinds = {}, 0, {}
-        for _, inst in ipairs(char:GetDescendants()) do
-            local part1, info
-            if inst:IsA("Motor6D") then
-                part1 = inst.Part1
-                info = { Motor = inst, C0 = inst.C0, C1 = inst.C1, Kind = "Motor6D" }
-            elseif inst.ClassName == "AnimationConstraint" then
-                local a0, a1 = inst.Attachment0, inst.Attachment1
-                part1 = a1 and a1.Parent
-                if a0 and a1 then
-                    info = { Motor = inst, C0 = a0.CFrame, C1 = a1.CFrame, Kind = "AnimationConstraint" }
-                end
-            end
-            local role = part1 and ROLE_BY_PART[part1.Name]
-            -- the root joint is the one hanging off HumanoidRootPart (Torso/LowerTorso also have others)
-            if role == "Root" and info then
-                local part0 = info.Kind == "Motor6D" and inst.Part0 or (inst.Attachment0 and inst.Attachment0.Parent)
-                if not (part0 and part0.Name == "HumanoidRootPart") then
-                    role = nil
-                end
-            end
-            if role and info and not found[role] then
-                found[role] = info
-                count = count + 1
-                kinds[info.Kind] = true
-            end
-        end
-        return found, count, kinds
-    end
+    local current -- the running dog, so the music settings can update it live
 
-    -- A local copy of the character to pose: no scripts, no collisions, no name/health tag,
-    -- root anchored (moved by hand every frame), everything else hangs off its joints.
-    -- Things that would push the copy around (welds and accessory constraints are kept)
-    local MOVER_CLASSES = {
-        AlignPosition = true, AlignOrientation = true, LinearVelocity = true, AngularVelocity = true,
-        VectorForce = true, Torque = true, LineForce = true,
-    }
-
-    local function makeClone(char)
-        local oldArchivable = char.Archivable
-        char.Archivable = true
-        local ok, clone = pcall(function()
-            return char:Clone()
-        end)
-        char.Archivable = oldArchivable
-        if not ok or not clone then
-            return nil, tostring(clone or "Clone() returned nothing")
-        end
-        local function scrub(inst)
-            pcall(function()
-                for _, tag in ipairs(inst:GetTags()) do
-                    inst:RemoveTag(tag)
-                end
-                for name in pairs(inst:GetAttributes()) do
-                    inst:SetAttribute(name, nil)
-                end
-            end)
-        end
-        scrub(clone)
-        for _, inst in ipairs(clone:GetDescendants()) do
-            scrub(inst)
-            if inst:IsA("LuaSourceContainer") or inst:IsA("ForceField") or inst:IsA("BillboardGui")
-                or inst:IsA("Sound") or inst:IsA("BodyMover") or MOVER_CLASSES[inst.ClassName] then
-                inst:Destroy()
-            elseif inst:IsA("BasePart") then
-                pcall(function()
-                    inst.LocalTransparencyModifier = 0
-                end)
-                inst.Anchored = false
-                inst.CanCollide = false
-                inst.CanQuery = false
-                inst.CanTouch = false
-                inst.Massless = true
-            end
-        end
-        local hum = clone:FindFirstChildOfClass("Humanoid")
-        if hum then
-            pcall(function()
-                hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-                hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-                hum.PlatformStand = true
-                hum.EvaluateStateMachine = false
-            end)
-            local animator = hum:FindFirstChildOfClass("Animator")
-            if animator then
-                animator:Destroy()
-            end
-        end
-        local root = clone:FindFirstChild("HumanoidRootPart")
-        if not root then
-            clone:Destroy()
-            return nil, "the copy has no HumanoidRootPart"
-        end
-        root.Anchored = true
-        root.Transparency = 1
-        clone.Name = Util.RandomName()
-        clone.Parent = Workspace
-        return clone
-    end
-
-    local function hideCharacter(char, hidden, value)
-        for _, inst in ipairs(char:GetDescendants()) do
-            if inst:IsA("BasePart") or inst:IsA("Decal") or inst:IsA("Texture") then
-                pcall(function()
-                    inst.LocalTransparencyModifier = value and 1 or 0
-                end)
-                if value then
-                    hidden[inst] = true
-                end
-            end
-        end
-    end
-
-    -- `target` is where the joint should put the child part, in the parent part's frame (a C0)
-    local function applyJoint(info, target)
-        if not (info and info.Motor.Parent) then
-            return
-        end
-        if info.Kind == "Motor6D" then
-            info.Motor.C0 = target
-        else
-            info.Motor.Transform = info.C0:Inverse() * target
-        end
-    end
-
-    local function restoreJoint(info)
-        if not (info and info.Motor.Parent) then
-            return
-        end
-        if info.Kind == "Motor6D" then
-            info.Motor.C0 = info.C0
-        else
-            info.Motor.Transform = CFrame.new()
-        end
-    end
-
-    -- Rotates a joint around its own pivot, in the parent part's frame (works the same for R15
-    -- and R6, whose C0s carry different built-in rotations)
-    local function bend(c0, rotation)
-        return CFrame.new(c0.Position) * rotation * c0.Rotation
-    end
-
-    local function ease(p)
-        return p * p * (3 - 2 * p)
-    end
-
-    -- Dance moves: each returns its duration and a function(progress 0..1) -> pose numbers
-    local MOVES = {
-        hop = function()
-            local height = 0.7 + math.random() * 0.8
-            return 0.45 + math.random() * 0.15, function(p)
-                return { Hop = math.sin(math.pi * p) * height, Paws = math.sin(math.pi * p) * 0.6 }
-            end
-        end,
-        doubleHop = function()
-            local height = 0.5 + math.random() * 0.5
-            return 0.8, function(p)
-                return { Hop = math.abs(math.sin(TAU * p)) * height, Paws = math.abs(math.sin(TAU * p)) * 0.5 }
-            end
-        end,
-        spin = function()
-            local dir = math.random() < 0.5 and -1 or 1
-            local turns = math.random() < 0.25 and 2 or 1
-            return 0.55 + 0.25 * turns, function(p)
-                return { Spin = dir * TAU * turns * ease(p), Hop = math.sin(math.pi * p) * 0.35 }
-            end
-        end,
-        hopSpin = function()
-            local dir = math.random() < 0.5 and -1 or 1
-            local height = 1 + math.random() * 0.6
-            return 0.75, function(p)
-                return { Spin = dir * TAU * ease(p), Hop = math.sin(math.pi * p) * height, Paws = math.sin(math.pi * p) * 0.8 }
-            end
-        end,
-        wiggle = function()
-            local speed = 3 + math.random(0, 2)
-            return 0.9 + math.random() * 0.5, function(p)
-                local wave = math.sin(p * math.pi * speed * 2)
-                return { Yaw = wave * 0.35, Roll = wave * 0.12, Head = wave * 0.3 }
-            end
-        end,
-        beg = function()
-            return 1.1 + math.random() * 0.4, function(p)
-                local up = math.sin(math.pi * p)
-                return { Rear = up * 0.9, Paws = up * 0.4 + math.sin(p * math.pi * 8) * 0.35 * up, Nod = -up * 0.3 }
-            end
-        end,
-        bow = function()
-            return 0.9, function(p)
-                local down = math.sin(math.pi * p)
-                return { Rear = -down * 0.35, Nod = down * 0.35, Yaw = math.sin(p * math.pi * 6) * 0.15 * down }
-            end
-        end,
-        headBang = function()
-            return 0.8 + math.random() * 0.4, function(p)
-                return { Nod = math.sin(p * math.pi * 6) * 0.45, Hop = math.abs(math.sin(p * math.pi * 3)) * 0.2 }
-            end
-        end,
-        pause = function()
-            return 0.2 + math.random() * 0.35, function()
-                return {}
-            end
-        end,
-    }
-    local MOVE_WEIGHTS = {
-        { "hop", 4 }, { "doubleHop", 2 }, { "spin", 3 }, { "hopSpin", 3 }, { "wiggle", 2 },
-        { "beg", 1 }, { "bow", 1 }, { "headBang", 2 }, { "pause", 2 },
-    }
-    local function pickMove(last)
-        local total = 0
-        for _, entry in ipairs(MOVE_WEIGHTS) do
-            if entry[1] ~= last then
-                total = total + entry[2]
-            end
-        end
-        local roll = math.random() * total
-        for _, entry in ipairs(MOVE_WEIGHTS) do
-            if entry[1] ~= last then
-                roll = roll - entry[2]
-                if roll <= 0 then
-                    return entry[1]
-                end
-            end
-        end
-        return "hop"
-    end
-
-    -- Turns the posed copy into a dog: the held item moves from the hand into the mouth, a tail (a
-    -- thinner copy of a lower leg) is added, and with short legs the lower halves of the limbs are
-    -- hidden (shrunk on R6). Returns the tail and how high the body stands.
-    local LOWER_LIMBS = { "LeftLowerLeg", "LeftFoot", "RightLowerLeg", "RightFoot", "LeftLowerArm", "LeftHand", "RightLowerArm", "RightHand" }
-    local LEG_PARTS = { "LeftUpperLeg", "LeftLowerLeg", "LeftFoot" }
-
-    local function hidePart(part)
-        part.Transparency = 1
-        for _, inst in ipairs(part:GetDescendants()) do
-            if inst:IsA("Decal") or inst:IsA("Texture") then
-                inst.Transparency = 1
-            end
-        end
-    end
-
-    local function isToolPart(part, tools)
-        for _, tool in ipairs(tools) do
-            if part:IsDescendantOf(tool) then
-                return true
-            end
-        end
-        return false
-    end
-
-    local function dogify(clone, realChar, realHum, joints, cfg)
-        local result = {}
-        local head = clone:FindFirstChild("Head")
-        local torso = joints.Root and (joints.Root.Kind == "Motor6D" and joints.Root.Motor.Part1
-            or (joints.Root.Motor.Attachment1 and joints.Root.Motor.Attachment1.Parent))
-        local r15 = clone:FindFirstChild("LowerTorso") ~= nil
-
-        -- held item -> mouth
-        local tools = {}
-        for _, child in ipairs(clone:GetChildren()) do
-            if child:IsA("Tool") then
-                tools[#tools + 1] = child
-            end
-        end
-        local hand = clone:FindFirstChild("RightHand") or clone:FindFirstChild("Right Arm")
-        if cfg.Mouth ~= false and head and hand and #tools > 0 then
-            for _, tool in ipairs(tools) do
-                local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart", true)
-                if handle then
-                    -- cut whatever held it to the hand (welds, grips, rigid constraints)
-                    for _, inst in ipairs(clone:GetDescendants()) do
-                        local p0, p1
-                        if inst:IsA("JointInstance") or inst:IsA("WeldConstraint") then
-                            p0, p1 = inst.Part0, inst.Part1
-                        elseif inst:IsA("RigidConstraint") then
-                            p0 = inst.Attachment0 and inst.Attachment0.Parent
-                            p1 = inst.Attachment1 and inst.Attachment1.Parent
-                        end
-                        if p0 and p1 and p0:IsA("BasePart") and p1:IsA("BasePart")
-                            and isToolPart(p0, tools) ~= isToolPart(p1, tools) then
-                            inst:Destroy()
-                        end
-                    end
-                    -- the item's longest side goes sideways across the face (head's X axis), tilted a
-                    -- little, centred at mouth height - however the game happens to orient its handle
-                    local size = handle.Size
-                    local align = CFrame.new()
-                    if size.Y >= size.X and size.Y >= size.Z then
-                        align = CFrame.Angles(0, 0, -HALF_PI)
-                    elseif size.Z >= size.X and size.Z >= size.Y then
-                        align = CFrame.Angles(0, HALF_PI, 0)
-                    end
-                    New("Weld", {
-                        Part0 = head,
-                        Part1 = handle,
-                        C0 = CFrame.new(0, -head.Size.Y * 0.25, -head.Size.Z * 0.6)
-                            * CFrame.Angles(0, 0, math.rad(-20)) * align,
-                        Parent = head,
-                    })
-                end
-            end
-        end
-
-        -- tail: a thinner copy of a lower leg (keeps your pants / skin on it)
-        local tailSource = clone:FindFirstChild("LeftLowerLeg") or clone:FindFirstChild("Left Leg")
-        if tailSource and torso then
-            local tail = tailSource:Clone()
-            for _, inst in ipairs(tail:GetDescendants()) do
-                if inst:IsA("JointInstance") or inst:IsA("Attachment") or inst:IsA("Constraint")
-                    or inst:IsA("WeldConstraint") or inst:IsA("LuaSourceContainer") then
-                    inst:Destroy()
-                end
-            end
-            local size = tailSource.Size
-            tail.Size = Vector3.new(size.X * 0.5, size.Y * 0.95, size.Z * 0.5)
-            tail.Transparency = 0
-            tail.Name = "Tail"
-            tail.Anchored = false
-            tail.Massless = true
-            tail.CanCollide = false
-            tail.CanQuery = false
-            tail.CanTouch = false
-            tail.Parent = clone
-            local weld = New("Weld", { Part0 = torso, Part1 = tail, Parent = torso })
-            result.Tail = { Weld = weld, Torso = torso, Length = tail.Size.Y }
-        end
-
-        -- standing height: the hips sit on the torso's centre line, so the body centre stands one
-        -- leg length above the floor
-        local short = cfg.Legs ~= "Full"
-        local legLength = 0
-        if r15 then
-            if short then
-                for _, name in ipairs(LOWER_LIMBS) do
-                    local part = clone:FindFirstChild(name)
-                    if part then
-                        hidePart(part)
-                    end
-                end
-                local upper = clone:FindFirstChild("LeftUpperLeg")
-                legLength = upper and upper.Size.Y or 1
-            else
-                for _, name in ipairs(LEG_PARTS) do
-                    local part = clone:FindFirstChild(name)
-                    if part then
-                        legLength = legLength + part.Size.Y
-                    end
-                end
-                legLength = legLength * 0.92 -- the pieces overlap a little at the joints
-            end
-        else
-            local leg = clone:FindFirstChild("Left Leg")
-            legLength = leg and leg.Size.Y or 2
-            if short then
-                for _, name in ipairs({ "Left Leg", "Right Leg", "Left Arm", "Right Arm" }) do
-                    local part = clone:FindFirstChild(name)
-                    if part then
-                        for _, role in ipairs({ "LeftLeg", "RightLeg", "LeftArm", "RightArm" }) do
-                            local j = joints[role]
-                            if j and j.Kind == "Motor6D" and j.Motor.Part1 == part then
-                                local c1 = j.Motor.C1
-                                j.Motor.C1 = CFrame.new(c1.X, c1.Y * 0.5, c1.Z) * c1.Rotation
-                            end
-                        end
-                        part.Size = Vector3.new(part.Size.X, part.Size.Y * 0.5, part.Size.Z)
-                    end
-                end
-                legLength = legLength * 0.5
-            end
-        end
-        result.RestHeight = math.max(legLength, 0.3)
-        return result
-    end
-
-    -- Every running dog (yours and other Nova users'), so uninject can always undo all of them
-    local activeDogs = {}
-    Nova.Maid:Give(function()
-        for stop in pairs(activeDogs) do
-            pcall(stop)
-        end
-        activeDogs = {}
-    end)
-
-    -- Runs a dog for `opts.Player` (default: you) with settings `opts.Cfg` (default: the module's).
-    -- `mod` is nil for other Nova users' dogs: no status line, no notifications, no music.
-    local function startDog(mod, maid, opts)
-        opts = opts or {}
-        local player = opts.Player or LocalPlayer
-        local isLocal = player == LocalPlayer
-        local cfg = opts.Cfg or mod.Config
+    local function startDog(mod, maid)
+        local cfg = mod.Config
         local dog = {}
-        if isLocal then
-            current = dog
-        end
-        local function status(text, kind)
-            if mod then
-                mod:SetStatus(text, kind)
-            end
-        end
-        local function notify(text, duration, kind)
-            if mod and isLocal then
-                Nova.Notify("Dog", text, duration, kind, true)
-            end
-        end
-        local joints, jointChar
-        local clone, cloneRoot, shape
-        local toolKey, lastToolCheck = nil, 0
-        local groundParams = RaycastParams.new()
-        groundParams.FilterType = Enum.RaycastFilterType.Exclude
-        local hidden, lastHideScan = {}, 0
+        current = dog
+        local track, trackHum, warned = nil, nil, false
         local sound
-        local clock = 0
-        local moveName, moveTime, moveLength, moveFn = nil, 0, 0, nil
+        local stopped = false
 
-        local function restoreJoints()
-            joints = nil
-            if clone then
+        local function stopEmote()
+            if track then
                 pcall(function()
-                    clone:Destroy()
+                    track:Stop(0.2)
+                    track:Destroy()
                 end)
             end
-            clone, cloneRoot, shape = nil, nil, nil
-            for inst in pairs(hidden) do
-                pcall(function()
-                    inst.LocalTransparencyModifier = 0
-                end)
-            end
-            hidden = {}
+            track, trackHum = nil, nil
         end
 
         local function refreshSound()
             if sound then
-                sound:Destroy()
+                pcall(function()
+                    sound:Destroy()
+                end)
                 sound = nil
             end
-            local id = isLocal and string.match(tostring(cfg.Music or ""), "%d+")
+            local id = string.match(tostring(cfg.Music or ""), "%d+")
             if id then
                 sound = New("Sound", {
                     SoundId = "rbxassetid://" .. id,
@@ -18874,9 +18474,6 @@ do
         function dog.RefreshSound()
             refreshSound()
         end
-        function dog.Rebuild()
-            jointChar = nil -- rebuilds the copy next frame with the new settings
-        end
         function dog.RefreshVolume()
             if sound then
                 sound.Volume = math.clamp((tonumber(cfg.Volume) or 50) / 100, 0, 1) * 2
@@ -18884,189 +18481,44 @@ do
         end
         refreshSound()
 
-        local function nextMove()
-            moveName = pickMove(moveName)
-            moveLength, moveFn = MOVES[moveName]()
-            moveTime = 0
-        end
-
-        -- Every frame before rendering (same RenderStepped hook the rest of Nova uses). Errors are
-        -- reported once instead of failing silently.
-        local reportedError = false
-        local function step(dt)
-            clock = clock + dt
-            local char, hum = Util.GetCharacter(player)
-            if not (char and hum) or hum.Health <= 0 then
-                return
-            end
-            -- the copy is rebuilt when you respawn or switch items, so it holds what you hold
-            local currentTools = toolKey
-            if clock - lastToolCheck > 0.25 then
-                lastToolCheck = clock
-                local names = {}
-                for _, child in ipairs(char:GetChildren()) do
-                    if child:IsA("Tool") then
-                        names[#names + 1] = child.Name
-                    end
-                end
-                table.sort(names)
-                currentTools = table.concat(names, ",")
-            end
-            if char ~= jointChar or (clone and not clone.Parent) or currentTools ~= toolKey then
-                restoreJoints()
-                jointChar = char
-                toolKey = currentTools
-                local why
-                clone, why = makeClone(char)
-                if not clone then
-                    status("Couldn't copy your character: " .. tostring(why), "error")
-                    notify("Couldn't copy your character: " .. tostring(why), 5, "error")
-                    return
-                end
-                cloneRoot = clone:FindFirstChild("HumanoidRootPart")
-                groundParams.FilterDescendantsInstances = { char, clone, Workspace.CurrentCamera }
-                local count, kinds
-                joints, count, kinds = findJoints(clone)
-                if not joints.Root then
-                    status("Couldn't find your character's joints", "error")
-                    notify("Couldn't find your character's joints (found " .. count .. ")", 4, "error")
-                else
-                    local list = {}
-                    for kind in pairs(kinds) do
-                        list[#list + 1] = kind
-                    end
-                    status("Dog mode: " .. count .. " joints (" .. table.concat(list, ", ") .. ")")
-                    local ok, made = pcall(dogify, clone, char, hum, joints, cfg)
+        -- keeps the emote playing (restarts it after respawning or if something stops it)
+        maid:Give(task.spawn(function()
+            local animationId = resolveEmote()
+            while not stopped do
+                local _, hum = Util.GetCharacter(LocalPlayer)
+                if not hum or hum.Health <= 0 then
+                    stopEmote()
+                elseif hum ~= trackHum or not (track and track.IsPlaying) then
+                    stopEmote()
+                    local ok, err = pcall(function()
+                        local anim = Instance.new("Animation")
+                        anim.AnimationId = animationId
+                        local animator = hum:FindFirstChildOfClass("Animator") or hum
+                        track = animator:LoadAnimation(anim)
+                        track.Priority = Enum.AnimationPriority.Action
+                        track.Looped = true
+                        track:Play(0.2)
+                        trackHum = hum
+                    end)
                     if ok then
-                        shape = made
-                    else
-                        shape = { RestHeight = 1 }
-                        warn("[Nova] Dog shape: " .. tostring(made))
+                        warned = false
+                        mod:SetStatus("Woof")
+                    elseif not warned then
+                        warned = true
+                        mod:SetStatus("The emote couldn't load: " .. tostring(err), "error")
+                        Nova.Notify("Dog", "The emote couldn't load in this game: " .. string.sub(tostring(err), 1, 90), 5, "error", true)
                     end
                 end
-            end
-            if not (joints and joints.Root and cloneRoot) then
-                return
-            end
-
-            -- hide the real character (rescanned now and then for new accessories / tools)
-            if clock - lastHideScan > 0.5 then
-                lastHideScan = clock
-                hideCharacter(char, hidden, true)
-            else
-                for inst in pairs(hidden) do
-                    if inst.Parent then
-                        pcall(function()
-                            inst.LocalTransparencyModifier = 1
-                        end)
-                    else
-                        hidden[inst] = nil
-                    end
-                end
-            end
-            -- the copy stands exactly where you are
-            local realRoot = char:FindFirstChild("HumanoidRootPart")
-            if realRoot then
-                cloneRoot.CFrame = realRoot.CFrame
-            end
-
-            -- current dance move
-            local pose = {}
-            if cfg.Dance then
-                local speed = math.clamp(tonumber(cfg.Speed) or 1, 0.5, 2)
-                moveTime = moveTime + dt * speed
-                if not moveFn or moveTime >= moveLength then
-                    nextMove()
-                end
-                local ok, result = pcall(moveFn, math.clamp(moveTime / moveLength, 0, 1))
-                if ok and type(result) == "table" then
-                    pose = result
-                end
-            end
-            local hopScale = math.clamp(tonumber(cfg.HopHeight) or 1, 0, 2)
-            local breathe = math.sin(clock * 3) * 0.04
-            local hop = (pose.Hop or 0) * hopScale
-            local rear = pose.Rear or 0 -- >0 lifts the front up (beg), <0 drops it (bow)
-
-            -- walking: legs paddle in time with movement speed
-            local root = realRoot
-            local walk = root and math.clamp((root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)).Magnitude / 16, 0, 1) or 0
-            local stride = math.sin(clock * 12) * 0.35 * walk
-            local paws = pose.Paws or 0
-
-            local function set(role, cf)
-                pcall(applyJoint, joints[role], cf)
-            end
-
-            -- body flat, lying on its belly; then hop / spin / wiggle on top
-            local base = joints.Root.C0
-            local turn = CFrame.Angles(0, (pose.Spin or 0) + (pose.Yaw or 0), pose.Roll or 0)
-                * bend(base, CFrame.Angles(-HALF_PI + rear, 0, 0))
-            -- exact height: find the real floor under you and rest the body on it
-            local rootY = cloneRoot.Position.Y
-            local hit = Workspace:Raycast(cloneRoot.Position, Vector3.new(0, -25, 0), groundParams)
-            local groundY = hit and hit.Position.Y
-                or (rootY - ((hum.RigType == Enum.HumanoidRigType.R6) and 3 or (hum.HipHeight + cloneRoot.Size.Y / 2)))
-            local torsoOffset = (turn * joints.Root.C1:Inverse()).Position.Y
-            local lift = rootY + torsoOffset - (groundY + (shape and shape.RestHeight or 1))
-            set("Root", CFrame.new(0, hop - lift + breathe, 0) * turn)
-
-            -- all four legs straight down under the body (stepping a little while you walk);
-            -- "rear" tips the body for begging / bowing, so the legs counter it to stay vertical
-            local down = HALF_PI - rear
-            if joints.LeftLeg then
-                set("LeftLeg", bend(joints.LeftLeg.C0, CFrame.Angles(down - stride, 0, 0)))
-            end
-            if joints.RightLeg then
-                set("RightLeg", bend(joints.RightLeg.C0, CFrame.Angles(down + stride, 0, 0)))
-            end
-            if joints.LeftArm then
-                set("LeftArm", bend(joints.LeftArm.C0, CFrame.Angles(down + stride + paws * 0.5, 0, 0)))
-            end
-            if joints.RightArm then
-                set("RightArm", bend(joints.RightArm.C0, CFrame.Angles(down - stride + paws * 0.4, 0, 0)))
-            end
-            for _, role in ipairs({ "LeftKnee", "RightKnee", "LeftElbow", "RightElbow" }) do
-                if joints[role] then
-                    set(role, joints[role].C0)
-                end
-            end
-            -- head looking forward instead of at the floor
-            if joints.Neck then
-                set("Neck", bend(joints.Neck.C0, CFrame.Angles(HALF_PI - rear + (pose.Nod or 0), pose.Head or 0, 0)))
-            end
-            -- tail: out of the back end, angled up, wagging (faster while dancing)
-            local tail = shape and shape.Tail
-            if tail and tail.Weld.Parent then
-                local size = tail.Torso.Size
-                local wag = math.sin(clock * (cfg.Dance and 22 or 12)) * (cfg.Dance and 0.7 or 0.45)
-                -- in the torso's own frame the back end is -Y and "up" (with the body tipped forward) is +Z
-                local lift = math.rad(55)
-                local dir = Vector3.new(0, -math.cos(lift), math.sin(lift))
-                dir = Vector3.new(-dir.Y * math.sin(wag), dir.Y * math.cos(wag), dir.Z)
-                local base = Vector3.new(0, -size.Y * 0.45, size.Z * 0.25)
-                local center = base + dir * (tail.Length / 2)
-                tail.Weld.C0 = CFrame.lookAt(center, center + dir) * CFrame.Angles(-HALF_PI, 0, 0)
-            end
-        end
-        maid:Give(RunService.RenderStepped:Connect(function(dt)
-            local ok, err = pcall(step, dt)
-            if not ok and not reportedError then
-                reportedError = true
-                warn("[Nova] Dog error (" .. player.Name .. "): " .. tostring(err))
-                status("Error: " .. tostring(err), "error")
-                notify("Error: " .. string.sub(tostring(err), 1, 120), 6, "error")
+                task.wait(0.5)
             end
         end))
 
-        local stopped = false
         local function stop()
             if stopped then
                 return
             end
             stopped = true
-            activeDogs[stop] = nil
-            restoreJoints()
+            stopEmote()
             if sound then
                 pcall(function()
                     sound:Destroy()
@@ -19076,24 +18528,18 @@ do
             if current == dog then
                 current = nil
             end
-            if isLocal then
-                Nova.Link.Set("Dog", false)
-            end
         end
-        activeDogs[stop] = true
         maid:Give(stop)
-        if isLocal then
-            Nova.Link.Set("Dog", true) -- other Nova users see your dog too
-        end
+        Nova.Maid:Give(stop) -- uninject always stops it, whatever state the module is in
     end
 
     local dogModule = Tabs.Blatant:CreateModule({
         Name = "Dog",
-        Description = "Puts your avatar on all fours and makes it dance. Other Nova users see it too.",
+        Description = "Become a dog: plays the Good Boy Dog emote on loop. Everyone sees it.",
         OnEnable = function(mod)
             local maid = mod.Maid
             if mod.Config.Ask == false then
-                startDog(mod, maid) -- an error here shows up as the module's own "couldn't start"
+                startDog(mod, maid)
                 return
             end
             askConfirm(maid, "Become a dog?", "Are you sure you wanna become a dog?", "Yes, woof", function(yes)
@@ -19122,26 +18568,6 @@ do
     })
 
     dogModule:AddToggle({ Label = "Ask First", Key = "Ask", Default = true, Tip = "Asks \"Are you sure you wanna become a dog?\" every time you turn it on." })
-    dogModule:AddOption({
-        Label = "Legs", Key = "Legs", Options = { "Short", "Full" }, Default = "Short",
-        Tip = "Short: stubby legs (the lower halves are hidden). Full: your whole arms and legs.",
-        Callback = function()
-            if current then
-                current.Rebuild()
-            end
-        end,
-    })
-    dogModule:AddToggle({
-        Label = "Item In Mouth", Key = "Mouth", Default = true, Tip = "Holds your sword or whatever you're holding in your mouth.",
-        Callback = function()
-            if current then
-                current.Rebuild()
-            end
-        end,
-    })
-    dogModule:AddToggle({ Label = "Dance", Key = "Dance", Default = true, Tip = "Random hops, spins, wiggles, bows and begging - never the same order twice. Off: just stands like a dog." })
-    dogModule:AddSlider({ Label = "Dance Speed", Key = "Speed", Min = 0.5, Max = 2, Step = 0.1, Default = 1, Suffix = "x", ShowIf = function(c) return c.Dance end })
-    dogModule:AddSlider({ Label = "Hop Height", Key = "HopHeight", Min = 0, Max = 2, Step = 0.1, Default = 1, Suffix = "x", ShowIf = function(c) return c.Dance end })
     dogModule:AddSection("Music")
     dogModule:AddTextBox({
         Label = "Sound ID", Key = "Music", Default = "", Placeholder = "audio asset id",
@@ -19160,32 +18586,7 @@ do
             end
         end,
     })
-    dogModule:AddLabel("Other Nova users see your dog (Settings > Share Effects). Players without Nova see you normally, and only you hear the music.")
-
-    -- Other Nova users' dogs, drawn on your screen (default settings, no music)
-    local REMOTE_CFG = { Dance = true, Speed = 1, HopHeight = 1, Legs = "Short", Mouth = true }
-    local remoteDogs = {}
-    Nova.Link.Watch("Dog", function(player, on)
-        local existing = remoteDogs[player]
-        if existing then
-            remoteDogs[player] = nil
-            pcall(existing.Clean, existing)
-        end
-        if on and not Nova.Unloaded then
-            local maid = Maid.new()
-            remoteDogs[player] = maid
-            local ok, err = pcall(startDog, nil, maid, { Player = player, Cfg = REMOTE_CFG })
-            if not ok then
-                warn("[Nova] Couldn't show " .. player.Name .. "'s dog: " .. tostring(err))
-            end
-        end
-    end)
-    Nova.Maid:Give(function()
-        for _, maid in pairs(remoteDogs) do
-            pcall(maid.Clean, maid)
-        end
-        remoteDogs = {}
-    end)
+    dogModule:AddLabel("Everyone sees the emote, with or without Nova. Only you hear the music.")
 end
 
 -- ====================== VAPE GUI ======================
