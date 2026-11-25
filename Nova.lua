@@ -15357,6 +15357,12 @@ do
         Resources = "ShowResources", Blocks = "ShowBlocks", Other = "ShowOther",
     }
 
+    -- The two inventory helpers NameTags also uses (the Inventory ESP below lives in its own
+    -- block so its ~30 locals are freed before NameTags: Luau allows 200 per function, and this
+    -- whole script is one function).
+    local InvShared = {}
+
+    do
     -- ====================== INVENTORY ESP ======================
     -- CatVape Inventory Overlay data path: InventoryUtil.getInventory(player)
     local invEsp
@@ -15376,37 +15382,69 @@ do
         return COLUMNS * cellSize() + (COLUMNS - 1) * 3 + 20
     end
 
+    -- The game's InventoryUtil. require() can wait forever (in the lobby, or while the game is
+    -- still loading), so it is resolved on its own thread and the panel never waits for it:
+    -- until it's ready the folder / character sources are used instead.
+    local utilState = "loading" -- "loading" | "ok" | "missing"
+    local utilResolving, utilRetryAt = false, 0
     local function resolveInventoryUtil()
         if cachedUtil then
             return cachedUtil
         end
-        local util
-        local function try(path)
-            local ok, mod = pcall(function()
+        if utilResolving or os.clock() < utilRetryAt then
+            return nil
+        end
+        utilResolving = true
+        utilState = "loading"
+        task.spawn(function()
+            local found
+            pcall(function()
                 if setthreadidentity then
                     pcall(setthreadidentity, 8)
                 end
-                return require(path)
+                local ts = ReplicatedStorage:FindFirstChild("TS")
+                local inv = ts and ts:FindFirstChild("inventory")
+                local module = inv and inv:FindFirstChild("inventory-util")
+                if module then
+                    local mod = require(module)
+                    found = type(mod) == "table" and (mod.InventoryUtil or mod) or nil
+                end
             end)
-            if ok and mod then
-                return mod.InventoryUtil or mod
+            if found and type(found.getInventory) == "function" then
+                cachedUtil = found
+                utilState = "ok"
+            else
+                utilState = "missing"
+                utilRetryAt = os.clock() + 10 -- try again later (e.g. after leaving the lobby)
             end
-            return nil
-        end
-        util = try(ReplicatedStorage.TS.inventory["inventory-util"])
-        if not util then
-            local ts = ReplicatedStorage:FindFirstChild("TS")
-            local inv = ts and ts:FindFirstChild("inventory")
-            local mod = inv and inv:FindFirstChild("inventory-util")
-            if mod then
-                util = try(mod)
-            end
-        end
-        if util and type(util.getInventory) == "function" then
-            cachedUtil = util
-        end
-        return util
+            utilResolving = false
+        end)
+        return cachedUtil
     end
+
+    -- getInventory(player) can also wait (for a player whose inventory isn't there yet). Each call
+    -- runs on its own thread: if it answers straight away (the normal case) its result is used
+    -- this refresh, if it's stuck the last good result is used and no second call is stacked.
+    local inventoryBusy, inventoryLast = {}, {}
+    local function fetchInventory(util, plr)
+        if not inventoryBusy[plr] then
+            inventoryBusy[plr] = true
+            task.spawn(function()
+                if setthreadidentity then
+                    pcall(setthreadidentity, 8)
+                end
+                local ok, inv = pcall(util.getInventory, plr)
+                if ok and type(inv) == "table" then
+                    inventoryLast[plr] = inv
+                end
+                inventoryBusy[plr] = nil
+            end)
+        end
+        return inventoryLast[plr]
+    end
+    Nova.Maid:Give(Players.PlayerRemoving:Connect(function(plr)
+        inventoryBusy[plr], inventoryLast[plr] = nil, nil
+    end))
 
     -- Exact CatVape Collect → flat list of {name, amount}
     local function collectCatVape(plr)
@@ -15415,11 +15453,8 @@ do
         if not util or type(util.getInventory) ~= "function" then
             return list
         end
-        if setthreadidentity then
-            pcall(setthreadidentity, 8)
-        end
-        local ok, inv = pcall(util.getInventory, plr)
-        if not ok or type(inv) ~= "table" then
+        local inv = fetchInventory(util, plr)
+        if type(inv) ~= "table" then
             return list
         end
         local worn = {}
@@ -15501,23 +15536,111 @@ do
         return list
     end
 
+    -- Bedwars no longer sends other players' full inventories to your client (their items list is
+    -- empty and their inventory folder isn't replicated). What it does send are the "Public" values
+    -- on each character: the item in hand, the armor pieces and the backpack slot. On top of those,
+    -- every item a player is seen holding is remembered, so pearls / blocks / bows they pull out
+    -- even for a moment stay listed (dimmed) - the closest thing to their inventory that's visible.
+    local heldHistory = {} -- [player] = { order = { names... }, seen = { [name] = true } }
+    local handWatch = {}   -- [player] = { char = character, conn = connection }
+
+    local function publicValue(char, name)
+        local value = char:FindFirstChild(name)
+        local item = value and value:IsA("ObjectValue") and value.Value
+        return item and item.Name or nil
+    end
+
+    local function remember(plr, name)
+        if not name or name == "" then
+            return
+        end
+        local history = heldHistory[plr]
+        if not history then
+            history = { order = {}, seen = {} }
+            heldHistory[plr] = history
+        end
+        if not history.seen[name] then
+            history.seen[name] = true
+            table.insert(history.order, name)
+            if #history.order > 18 then
+                history.seen[table.remove(history.order, 1)] = nil
+            end
+        end
+    end
+
+    -- catch quick swaps (a pearl thrown between two refreshes) by listening to the hand value
+    local function watchHand(plr, char)
+        local current = handWatch[plr]
+        if current and current.char == char then
+            return
+        end
+        if current and current.conn then
+            current.conn:Disconnect()
+        end
+        local value = char:FindFirstChild("PublicHandInvItem") or char:FindFirstChild("HandInvItem")
+        local conn
+        if value and value:IsA("ObjectValue") then
+            conn = value:GetPropertyChangedSignal("Value"):Connect(function()
+                local item = value.Value
+                if item then
+                    remember(plr, item.Name)
+                end
+            end)
+        end
+        handWatch[plr] = { char = char, conn = conn }
+    end
+
+    Nova.Maid:Give(Players.PlayerRemoving:Connect(function(plr)
+        heldHistory[plr] = nil
+        local current = handWatch[plr]
+        if current and current.conn then
+            current.conn:Disconnect()
+        end
+        handWatch[plr] = nil
+    end))
+    Nova.Maid:Give(function()
+        for _, current in pairs(handWatch) do
+            if current.conn then
+                pcall(function()
+                    current.conn:Disconnect()
+                end)
+            end
+        end
+        handWatch = {}
+    end)
+
     local function collectCharacter(plr)
         local list = {}
         local char = plr.Character
         if not char then return list end
         local cfg = invEsp.Config
-        local function add(name)
+        local function add(name, kind)
             if not name then return end
             local group = select(1, classify(name))
             local key = GROUP_KEYS[group]
             if key and cfg[key] == false then return end
-            list[#list + 1] = { name = name, amount = 1 }
+            list[#list + 1] = { name = name, amount = 1, kind = kind }
         end
-        local hand = char:FindFirstChild("HandInvItem")
-        if hand and hand.Value then add(hand.Value.Name) end
+        watchHand(plr, char)
+        local hand = publicValue(char, "PublicHandInvItem") or publicValue(char, "HandInvItem")
+        if hand then
+            remember(plr, hand)
+            add(hand, "hand")
+        end
         for slot = 0, 3 do
-            local a = char:FindFirstChild("ArmorInvItem_" .. slot)
-            if a and a.Value then add(a.Value.Name) end
+            add(publicValue(char, "PublicArmorInvItem_" .. slot) or publicValue(char, "ArmorInvItem_" .. slot))
+        end
+        add(publicValue(char, "PublicBedWarsBackpackSlot") or publicValue(char, "BedWarsBackpackSlot"))
+        if cfg.History ~= false then
+            local history = heldHistory[plr]
+            if history then
+                for index = #history.order, 1, -1 do -- most recently seen first
+                    local name = history.order[index]
+                    if name ~= hand then
+                        add(name, "seen")
+                    end
+                end
+            end
         end
         return list
     end
@@ -15532,7 +15655,7 @@ do
         charList = okC and charList or {}
         local seen = {}
         local merged = {}
-        for _, src in ipairs({ list, folderList, charList }) do
+        for _, src in ipairs({ charList, list, folderList }) do
             for _, it in ipairs(src) do
                 local key = it.name
                 if not seen[key] then
@@ -15543,7 +15666,7 @@ do
         end
         local parts = {}
         for _, it in ipairs(merged) do
-            parts[#parts + 1] = it.name .. ":" .. it.amount
+            parts[#parts + 1] = it.name .. ":" .. it.amount .. ":" .. tostring(it.kind)
         end
         return merged, table.concat(parts, ",")
     end
@@ -15723,6 +15846,18 @@ do
             icon.ScaleType = Enum.ScaleType.Fit
             icon.Image = itemIcon(item.name)
             icon.Parent = cell
+            if item.kind == "hand" then
+                -- what they're holding right now
+                local stroke = Instance.new("UIStroke")
+                stroke.Color = Theme.Accent
+                stroke.Thickness = 1.5
+                stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                stroke.Parent = cell
+            elseif item.kind == "seen" then
+                -- held earlier, may or may not still have it
+                cell.BackgroundTransparency = 0.55
+                icon.ImageTransparency = 0.45
+            end
             if (item.amount or 1) > 1 then
                 local amt = Instance.new("TextLabel")
                 amt.BackgroundTransparency = 1
@@ -15744,6 +15879,7 @@ do
     local function refreshPanel()
         ensureGui()
         local cfg = invEsp.Config
+        resolveInventoryUtil() -- kicks off the background lookup; never waits
         local wanted = {}
         local candidates = {}
         local totalItems = 0
@@ -15784,13 +15920,12 @@ do
             end
         end
         if statusLabel then
-            local utilOk = resolveInventoryUtil() ~= nil
-            statusLabel.Text = string.format(
-                "Inv ESP · %d players · %d items · %s",
-                #candidates,
-                totalItems,
-                utilOk and "Util OK" or "Util miss (folder/char)"
-            )
+            local source = "hand + armor + history"
+            if #candidates == 0 then
+                statusLabel.Text = "Inv ESP · no enemies in range · " .. source
+            else
+                statusLabel.Text = string.format("Inv ESP · %d players · %d items · %s", #candidates, totalItems, source)
+            end
         end
         placePanel()
     end
@@ -15799,8 +15934,10 @@ do
         Name = "Inventory ESP",
         Description = "Side panel of enemy inventories (CatVape InventoryUtil path).",
         OnEnable = function(mod)
-            pcall(Bedwars.ResolveExtras)
-            pcall(Bedwars.Resolve)
+            task.spawn(function()
+                pcall(Bedwars.ResolveExtras)
+                pcall(Bedwars.Resolve)
+            end)
             local alive = true
             ensureGui()
             -- Module disable + full Unload both must kill the ScreenGui (it is NOT under UI.Gui)
@@ -15839,6 +15976,10 @@ do
         Callback = function() pcall(placePanel) end,
     })
     invEsp:AddToggle({ Label = "Personal Chest", Key = "Personal", Default = false })
+    invEsp:AddToggle({
+        Label = "Held History", Key = "History", Default = true,
+        Tip = "Remembers every item a player has been seen holding (shown dimmed). Bedwars only shows other players' hand, armor and backpack, so this is how pearls, blocks and bows show up.",
+    })
     invEsp:AddSection("Players")
     invEsp:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = false })
     invEsp:AddSlider({
@@ -15850,10 +15991,13 @@ do
     invEsp:AddToggle({ Label = "Armor", Key = "ShowArmor", Default = true })
     invEsp:AddToggle({ Label = "Tools", Key = "ShowTools", Default = true })
     invEsp:AddToggle({ Label = "Resources", Key = "ShowResources", Default = true })
-    invEsp:AddToggle({ Label = "Blocks", Key = "ShowBlocks", Default = false })
+    invEsp:AddToggle({ Label = "Blocks", Key = "ShowBlocks", Default = true })
     invEsp:AddToggle({ Label = "Other", Key = "ShowOther", Default = true })
-    invEsp:AddLabel("Uses InventoryUtil.getInventory like CatVape. Status line shows Util OK/miss.")
+    invEsp:AddLabel("Bedwars only shows other players' held item, armor and backpack. Outlined = in their hand now, dimmed = seen them holding it earlier.")
 
+        InvShared.resolveInventoryUtil = resolveInventoryUtil
+        InvShared.fetchInventory = fetchInventory
+    end
 
     -- ====================== NAMETAGS ======================
     local CollectionService = service("CollectionService")
@@ -16042,12 +16186,10 @@ do
         end
         local counts = {}
         pcall(function()
-            local util = resolveInventoryUtil()
+            local util = InvShared.resolveInventoryUtil()
             if util and type(util.getInventory) == "function" then
-                if setthreadidentity then
-                    pcall(setthreadidentity, 8)
-                end
-                local inv = util.getInventory(plr)
+                -- same non-blocking fetch as the Inventory ESP panel (never waits on a stuck call)
+                local inv = InvShared.fetchInventory(util, plr)
                 if type(inv) == "table" and type(inv.items) == "table" then
                     for _, item in pairs(inv.items) do
                         if type(item) == "table" and item.itemType then
@@ -16085,17 +16227,26 @@ do
     end
 
     -- Held item + armor from the character's ObjectValues. Armor is sorted by name so the
-    -- helmet / chestplate / boots slots line up whatever order the game lists them in.
+    -- helmet / chestplate / boots slots line up whatever order the game lists them in. For other
+    -- players only the "Public" versions are filled in (the plain ones are nil on your client).
+    local function gearValue(char, name)
+        local value = char:FindFirstChild("Public" .. name)
+        if value and value:IsA("ObjectValue") and value.Value then
+            return value
+        end
+        return char:FindFirstChild(name)
+    end
+
     local function gearOf(char)
         local gear = { hand = nil, Helmet = nil, Chestplate = nil, Boots = nil }
-        local hand = char:FindFirstChild("HandInvItem")
+        local hand = gearValue(char, "HandInvItem")
         local held = hand and hand.Value
         if held and held.Name ~= "" then
             gear.hand = held.Name
         end
         local fallback = { "Helmet", "Chestplate", "Boots" }
         for slot = 0, 2 do
-            local armor = char:FindFirstChild("ArmorInvItem_" .. slot)
+            local armor = gearValue(char, "ArmorInvItem_" .. slot)
             local piece = armor and armor.Value
             if piece and piece.Name ~= "" then
                 local lowered = string.lower(piece.Name)
@@ -17563,6 +17714,590 @@ do
     })
 end
 
+-- ====================== MODULE: WHITE HITS ======================
+-- Bedwars flashes a character red when it takes damage, using a Highlight named
+-- "_DamageHighlight_" on the character. White Hits recolours that flash white (or hides it).
+-- Turning it off puts every flash still on screen back the way it was.
+do
+    local FLASH_NAME = "_DamageHighlight_"
+    local whiteHits
+    local touched = {}  -- [highlight] = { FillColor, OutlineColor, FillTransparency, OutlineTransparency, Enabled, conns }
+
+    local function restore(highlight)
+        local saved = touched[highlight]
+        if not saved then
+            return
+        end
+        touched[highlight] = nil
+        for _, conn in ipairs(saved.Conns) do
+            conn:Disconnect()
+        end
+        pcall(function()
+            highlight.FillColor = saved.FillColor
+            highlight.OutlineColor = saved.OutlineColor
+            highlight.FillTransparency = saved.FillTransparency
+            highlight.OutlineTransparency = saved.OutlineTransparency
+            highlight.Enabled = saved.Enabled
+        end)
+    end
+
+    local function apply(highlight)
+        if not whiteHits.Enabled then
+            return
+        end
+        local cfg = whiteHits.Config
+        pcall(function()
+            if cfg.Mode == "Hidden" then
+                highlight.Enabled = false
+            else
+                local white = Color3.new(1, 1, 1)
+                if highlight.FillColor ~= white then
+                    highlight.FillColor = white
+                end
+                if highlight.OutlineColor ~= white then
+                    highlight.OutlineColor = white
+                end
+            end
+        end)
+    end
+
+    local function take(highlight)
+        if touched[highlight] or not highlight:IsA("Highlight") then
+            return
+        end
+        local saved = {
+            FillColor = highlight.FillColor,
+            OutlineColor = highlight.OutlineColor,
+            FillTransparency = highlight.FillTransparency,
+            OutlineTransparency = highlight.OutlineTransparency,
+            Enabled = highlight.Enabled,
+            Conns = {},
+        }
+        touched[highlight] = saved
+        -- the game may recolour / re-enable it on every hit: put our look back each time
+        for _, prop in ipairs({ "FillColor", "OutlineColor", "Enabled" }) do
+            table.insert(saved.Conns, highlight:GetPropertyChangedSignal(prop):Connect(function()
+                apply(highlight)
+            end))
+        end
+        table.insert(saved.Conns, highlight.AncestryChanged:Connect(function(_, parent)
+            if not parent then
+                restore(highlight)
+            end
+        end))
+        apply(highlight)
+    end
+
+    whiteHits = Tabs.Render:CreateModule({
+        Name = "White Hits",
+        Description = "Makes the red damage flash white (or hides it).",
+        OnEnable = function(mod)
+            -- flashes already on screen
+            for _, inst in ipairs(Workspace:GetDescendants()) do
+                if inst.Name == FLASH_NAME then
+                    take(inst)
+                end
+            end
+            -- new flashes (checked by name first, so this stays cheap)
+            mod.Maid:Give(Workspace.DescendantAdded:Connect(function(inst)
+                if inst.Name == FLASH_NAME then
+                    take(inst)
+                end
+            end))
+            mod.Maid:Give(function()
+                for highlight in pairs(touched) do
+                    restore(highlight)
+                end
+            end)
+        end,
+    })
+    whiteHits:AddOption({
+        Label = "Mode", Key = "Mode", Options = { "White", "Hidden" }, Default = "White",
+        Tip = "White: hits flash white instead of red. Hidden: no hit flash at all.",
+        Callback = function()
+            for highlight, saved in pairs(touched) do
+                pcall(function()
+                    highlight.Enabled = saved.Enabled
+                end)
+                apply(highlight)
+            end
+        end,
+    })
+end
+
+-- ====================== MODULE: TRAP ESP ======================
+-- Shows enemy traps through walls as icons: snap / venom / explosive traps, landmines, tesla
+-- traps and gloop. Traps are found by the game's CollectionService tags; your own and your
+-- team's traps are skipped (owner / team attributes on the trap).
+do
+    local CollectionService = service("CollectionService")
+    local TAGS = { "snap_trap", "trapper_trap", "invisible-landmine", "invisible_landmine", "tesla-trap", "tesla_trap", "glue_trap", "GlueTrap" }
+    local KIND_KEYS = { snap = "Snap", venom = "Venom", explosive = "Explosive", landmine = "Landmine", tesla = "Tesla", gloop = "Gloop" }
+    local KIND_LABELS = { snap = "Snap", venom = "Venom", explosive = "Boom", landmine = "Mine", tesla = "Tesla", gloop = "Gloop" }
+    local KIND_COLORS = {
+        snap = Color3.fromRGB(230, 230, 235), venom = Color3.fromRGB(120, 230, 90), explosive = Color3.fromRGB(255, 120, 60),
+        landmine = Color3.fromRGB(255, 80, 80), tesla = Color3.fromRGB(110, 190, 255), gloop = Color3.fromRGB(190, 120, 255),
+    }
+    local ICON_ITEMS = { snap = "snap_trap", venom = "snap_trap", explosive = "snap_trap", landmine = "invisible_landmine", tesla = "tesla_trap", gloop = "glue_projectile" }
+
+    local trapEsp
+    local folder
+    local icons = {}  -- [trap] = { Billboard, Conn }
+
+    local function kindOf(trap, tag)
+        if tag == "trapper_trap" then
+            local text = string.lower(trap.Name)
+            for name, value in pairs(trap:GetAttributes()) do
+                text = text .. " " .. string.lower(tostring(name)) .. "=" .. string.lower(tostring(value))
+            end
+            if text:find("venom") or text:find("poison") then
+                return "venom"
+            elseif text:find("explo") or text:find("boom") or text:find("tnt") then
+                return "explosive"
+            end
+            return "snap"
+        elseif tag == "snap_trap" then
+            return "snap"
+        elseif tag == "invisible-landmine" or tag == "invisible_landmine" then
+            return "landmine"
+        elseif tag == "tesla-trap" or tag == "tesla_trap" then
+            return "tesla"
+        end
+        return "gloop"
+    end
+
+    local function isFriendly(trap)
+        local owner = tonumber(trap:GetAttribute("PlacedByUserId") or trap:GetAttribute("ownerId"))
+        if owner then
+            if owner == LocalPlayer.UserId then
+                return true
+            end
+            local placer = Players:GetPlayerByUserId(owner)
+            if placer and placer ~= LocalPlayer then
+                local mine, theirs = LocalPlayer:GetAttribute("Team"), placer:GetAttribute("Team")
+                if mine ~= nil and theirs ~= nil then
+                    return tostring(mine) == tostring(theirs)
+                end
+                return Util.IsTeammate(placer)
+            end
+        end
+        local teamName = LocalPlayer.Team and LocalPlayer.Team.Name
+        local teamId = LocalPlayer:GetAttribute("Team")
+        for _, attribute in ipairs({ "SnapTrapTeamId", "TrapperTeamId", "LandmineTeam", "TeamId" }) do
+            local value = trap:GetAttribute(attribute)
+            if value ~= nil then
+                return (teamId ~= nil and tostring(value) == tostring(teamId)) or (teamName ~= nil and tostring(value) == teamName)
+            end
+        end
+        return false
+    end
+
+    -- the part the icon sits on: the trap itself, its PrimaryPart, or its biggest visible part
+    local function pickAdornee(trap)
+        if trap:IsA("BasePart") then
+            return trap
+        end
+        if trap:IsA("Model") and trap.PrimaryPart then
+            return trap.PrimaryPart
+        end
+        local best, bestVolume
+        for _, part in ipairs(trap:GetDescendants()) do
+            if part:IsA("BasePart") then
+                local volume = part.Size.X * part.Size.Y * part.Size.Z
+                if not bestVolume or volume > bestVolume then
+                    best, bestVolume = part, volume
+                end
+            end
+        end
+        return best
+    end
+
+    local function removeIcon(trap)
+        local entry = icons[trap]
+        if entry then
+            icons[trap] = nil
+            pcall(function()
+                entry.Billboard:Destroy()
+            end)
+            if entry.Conn then
+                entry.Conn:Disconnect()
+            end
+        end
+    end
+
+    local function addIcon(trap, tag)
+        if icons[trap] or not folder then
+            return
+        end
+        -- items still in someone's inventory carry the tag too
+        local inventories = service("ReplicatedStorage"):FindFirstChild("Inventories")
+        if inventories and trap:IsDescendantOf(inventories) then
+            return
+        end
+        if not trap:IsDescendantOf(Workspace) then
+            return
+        end
+        local kind = kindOf(trap, tag)
+        local cfg = trapEsp.Config
+        if cfg[KIND_KEYS[kind]] == false or isFriendly(trap) then
+            return
+        end
+        local adornee = pickAdornee(trap)
+        if not adornee then
+            return
+        end
+        local size = cfg.Size or 30
+        local color = KIND_COLORS[kind] or Color3.new(1, 1, 1)
+        local billboard = New("BillboardGui", {
+            Name = "NovaTrap",
+            Size = UDim2.fromOffset(size, size + (cfg.Labels and 14 or 0)),
+            StudsOffsetWorldSpace = Vector3.new(0, 1.5, 0),
+            AlwaysOnTop = true,
+            ClipsDescendants = false,
+            Adornee = adornee,
+            Parent = folder,
+        })
+        local image = Bedwars.GetItemImage and Bedwars.GetItemImage(ICON_ITEMS[kind]) or ""
+        local icon = New("ImageLabel", {
+            Size = UDim2.fromOffset(size, size),
+            BackgroundColor3 = Color3.fromRGB(14, 14, 18),
+            BackgroundTransparency = 0.35,
+            BorderSizePixel = 0,
+            Image = image,
+            Parent = billboard,
+        }, { Round(6), Stroke(color, 1.5, 0.1) })
+        if image == "" then
+            New("TextLabel", {
+                Size = UDim2.fromScale(1, 1),
+                BackgroundTransparency = 1,
+                Text = KIND_LABELS[kind] or "Trap",
+                TextScaled = true,
+                Font = FONT.Bold,
+                TextColor3 = color,
+                Parent = icon,
+            })
+        end
+        if cfg.Labels then
+            New("TextLabel", {
+                Position = UDim2.fromOffset(0, size),
+                Size = UDim2.new(1, 0, 0, 14),
+                BackgroundTransparency = 1,
+                Text = KIND_LABELS[kind] or "Trap",
+                Font = FONT.Bold,
+                TextSize = 11,
+                TextColor3 = color,
+                TextStrokeTransparency = 0.4,
+                Parent = billboard,
+            })
+        end
+        -- if the trap changes hands / team later, re-check it
+        local conn = trap.AttributeChanged:Connect(function()
+            if isFriendly(trap) then
+                removeIcon(trap)
+            end
+        end)
+        icons[trap] = { Billboard = billboard, Conn = conn }
+    end
+
+    local function rebuild()
+        for trap in pairs(icons) do
+            removeIcon(trap)
+        end
+        if not (trapEsp and trapEsp.Enabled) then
+            return
+        end
+        for _, tag in ipairs(TAGS) do
+            for _, trap in ipairs(CollectionService:GetTagged(tag)) do
+                pcall(addIcon, trap, tag)
+            end
+        end
+        -- gloop that only comes as a named model
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst.Name == "GlueTrap" then
+                pcall(addIcon, inst, "GlueTrap")
+            end
+        end
+    end
+
+    trapEsp = Tabs.Render:CreateModule({
+        Name = "Trap ESP",
+        Description = "Shows enemy traps, landmines, tesla traps and gloop through walls.",
+        OnEnable = function(mod)
+            folder = mod.Maid:Give(New("Folder", { Name = "NovaTrapEsp", Parent = UI.Gui }))
+            for _, tag in ipairs(TAGS) do
+                mod.Maid:Give(CollectionService:GetInstanceAddedSignal(tag):Connect(function(trap)
+                    -- give the game a moment to set the owner / team attributes
+                    task.delay(0.15, function()
+                        if mod.Enabled then
+                            pcall(addIcon, trap, tag)
+                        end
+                    end)
+                end))
+                mod.Maid:Give(CollectionService:GetInstanceRemovedSignal(tag):Connect(removeIcon))
+            end
+            mod.Maid:Give(Workspace.ChildAdded:Connect(function(inst)
+                if inst.Name == "GlueTrap" then
+                    task.delay(0.15, function()
+                        if mod.Enabled then
+                            pcall(addIcon, inst, "GlueTrap")
+                        end
+                    end)
+                end
+            end))
+            -- traps that leave the world without losing their tag
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    for trap in pairs(icons) do
+                        if not trap:IsDescendantOf(Workspace) then
+                            removeIcon(trap)
+                        end
+                    end
+                    task.wait(1)
+                end
+            end))
+            mod.Maid:Give(function()
+                for trap in pairs(icons) do
+                    removeIcon(trap)
+                end
+                folder = nil
+            end)
+            rebuild()
+        end,
+    })
+    trapEsp:AddSection("Traps")
+    for _, entry in ipairs({
+        { "Snap Traps", "Snap" }, { "Venom Traps", "Venom" }, { "Explosive Traps", "Explosive" },
+        { "Landmines", "Landmine" }, { "Tesla Traps", "Tesla" }, { "Gloop", "Gloop" },
+    }) do
+        trapEsp:AddToggle({ Label = entry[1], Key = entry[2], Default = true, Callback = rebuild })
+    end
+    trapEsp:AddSection("Display")
+    trapEsp:AddSlider({ Label = "Icon Size", Key = "Size", Min = 18, Max = 50, Step = 2, Default = 30, Suffix = " px", Callback = rebuild })
+    trapEsp:AddToggle({ Label = "Labels", Key = "Labels", Default = true, Tip = "Writes the trap type under the icon.", Callback = rebuild })
+    trapEsp:AddLabel("Your own and your team's traps are left out.")
+end
+
+-- ====================== MODULE: FFLAG INJECTOR ======================
+-- Sets Roblox Fast Flags (the engine's own config switches) while the game runs, through the
+-- executor's setfflag. Paste a JSON list like the ones people share for Bloxstrap, or add flags
+-- one at a time. Turning the module off puts every flag back to the value it had before.
+-- Note: a lot of flags are only read when Roblox starts, so they won't change anything mid-game.
+do
+    local HttpService = service("HttpService")
+    local PREFIXES = { "DFFlag", "DFInt", "DFString", "DFLog", "SFFlag", "FFlag", "FInt", "FString", "FLog" }
+    local injector
+    local originals = {} -- [name as applied] = original value (string) or false if unknown
+    local results = { applied = 0, failed = {} }
+
+    local function stripPrefix(name)
+        for _, prefix in ipairs(PREFIXES) do
+            if name:sub(1, #prefix) == prefix and #name > #prefix then
+                return name:sub(#prefix + 1)
+            end
+        end
+        return name
+    end
+
+    local function toFlagString(value)
+        if type(value) == "boolean" then
+            return value and "True" or "False"
+        end
+        return tostring(value)
+    end
+
+    -- executors differ on whether the prefix (FFlag, DFInt, ...) is part of the name: try both
+    local function setOne(name, value)
+        if type(setfflag) ~= "function" then
+            return false, "your executor has no setfflag"
+        end
+        local text = toFlagString(value)
+        local lastErr
+        for _, candidate in ipairs({ name, stripPrefix(name) }) do
+            if originals[candidate] == nil then
+                local okGet, current = pcall(function()
+                    return type(getfflag) == "function" and getfflag(candidate) or nil
+                end)
+                originals[candidate] = (okGet and current ~= nil) and tostring(current) or false
+            end
+            local ok, err = pcall(setfflag, candidate, text)
+            if ok then
+                return true
+            end
+            lastErr = err
+            if originals[candidate] == false then
+                originals[candidate] = nil
+            end
+        end
+        return false, tostring(lastErr)
+    end
+
+    local function parseFlags(text)
+        text = tostring(text or "")
+        if text:match("^%s*$") then
+            return {}
+        end
+        local ok, decoded = pcall(function()
+            return HttpService:JSONDecode(text)
+        end)
+        if not ok or type(decoded) ~= "table" then
+            return nil, "that isn't valid JSON - it should look like {\"FlagName\": \"value\"}"
+        end
+        return decoded
+    end
+
+    local function setStatus()
+        if not injector then
+            return
+        end
+        if type(setfflag) ~= "function" then
+            injector:SetStatus("Your executor doesn't support setfflag", "error")
+            return
+        end
+        if #results.failed > 0 then
+            injector:SetStatus(results.applied .. " applied, " .. #results.failed .. " failed (" .. results.failed[1] .. ")", "error")
+        else
+            injector:SetStatus(results.applied .. " flags applied")
+        end
+    end
+
+    local function applyAll()
+        results = { applied = 0, failed = {} }
+        local flags, err = parseFlags(injector.Config.Flags)
+        if not flags then
+            injector:SetStatus(err, "error")
+            return false, err
+        end
+        for name, value in pairs(flags) do
+            local ok = setOne(tostring(name), value)
+            if ok then
+                results.applied = results.applied + 1
+            else
+                table.insert(results.failed, tostring(name))
+            end
+        end
+        setStatus()
+        return true
+    end
+
+    local function restoreAll()
+        local restored = 0
+        if type(setfflag) == "function" then
+            for name, original in pairs(originals) do
+                if original ~= false then
+                    if pcall(setfflag, name, original) then
+                        restored = restored + 1
+                    end
+                end
+            end
+        end
+        originals = {}
+        return restored
+    end
+
+    local function writeFlags(flags)
+        local ok, text = pcall(function()
+            return HttpService:JSONEncode(flags)
+        end)
+        if ok then
+            injector.Config.Flags = text
+            local handle = injector.Host and injector.Host.Controls and injector.Host.Controls.Flags
+            if handle and handle.Set then
+                pcall(handle.Set, text, true)
+            end
+        end
+    end
+
+    injector = Tabs.Utility:CreateModule({
+        Name = "FFlag Injector",
+        Description = "Sets Roblox Fast Flags while you play (needs setfflag). Off restores them.",
+        OnEnable = function(mod)
+            if type(setfflag) ~= "function" then
+                error("your executor doesn't support setfflag")
+            end
+            applyAll()
+            mod.Maid:Give(function()
+                local restored = restoreAll()
+                mod:SetStatus(nil)
+                if restored > 0 then
+                    Nova.Notify("FFlag Injector", "Restored " .. restored .. " flags", 2)
+                end
+            end)
+        end,
+    })
+
+    injector:AddSection("Flag List")
+    injector:AddTextBox({
+        Label = "Flags (JSON)", Key = "Flags", Default = "{}", Placeholder = "{\"DFIntTaskSchedulerTargetFps\": \"240\"}",
+        Tip = "Paste a JSON list of flags, like the ones people share for Bloxstrap. Applied whenever the module is on.",
+        Callback = function()
+            if injector.Enabled then
+                applyAll()
+            end
+        end,
+    })
+    injector:AddSection("Add One")
+    injector:AddTextBox({ Label = "Flag Name", Key = "NewName", Default = "", Placeholder = "FFlagSomething" })
+    injector:AddTextBox({ Label = "Value", Key = "NewValue", Default = "", Placeholder = "True / 240 / text" })
+    injector:AddButton({
+        Label = "Add Flag",
+        Callback = function()
+            local cfg = injector.Config
+            local name = tostring(cfg.NewName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if name == "" then
+                Nova.Notify("FFlag Injector", "Type a flag name first", 2, "error")
+                return
+            end
+            local flags = parseFlags(cfg.Flags) or {}
+            flags[name] = tostring(cfg.NewValue or "")
+            writeFlags(flags)
+            if injector.Enabled then
+                applyAll()
+            end
+            Nova.Notify("FFlag Injector", "Added " .. name, 2, "success")
+        end,
+    })
+    injector:AddButton({
+        Label = "Remove Flag",
+        Tip = "Removes the flag typed in Flag Name from the list (and puts it back to its old value).",
+        Callback = function()
+            local cfg = injector.Config
+            local name = tostring(cfg.NewName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local flags = parseFlags(cfg.Flags) or {}
+            if flags[name] == nil then
+                Nova.Notify("FFlag Injector", "That flag isn't in the list", 2, "error")
+                return
+            end
+            flags[name] = nil
+            writeFlags(flags)
+            for _, candidate in ipairs({ name, stripPrefix(name) }) do
+                local original = originals[candidate]
+                if original then
+                    pcall(setfflag, candidate, original)
+                end
+                originals[candidate] = nil
+            end
+            if injector.Enabled then
+                applyAll()
+            end
+            Nova.Notify("FFlag Injector", "Removed " .. name, 2)
+        end,
+    })
+    injector:AddButton({
+        Label = "Clear All",
+        Style = "danger",
+        Callback = function()
+            restoreAll()
+            writeFlags({})
+            results = { applied = 0, failed = {} }
+            if injector.Enabled then
+                setStatus()
+            end
+            Nova.Notify("FFlag Injector", "Cleared the flag list", 2)
+        end,
+    })
+    injector:AddLabel("Many flags are only read when Roblox starts and won't change anything mid-game. The status line shows how many applied.")
+end
+
 -- ====================== MODULE: DOG ======================
 -- Puts your own avatar into a dog pose (on all fours) and makes it dance: it hops, spins, wiggles,
 -- bows and begs in a random order with random sizes/directions, so it never loops the same way.
@@ -18589,6 +19324,12 @@ do
         end
 
         local building = true
+        -- While the library restores its own saved profile it replays old values into these
+        -- options; those must never be written back into Nova's config (Nova is the source of truth)
+        local function ignoring()
+            return building or (V.Lib ~= nil and V.Lib.Loading == true)
+        end
+        local syncers = {}
         for _, def in ipairs(defs or {}) do
             local o, kind = def.O, def.Kind
             local ok, err = pcall(function()
@@ -18599,7 +19340,7 @@ do
                         Tooltip = o.Tip,
                         Default = cfg[o.Key] and true or false,
                         Function = function(value)
-                            if building then
+                            if ignoring() then
                                 return
                             end
                             if (cfg[o.Key] and true or false) ~= (value and true or false) then
@@ -18609,6 +19350,11 @@ do
                         end,
                     })
                     shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                    syncers[#syncers + 1] = function()
+                        if (api.Enabled and true or false) ~= (cfg[o.Key] and true or false) then
+                            api:Toggle()
+                        end
+                    end
                 elseif kind == "Slider" then
                     local cfg = def.Host.Cfg
                     local api
@@ -18621,7 +19367,7 @@ do
                         Decimal = decimalFor(o),
                         Suffix = o.Suffix and (string.gsub(o.Suffix, "^%s+", "")) or nil,
                         Function = function(value, final)
-                            if building then
+                            if ignoring() then
                                 return
                             end
                             local snapped = snap(o, value)
@@ -18636,6 +19382,12 @@ do
                         end,
                     })
                     shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                    syncers[#syncers + 1] = function()
+                        local value = snap(o, cfg[o.Key] or o.Default or o.Min)
+                        if api.Value ~= value then
+                            api:SetValue(value)
+                        end
+                    end
                 elseif kind == "Option" then
                     local cfg = def.Host.Cfg
                     local list, lookup = {}, {}
@@ -18648,7 +19400,7 @@ do
                         Tooltip = o.Tip,
                         List = list,
                         Function = function(value)
-                            if building then
+                            if ignoring() then
                                 return
                             end
                             local real = lookup[value]
@@ -18660,6 +19412,11 @@ do
                     })
                     api:SetValue(tostring(cfg[o.Key]))
                     shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                    syncers[#syncers + 1] = function()
+                        if api.Value ~= tostring(cfg[o.Key]) then
+                            api:SetValue(tostring(cfg[o.Key]))
+                        end
+                    end
                 elseif kind == "TextBox" then
                     local cfg = def.Host.Cfg
                     local api
@@ -18670,7 +19427,7 @@ do
                         Placeholder = o.Placeholder,
                         Function = function(enter)
                             -- fires on every keystroke with nil; commit only when focus is lost
-                            if building or enter == nil or not api then
+                            if ignoring() or enter == nil or not api then
                                 return
                             end
                             if cfg[o.Key] ~= api.Value then
@@ -18706,6 +19463,16 @@ do
         end
         building = false
         refreshShown(shown)
+
+        -- puts every option back to Nova's current value (nothing is written or fired)
+        return function()
+            building = true
+            for _, sync in ipairs(syncers) do
+                pcall(sync)
+            end
+            building = false
+            refreshShown(shown)
+        end
     end
 
     local function bindList(t)
@@ -18856,20 +19623,36 @@ do
             end
         end
 
-        -- Nova's own settings (including the switch back to Nova's window) under Vape's gear
-        pcall(function()
-            buildOptions(lib.Categories.Main:CreateSettingsPane({ Name = "Nova" }), UI.SettingsDefs, {})
-        end)
-
         local okLoad, errLoad = pcall(function()
             lib:Load()
         end)
         if not okLoad then
             warn("[Nova] Vape GUI profile load: " .. tostring(errLoad))
             pcall(function()
+                lib.Loading = false
                 lib.gui.Enabled = true
                 lib.Loaded = true
             end)
+        end
+
+        -- Nova's own settings (including the switch back to Nova's window) under Vape's gear.
+        -- Built after the profile load above, so the library can't replay stale saved values
+        -- into it; switching Vape profiles later just puts it back in line with Nova's config.
+        local resyncSettings
+        pcall(function()
+            resyncSettings = buildOptions(lib.Categories.Main:CreateSettingsPane({ Name = "Nova" }), UI.SettingsDefs, {})
+        end)
+        if resyncSettings then
+            V.ResyncSettings = resyncSettings
+            local baseLoad = lib.Load
+            lib.Load = function(self, ...)
+                local results = table.pack(pcall(baseLoad, self, ...))
+                pcall(resyncSettings)
+                if not results[1] then
+                    error(results[2], 0)
+                end
+                return table.unpack(results, 2, results.n)
+            end
         end
 
         local scaled = lib.gui and lib.gui:FindFirstChild("ScaledGui")
@@ -18910,6 +19693,9 @@ do
             local wasVisible = UI.Visible
             V.Active = true
             V.Lib.NovaPaused = false
+            if V.ResyncSettings then
+                pcall(V.ResyncSettings) -- settings may have changed in Nova's window meanwhile
+            end
             pcall(function()
                 V.Lib.gui.Enabled = true
             end)
