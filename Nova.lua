@@ -3887,6 +3887,15 @@ do
         Label = "Restore Modules", Key = "RestoreModules", Default = true,
         Tip = "Switch back on the modules that were on last time. Everything else is always saved automatically.",
     })
+    Controls.Toggle(host, {
+        Label = "Share Effects", Key = "ShareEffects", Default = true,
+        Tip = "Other Nova users see your Dog and Nightmare effects, and you see theirs. Off: you neither send nor see them.",
+        Callback = function()
+            if Nova.Link then
+                Nova.Link.SettingChanged()
+            end
+        end,
+    })
 
     Controls.Section(host, "Profiles")
     Controls.TextBox(host, {
@@ -4558,6 +4567,200 @@ end
             writeFlag(false)
         end
     end)
+end
+
+-- ====================== NOVA LINK ======================
+-- Lets Nova users see each other's client-side effects (Dog, Nightmare Emote). Clients can't
+-- message each other directly, but the animations a player plays on their own character DO
+-- replicate to everyone. So while one of your shared effects is on, Nova plays a marker
+-- animation on your character at a weight of 0.001 (invisible), and its playback speed encodes
+-- which effects are on. Every Nova client scans other players for that marker and draws their
+-- effects locally. Non-Nova players see nothing different.
+--   Nova.Link.Set(name, on)           - turn one of your own flags on/off
+--   Nova.Link.Watch(name, fn)         - fn(player, on) whenever another Nova user's flag changes
+-- The marker only plays while at least one flag is on, and Settings > Share Effects turns the
+-- whole thing off (both sending and receiving).
+do
+    local Link = { Flags = {}, Watchers = {}, Peers = {} }
+    Nova.Link = Link
+
+    local BITS = { Dog = 1, Nightmare = 2, NightmareRainbow = 4 }
+    -- Roblox's own default R15 climb animation: loadable in every game, harmless at this weight
+    local MARKER_ID = "rbxassetid://507765644"
+    local BASE_SPEED, STEP_SPEED = 0.0123, 0.002
+    local MAX_FLAGS = 7
+
+    local function enabled()
+        return Nova.Config.UI.ShareEffects ~= false
+    end
+
+    local function flagValue()
+        local value = 0
+        for name, bit in pairs(BITS) do
+            if Link.Flags[name] then
+                value = value + bit
+            end
+        end
+        return value
+    end
+
+    -- Sending -------------------------------------------------------------------------------
+    local markerTrack, markerHumanoid
+
+    local function stopMarker()
+        if markerTrack then
+            pcall(function()
+                markerTrack:Stop(0)
+                markerTrack:Destroy()
+            end)
+        end
+        markerTrack, markerHumanoid = nil, nil
+    end
+
+    local function refreshMarker()
+        local value = enabled() and flagValue() or 0
+        if value == 0 or Nova.Unloaded then
+            stopMarker()
+            return
+        end
+        local _, hum = Util.GetCharacter(LocalPlayer)
+        if not hum then
+            return
+        end
+        if markerHumanoid ~= hum or not markerTrack then
+            stopMarker()
+            local animator = hum:FindFirstChildOfClass("Animator")
+            local ok, track = pcall(function()
+                local anim = Instance.new("Animation")
+                anim.AnimationId = MARKER_ID
+                return (animator or hum):LoadAnimation(anim)
+            end)
+            if not ok or not track then
+                return
+            end
+            markerTrack, markerHumanoid = track, hum
+            pcall(function()
+                track.Priority = Enum.AnimationPriority.Core
+                track.Looped = true
+                track:Play(0, 0.001, BASE_SPEED + value * STEP_SPEED)
+            end)
+        end
+        pcall(function()
+            if not markerTrack.IsPlaying then
+                markerTrack:Play(0, 0.001, BASE_SPEED + value * STEP_SPEED)
+            end
+            markerTrack:AdjustSpeed(BASE_SPEED + value * STEP_SPEED)
+            markerTrack:AdjustWeight(0.001, 0)
+        end)
+    end
+
+    function Link.Set(name, on)
+        if BITS[name] == nil then
+            return
+        end
+        Link.Flags[name] = on and true or nil
+        refreshMarker()
+    end
+
+    -- Receiving -----------------------------------------------------------------------------
+    local function readFlags(player)
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum then
+            return 0
+        end
+        local animator = hum:FindFirstChildOfClass("Animator")
+        local ok, tracks = pcall(function()
+            return (animator or hum):GetPlayingAnimationTracks()
+        end)
+        if not ok or type(tracks) ~= "table" then
+            return 0
+        end
+        for _, track in ipairs(tracks) do
+            local id = track.Animation and track.Animation.AnimationId
+            if id and (id == MARKER_ID or id:match("%d+$") == MARKER_ID:match("%d+$")) then
+                local n = math.floor((track.Speed - BASE_SPEED) / STEP_SPEED + 0.5)
+                if n >= 1 and n <= MAX_FLAGS and math.abs(track.Speed - (BASE_SPEED + n * STEP_SPEED)) < 0.0006 then
+                    return n
+                end
+            end
+        end
+        return 0
+    end
+
+    local function fire(name, player, on)
+        for _, fn in ipairs(Link.Watchers[name] or {}) do
+            task.spawn(function()
+                local ok, err = pcall(fn, player, on)
+                if not ok then
+                    warn("[Nova] Link " .. name .. ": " .. tostring(err))
+                end
+            end)
+        end
+    end
+
+    local function setPeer(player, value)
+        local old = Link.Peers[player] or 0
+        if old == value then
+            return
+        end
+        Link.Peers[player] = value ~= 0 and value or nil
+        for name, bit in pairs(BITS) do
+            local was = math.floor(old / bit) % 2 == 1
+            local now = math.floor(value / bit) % 2 == 1
+            if was ~= now then
+                fire(name, player, now)
+            end
+        end
+    end
+
+    function Link.Watch(name, fn)
+        Link.Watchers[name] = Link.Watchers[name] or {}
+        table.insert(Link.Watchers[name], fn)
+        -- tell it about anyone already known
+        for player, value in pairs(Link.Peers) do
+            local bit = BITS[name]
+            if bit and math.floor(value / bit) % 2 == 1 then
+                task.spawn(pcall, fn, player, true)
+            end
+        end
+    end
+
+    function Link.Has(player, name)
+        local bit = BITS[name]
+        local value = Link.Peers[player] or 0
+        return bit ~= nil and math.floor(value / bit) % 2 == 1
+    end
+
+    Nova.Maid:Give(Players.PlayerRemoving:Connect(function(player)
+        setPeer(player, 0)
+    end))
+
+    Nova.Maid:Give(task.spawn(function()
+        while not Nova.Unloaded do
+            pcall(refreshMarker)
+            local share = enabled()
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local ok, value = pcall(readFlags, player)
+                    setPeer(player, (share and ok and value) or 0)
+                end
+            end
+            task.wait(0.5)
+        end
+    end))
+
+    Nova.Maid:Give(function()
+        stopMarker()
+        for player in pairs(Link.Peers) do
+            setPeer(player, 0)
+        end
+    end)
+
+    -- Settings toggle callback
+    function Link.SettingChanged()
+        pcall(refreshMarker)
+    end
 end
 
 -- ====================== TABS ======================
@@ -16788,52 +16991,179 @@ do
 end
 
 -- ====================== MODULE: WORLD (NIGHTMARE EMOTE) ======================
+-- Plays the Nightmare emote (everyone sees the animation) plus its ground effect, which the game
+-- only shows on your own screen. Rainbow fades the whole effect through every colour. Other Nova
+-- users see your effect (and rainbow) too, and you see theirs - through Nova Link.
 do
+    local ReplicatedStorage = service("ReplicatedStorage")
+
+    -- Everything in a model that carries a colour: parts, particles, beams, lights, decals, images
+    -- on surface guis, meshes (VertexColor), surface appearances, strokes and gradients.
+    local function collectColorables(model, out)
+        local function add(inst, prop, kind)
+            local ok, value = pcall(function()
+                return inst[prop]
+            end)
+            if ok and value ~= nil then
+                out[#out + 1] = { Inst = inst, Prop = prop, Original = value, Kind = kind }
+            end
+        end
+        for _, inst in ipairs(model:GetDescendants()) do
+            if inst:IsA("BasePart") then
+                add(inst, "Color")
+            elseif inst:IsA("ParticleEmitter") or inst:IsA("Beam") or inst:IsA("Trail") or inst:IsA("UIGradient") then
+                add(inst, "Color", "Sequence")
+            elseif inst:IsA("Light") or inst:IsA("UIStroke") or inst:IsA("SurfaceAppearance") then
+                add(inst, "Color")
+            elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                add(inst, "Color3")
+            elseif inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
+                add(inst, "ImageColor3")
+            elseif inst:IsA("TextLabel") then
+                add(inst, "TextColor3")
+            elseif inst:IsA("SpecialMesh") or inst:IsA("FileMesh") then
+                add(inst, "VertexColor", "Vector")
+            end
+        end
+        return out
+    end
+
+    -- One copy of the effect that follows a root part. rainbow(on) switches the colour fade.
+    local function createEffect()
+        local effects = ReplicatedStorage:FindFirstChild("Assets")
+        effects = effects and effects:FindFirstChild("Effects")
+        local template = effects and effects:FindFirstChild("NightmareEmote")
+        if not template then
+            return nil, "NightmareEmote asset not found"
+        end
+        local asset = template:Clone()
+        local tweens = {}
+        for _, inst in ipairs(asset:GetDescendants()) do
+            if inst:IsA("BasePart") then
+                inst.CanCollide = false
+                inst.Anchored = true
+                pcall(function()
+                    inst.CanQuery = false
+                    inst.CanTouch = false
+                end)
+            end
+        end
+        local colorables = collectColorables(asset, {})
+        local adopted = {}
+        asset.Name = Util.RandomName()
+        asset.Parent = Workspace
+
+        local outer = asset:FindFirstChild("Outer")
+        if outer and outer:IsA("BasePart") then
+            local tween = TweenService:Create(outer, TweenInfo.new(1.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {
+                Orientation = outer.Orientation + Vector3.new(0, 360, 0),
+            })
+            tween:Play()
+            tweens[#tweens + 1] = tween
+        end
+        local middle = asset:FindFirstChild("Middle")
+        if middle and middle:IsA("BasePart") then
+            local tween = TweenService:Create(middle, TweenInfo.new(12.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {
+                Orientation = middle.Orientation + Vector3.new(0, -360, 0),
+            })
+            tween:Play()
+            tweens[#tweens + 1] = tween
+        end
+
+        local effect = { Rainbow = false }
+        local hue = math.random()
+
+        local function paint(color)
+            for _, item in ipairs(colorables) do
+                pcall(function()
+                    if not color then
+                        item.Inst[item.Prop] = item.Original
+                    elseif item.Kind == "Sequence" then
+                        item.Inst[item.Prop] = ColorSequence.new(color)
+                    elseif item.Kind == "Vector" then
+                        item.Inst[item.Prop] = Vector3.new(color.R, color.G, color.B)
+                    else
+                        item.Inst[item.Prop] = color
+                    end
+                end)
+            end
+        end
+
+        -- also colour another copy of the effect (the one the game spawns itself for the emote)
+        function effect.Adopt(model)
+            if adopted[model] or model == asset then
+                return
+            end
+            adopted[model] = true
+            collectColorables(model, colorables)
+        end
+
+        function effect.SetRainbow(on)
+            on = on and true or false
+            if effect.Rainbow == on then
+                return
+            end
+            effect.Rainbow = on
+            if not on then
+                paint(nil)
+            end
+        end
+
+        -- called every frame: follow the root, advance the colour fade
+        function effect.Update(root, dt)
+            if not asset.Parent then
+                return
+            end
+            pcall(function()
+                local cf = root.CFrame * CFrame.new(0, -3, 0)
+                if asset.PrimaryPart then
+                    asset:SetPrimaryPartCFrame(cf)
+                elseif asset:IsA("Model") then
+                    asset:PivotTo(cf)
+                end
+            end)
+            if effect.Rainbow then
+                hue = (hue + (dt or 0) * 0.18) % 1
+                paint(Color3.fromHSV(hue, 0.85, 1))
+            end
+        end
+
+        function effect.Destroy()
+            paint(nil) -- puts the game's own copy (if adopted) back to normal
+            for _, tween in ipairs(tweens) do
+                pcall(function()
+                    tween:Cancel()
+                end)
+            end
+            pcall(function()
+                asset:Destroy()
+            end)
+        end
+
+        return effect
+    end
+
+    local current -- your running effect, so the Rainbow toggle applies live
+
     local nightmare = Tabs.World:CreateModule({
         Name = "Nightmare Emote",
-        Description = "Plays the Nightmare emote effect (stand still).",
+        Description = "Plays the Nightmare emote effect (stand still). Other Nova users see the effect too.",
         OnEnable = function(mod)
+            local cfg = mod.Config
             local char, hum, root = Util.GetCharacter(LocalPlayer)
             if not char or not hum or not root then
                 error("Character not ready")
             end
 
-            local asset
             local animTrack
             local lastPos = root.Position
             local alive = true
 
-            pcall(function()
-                local effects = game:GetService("ReplicatedStorage"):FindFirstChild("Assets")
-                effects = effects and effects:FindFirstChild("Effects")
-                local template = effects and effects:FindFirstChild("NightmareEmote")
-                if not template then
-                    error("NightmareEmote asset not found")
-                end
-                asset = template:Clone()
-                asset.Parent = Workspace
-                for _, part in ipairs(asset:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = false
-                        part.Anchored = true
-                        pcall(function()
-                            part.CanQuery = false
-                        end)
-                    end
-                end
-                local outer = asset:FindFirstChild("Outer")
-                if outer and outer:IsA("BasePart") then
-                    TweenService:Create(outer, TweenInfo.new(1.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {
-                        Orientation = outer.Orientation + Vector3.new(0, 360, 0),
-                    }):Play()
-                end
-                local middle = asset:FindFirstChild("Middle")
-                if middle and middle:IsA("BasePart") then
-                    TweenService:Create(middle, TweenInfo.new(12.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {
-                        Orientation = middle.Orientation + Vector3.new(0, -360, 0),
-                    }):Play()
-                end
-            end)
+            local effect = createEffect()
+            if effect then
+                effect.SetRainbow(cfg.Rainbow)
+            end
+            current = effect
 
             pcall(function()
                 local anim = Instance.new("Animation")
@@ -16842,7 +17172,10 @@ do
                 animTrack:Play()
             end)
 
-            mod.Maid:Give(RunService.RenderStepped:Connect(function()
+            Nova.Link.Set("Nightmare", true)
+            Nova.Link.Set("NightmareRainbow", cfg.Rainbow)
+
+            mod.Maid:Give(RunService.RenderStepped:Connect(function(dt)
                 if not alive then return end
                 local _, h, r = Util.GetCharacter(LocalPlayer)
                 if not r or not h or h.Health <= 0 then
@@ -16854,28 +17187,101 @@ do
                     return
                 end
                 lastPos = r.Position
-                if asset and asset.Parent then
-                    pcall(function()
-                        if asset.PrimaryPart then
-                            asset:SetPrimaryPartCFrame(r.CFrame * CFrame.new(0, -3, 0))
-                        elseif asset:IsA("Model") then
-                            asset:PivotTo(r.CFrame * CFrame.new(0, -3, 0))
+                if effect then
+                    effect.Update(r, dt)
+                end
+            end))
+
+            -- the emote makes the game spawn its own copy of the effect too; colour that one as well
+            mod.Maid:Give(task.spawn(function()
+                while alive and effect do
+                    local _, _, r = Util.GetCharacter(LocalPlayer)
+                    if r then
+                        for _, inst in ipairs(Workspace:GetChildren()) do
+                            if inst.Name == "NightmareEmote" and (inst:IsA("Model") or inst:IsA("BasePart")) then
+                                local ok, pivot = pcall(function()
+                                    return inst:GetPivot().Position
+                                end)
+                                if ok and (pivot - r.Position).Magnitude < 15 then
+                                    effect.Adopt(inst)
+                                end
+                            end
                         end
-                    end)
+                    end
+                    task.wait(0.5)
                 end
             end))
 
             mod.Maid:Give(function()
                 alive = false
+                Nova.Link.Set("Nightmare", false)
+                Nova.Link.Set("NightmareRainbow", false)
                 pcall(function()
                     if animTrack then animTrack:Stop() end
                 end)
-                pcall(function()
-                    if asset then asset:Destroy() end
-                end)
+                if effect then
+                    effect.Destroy()
+                end
+                if current == effect then
+                    current = nil
+                end
             end)
         end,
     })
+
+    nightmare:AddToggle({
+        Label = "Rainbow", Key = "Rainbow", Default = false,
+        Tip = "Fades the whole effect through every colour. Other Nova users see it rainbow too.",
+        Callback = function(value)
+            if current then
+                current.SetRainbow(value)
+            end
+            if nightmare.Enabled then
+                Nova.Link.Set("NightmareRainbow", value)
+            end
+        end,
+    })
+    nightmare:AddLabel("Stand still while it plays. Other Nova users see the effect (Settings > Share Effects); everyone else only sees the emote.")
+
+    -- Other Nova users' effects, drawn on your screen
+    local remote = {} -- [player] = effect
+    local function removeRemote(player)
+        local effect = remote[player]
+        if effect then
+            remote[player] = nil
+            effect.Destroy()
+        end
+    end
+    Nova.Link.Watch("Nightmare", function(player, on)
+        removeRemote(player)
+        if on and not Nova.Unloaded then
+            local effect = createEffect()
+            if effect then
+                effect.SetRainbow(Nova.Link.Has(player, "NightmareRainbow"))
+                remote[player] = effect
+            end
+        end
+    end)
+    Nova.Link.Watch("NightmareRainbow", function(player, on)
+        local effect = remote[player]
+        if effect then
+            effect.SetRainbow(on)
+        end
+    end)
+    Nova.Maid:Give(RunService.RenderStepped:Connect(function(dt)
+        for player, effect in pairs(remote) do
+            local char = player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then
+                effect.Update(root, dt)
+            end
+        end
+    end))
+    Nova.Maid:Give(function()
+        for player in pairs(remote) do
+            removeRemote(player)
+        end
+    end)
 end
 
 -- ====================== MODULE: WORLD (LIGHTING) ======================
@@ -17658,10 +18064,36 @@ do
         return result
     end
 
-    local function startDog(mod, maid)
-        local cfg = mod.Config
+    -- Every running dog (yours and other Nova users'), so uninject can always undo all of them
+    local activeDogs = {}
+    Nova.Maid:Give(function()
+        for stop in pairs(activeDogs) do
+            pcall(stop)
+        end
+        activeDogs = {}
+    end)
+
+    -- Runs a dog for `opts.Player` (default: you) with settings `opts.Cfg` (default: the module's).
+    -- `mod` is nil for other Nova users' dogs: no status line, no notifications, no music.
+    local function startDog(mod, maid, opts)
+        opts = opts or {}
+        local player = opts.Player or LocalPlayer
+        local isLocal = player == LocalPlayer
+        local cfg = opts.Cfg or mod.Config
         local dog = {}
-        current = dog
+        if isLocal then
+            current = dog
+        end
+        local function status(text, kind)
+            if mod then
+                mod:SetStatus(text, kind)
+            end
+        end
+        local function notify(text, duration, kind)
+            if mod and isLocal then
+                Nova.Notify("Dog", text, duration, kind, true)
+            end
+        end
         local joints, jointChar
         local clone, cloneRoot, shape
         local toolKey, lastToolCheck = nil, 0
@@ -17693,7 +18125,7 @@ do
                 sound:Destroy()
                 sound = nil
             end
-            local id = string.match(tostring(cfg.Music or ""), "%d+")
+            local id = isLocal and string.match(tostring(cfg.Music or ""), "%d+")
             if id then
                 sound = New("Sound", {
                     SoundId = "rbxassetid://" .. id,
@@ -17728,7 +18160,7 @@ do
         local reportedError = false
         local function step(dt)
             clock = clock + dt
-            local char, hum = Util.GetCharacter(LocalPlayer)
+            local char, hum = Util.GetCharacter(player)
             if not (char and hum) or hum.Health <= 0 then
                 return
             end
@@ -17752,8 +18184,8 @@ do
                 local why
                 clone, why = makeClone(char)
                 if not clone then
-                    mod:SetStatus("Couldn't copy your character: " .. tostring(why), "error")
-                    Nova.Notify("Dog", "Couldn't copy your character: " .. tostring(why), 5, "error", true)
+                    status("Couldn't copy your character: " .. tostring(why), "error")
+                    notify("Couldn't copy your character: " .. tostring(why), 5, "error")
                     return
                 end
                 cloneRoot = clone:FindFirstChild("HumanoidRootPart")
@@ -17761,14 +18193,14 @@ do
                 local count, kinds
                 joints, count, kinds = findJoints(clone)
                 if not joints.Root then
-                    mod:SetStatus("Couldn't find your character's joints", "error")
-                    Nova.Notify("Dog", "Couldn't find your character's joints (found " .. count .. ")", 4, "error", true)
+                    status("Couldn't find your character's joints", "error")
+                    notify("Couldn't find your character's joints (found " .. count .. ")", 4, "error")
                 else
                     local list = {}
                     for kind in pairs(kinds) do
                         list[#list + 1] = kind
                     end
-                    mod:SetStatus("Dog mode: " .. count .. " joints (" .. table.concat(list, ", ") .. ")")
+                    status("Dog mode: " .. count .. " joints (" .. table.concat(list, ", ") .. ")")
                     local ok, made = pcall(dogify, clone, char, hum, joints, cfg)
                     if ok then
                         shape = made
@@ -17886,27 +18318,43 @@ do
             local ok, err = pcall(step, dt)
             if not ok and not reportedError then
                 reportedError = true
-                warn("[Nova] Dog error: " .. tostring(err))
-                mod:SetStatus("Error: " .. tostring(err), "error")
-                Nova.Notify("Dog", "Error: " .. string.sub(tostring(err), 1, 120), 6, "error", true)
+                warn("[Nova] Dog error (" .. player.Name .. "): " .. tostring(err))
+                status("Error: " .. tostring(err), "error")
+                notify("Error: " .. string.sub(tostring(err), 1, 120), 6, "error")
             end
         end))
 
-        maid:Give(function()
+        local stopped = false
+        local function stop()
+            if stopped then
+                return
+            end
+            stopped = true
+            activeDogs[stop] = nil
             restoreJoints()
             if sound then
-                sound:Destroy()
+                pcall(function()
+                    sound:Destroy()
+                end)
                 sound = nil
             end
             if current == dog then
                 current = nil
             end
-        end)
+            if isLocal then
+                Nova.Link.Set("Dog", false)
+            end
+        end
+        activeDogs[stop] = true
+        maid:Give(stop)
+        if isLocal then
+            Nova.Link.Set("Dog", true) -- other Nova users see your dog too
+        end
     end
 
     local dogModule = Tabs.Blatant:CreateModule({
         Name = "Dog",
-        Description = "Puts your avatar on all fours and makes it dance. Only you can see it.",
+        Description = "Puts your avatar on all fours and makes it dance. Other Nova users see it too.",
         OnEnable = function(mod)
             local maid = mod.Maid
             if mod.Config.Ask == false then
@@ -17977,7 +18425,32 @@ do
             end
         end,
     })
-    dogModule:AddLabel("Only you see the dog and hear the music. Everyone else still sees you normally.")
+    dogModule:AddLabel("Other Nova users see your dog (Settings > Share Effects). Players without Nova see you normally, and only you hear the music.")
+
+    -- Other Nova users' dogs, drawn on your screen (default settings, no music)
+    local REMOTE_CFG = { Dance = true, Speed = 1, HopHeight = 1, Legs = "Short", Mouth = true }
+    local remoteDogs = {}
+    Nova.Link.Watch("Dog", function(player, on)
+        local existing = remoteDogs[player]
+        if existing then
+            remoteDogs[player] = nil
+            pcall(existing.Clean, existing)
+        end
+        if on and not Nova.Unloaded then
+            local maid = Maid.new()
+            remoteDogs[player] = maid
+            local ok, err = pcall(startDog, nil, maid, { Player = player, Cfg = REMOTE_CFG })
+            if not ok then
+                warn("[Nova] Couldn't show " .. player.Name .. "'s dog: " .. tostring(err))
+            end
+        end
+    end)
+    Nova.Maid:Give(function()
+        for _, maid in pairs(remoteDogs) do
+            pcall(maid.Clean, maid)
+        end
+        remoteDogs = {}
+    end)
 end
 
 -- ====================== VAPE GUI ======================
