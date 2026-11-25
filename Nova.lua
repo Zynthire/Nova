@@ -17652,8 +17652,40 @@ do
 end
 
 -- ====================== MODULE: FPS (UNLOCKER / CAP) ======================
+-- Turning it off (or uninjecting) puts back the cap you had before Nova touched it, instead of
+-- forcing 60 - otherwise it would undo an outside FPS unlocker. The old cap is read with
+-- getfpscap when the executor has it; if not, Nova measures your frame rate right after
+-- injecting: well above 60 means something already unlocked it, so it goes back to unlimited.
 do
     local unlocker
+    local original -- the cap from before Nova changed it (0 = unlimited)
+    local measured -- nil while measuring, then true if the game was running above 60 FPS
+    task.spawn(function()
+        local frames, start = 0, os.clock()
+        while frames < 90 and os.clock() - start < 3 do
+            RunService.RenderStepped:Wait()
+            frames = frames + 1
+        end
+        measured = frames / math.max(os.clock() - start, 0.001) > 66
+    end)
+    local function rememberOriginal()
+        if original ~= nil then
+            return
+        end
+        if type(getfpscap) == "function" then
+            local ok, cap = pcall(getfpscap)
+            if ok and type(cap) == "number" then
+                original = cap
+                return
+            end
+        end
+        local waited = 0
+        while measured == nil and waited < 3 do
+            waited = waited + task.wait(0.05)
+        end
+        original = measured and 0 or 60
+    end
+
     unlocker = Tabs.FPS:CreateModule({
         Name = "FPS Unlocker",
         Description = "Set a custom FPS cap or remove it.",
@@ -17662,13 +17694,24 @@ do
                 error("setfpscap is not supported by this executor")
             end
             local cfg = mod.Config
+            local active = true
             mod.Apply = function()
-                pcall(setfpscap, cfg.Unlimited and 0 or cfg.Cap)
+                if active then
+                    pcall(setfpscap, cfg.Unlimited and 0 or cfg.Cap)
+                end
             end
-            mod.Apply()
             mod.Maid:Give(function()
+                active = false
                 mod.Apply = nil
-                pcall(setfpscap, 60)
+                if original ~= nil then
+                    pcall(setfpscap, original)
+                end
+            end)
+            task.spawn(function()
+                rememberOriginal()
+                if mod.Apply then
+                    mod.Apply()
+                end
             end)
         end,
     })
