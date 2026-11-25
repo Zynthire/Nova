@@ -6590,7 +6590,7 @@ do
     aura:AddToggle({
         Label = "High Hitreg",
         Key = "HighHitreg",
-        Default = false,
+        Default = true,
         Tip = "Times every hit to land on the server's tick right after your last accepted hit. 36 hits / 10s with a stock sword.",
     })
     aura:AddLabel("Hits are lined up with the server's 60 Hz tick and timed from your measured latency. Randomize Interval is ignored while this is on.", {
@@ -18298,40 +18298,131 @@ do
     injector:AddLabel("Many flags are only read when Roblox starts and won't change anything mid-game. The status line shows how many applied.")
 end
 
--- ====================== MODULE: DOG ======================
--- Plays the Good Boy Dog emote on your character on loop. It's a catalog emote, so its animation
--- is owned by Roblox: it plays in any game and every player sees it, with or without Nova. Asks
--- before turning on. A nod to the viral dog clip.
+-- ====================== MODULE: FAST BREAK + NO FALL ======================
+-- Both based on how aero (Vape V4 fork) does them.
 do
-    local SoundService = service("SoundService")
-    local EMOTE_CATALOG_ID = "100737291015384" -- Good Boy Dog Emote
-
-    -- The catalog number is the emote item, not the animation: the real animation id is read out
-    -- of the item once (falls back to using the number directly).
-    local emoteAnimationId
-    local function resolveEmote()
-        if emoteAnimationId then
-            return emoteAnimationId
-        end
-        local found
-        pcall(function()
-            for _, root in ipairs(game:GetObjects("rbxassetid://" .. EMOTE_CATALOG_ID)) do
-                local candidates = { root }
-                for _, inst in ipairs(root:GetDescendants()) do
-                    candidates[#candidates + 1] = inst
+    -- Fast Break: the game's block breaker has a cooldown between hits on a block (0.3 s stock).
+    -- This keeps it set to the Break Speed value. Bed Check keeps beds at the normal speed.
+    local fastBreak = Tabs.Blatant:CreateModule({
+        Name = "FastBreak",
+        Description = "Mine blocks faster (lowers the cooldown between block hits).",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            assert(Bedwars.Resolve(), "Bedwars not loaded")
+            pcall(Bedwars.ResolveExtras)
+            local mouse = LocalPlayer:GetMouse()
+            local running = true
+            local function setCooldown(value)
+                local breaker = Bedwars.BlockBreaker
+                if breaker and breaker.setCooldown then
+                    pcall(breaker.setCooldown, breaker, value)
+                    return true
                 end
-                for _, inst in ipairs(candidates) do
-                    if inst:IsA("Animation") and inst.AnimationId ~= "" then
-                        if not found or string.find(string.lower(inst.Name), "r15", 1, true) then
-                            found = inst.AnimationId
+                pcall(Bedwars.ResolveExtras)
+                return false
+            end
+            mod.Maid:Give(function()
+                running = false
+                setCooldown(0.3)
+            end)
+            mod.Maid:Give(task.spawn(function()
+                local warned = false
+                while running do
+                    local value = tonumber(cfg.Time) or 0.25
+                    if cfg.BedCheck then
+                        local target = mouse.Target
+                        if target and string.find(string.lower(target.Name), "bed", 1, true) then
+                            value = 0.3
                         end
                     end
+                    if setCooldown(value) then
+                        if warned then
+                            warned = false
+                            mod:SetStatus(nil)
+                        end
+                    elseif not warned then
+                        warned = true
+                        mod:SetStatus("Block breaker not found yet", "error")
+                    end
+                    task.wait(0.05)
                 end
+            end))
+        end,
+    })
+    fastBreak:AddSlider({ Label = "Break Speed", Key = "Time", Min = 0, Max = 0.3, Step = 0.01, Default = 0.25, Suffix = "s", Tip = "Delay between hits on a block. The game's normal value is 0.3." })
+    fastBreak:AddToggle({ Label = "Bed Check", Key = "BedCheck", Default = false, Tip = "Breaks beds at normal speed." })
+
+    -- No Fall: fall damage comes from how fast you're falling. While you fall, every frame your
+    -- velocity is swapped for a tiny upward one just long enough for it to be sent to the server,
+    -- then put back before the next frame is drawn, so you still fall normally on your screen.
+    -- Skipped over the void (falling into the void kills you anyway).
+    local voidParams = RaycastParams.new()
+    voidParams.FilterType = Enum.RaycastFilterType.Exclude
+    voidParams.IgnoreWater = true
+    local SAMPLE_OFFSETS = {
+        Vector3.new(0, 0, 0), Vector3.new(2, 0, 0), Vector3.new(-2, 0, 0), Vector3.new(0, 0, 2), Vector3.new(0, 0, -2),
+    }
+    local voidCache = { at = 0, result = false }
+    local function nearVoid(char, position)
+        if os.clock() - voidCache.at < 0.1 then
+            return voidCache.result
+        end
+        voidParams.FilterDescendantsInstances = { char, workspace.CurrentCamera }
+        local void = true
+        for _, offset in ipairs(SAMPLE_OFFSETS) do
+            if workspace:Raycast(position + offset, Vector3.new(0, -600, 0), voidParams) then
+                void = false
+                break
             end
-        end)
-        emoteAnimationId = found or ("rbxassetid://" .. EMOTE_CATALOG_ID)
-        return emoteAnimationId
+        end
+        voidCache.at, voidCache.result = os.clock(), void
+        return void
     end
+
+    local noFall = Tabs.Blatant:CreateModule({
+        Name = "NoFall",
+        Description = "Take no fall damage.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local busy = false
+            mod.Maid:Give(RunService.Heartbeat:Connect(function()
+                if busy then
+                    return
+                end
+                local char, hum, root = Util.GetCharacter(LocalPlayer)
+                if not root or hum.Health <= 0 then
+                    return
+                end
+                local v = root.AssemblyLinearVelocity
+                if v.Y >= -35 or nearVoid(char, root.Position) then
+                    return
+                end
+                if math.random(1, 100) > (tonumber(cfg.Chance) or 100) then
+                    return
+                end
+                busy = true
+                root.AssemblyLinearVelocity = Vector3.new(0, 2.5, 0)
+                pcall(function()
+                    hum:ChangeState(Enum.HumanoidStateType.Landed)
+                end)
+                RunService.PreRender:Wait()
+                if root.Parent then
+                    root.AssemblyLinearVelocity = v
+                end
+                busy = false
+            end))
+        end,
+    })
+    noFall:AddSlider({ Label = "Chance", Key = "Chance", Min = 1, Max = 100, Step = 1, Default = 100, Suffix = "%", Tip = "How often it kicks in per frame. Lower looks less obvious." })
+end
+
+-- ====================== MODULE: DOG ======================
+-- Dog and Fish: each plays a catalog emote on your character on loop (Good Boy Dog Emote /
+-- the fish emote). Catalog emote animations are owned by Roblox, so they play in any game and
+-- every player sees them, with or without Nova. Both ask before turning on. Same code, set up
+-- once per module by makeEmoteModule below.
+do
+    local SoundService = service("SoundService")
 
     -- "Are you sure?" popup in its own ScreenGui, above Nova's window and the Vape GUI
     local function askConfirm(maid, title, text, yesText, onAnswer)
@@ -18433,160 +18524,202 @@ do
     end
 
 
-    local current -- the running dog, so the music settings can update it live
+    local function makeEmoteModule(def)
+        local EMOTE_CATALOG_ID = def.Id
 
-    local function startDog(mod, maid)
-        local cfg = mod.Config
-        local dog = {}
-        current = dog
-        local track, trackHum, warned = nil, nil, false
-        local sound
-        local stopped = false
-
-        local function stopEmote()
-            if track then
-                pcall(function()
-                    track:Stop(0.2)
-                    track:Destroy()
-                end)
+        -- The catalog number is the emote item, not the animation: the real animation id is read out
+        -- of the item once (falls back to using the number directly).
+        local emoteAnimationId
+        local function resolveEmote()
+            if emoteAnimationId then
+                return emoteAnimationId
             end
-            track, trackHum = nil, nil
-        end
-
-        local function refreshSound()
-            if sound then
-                pcall(function()
-                    sound:Destroy()
-                end)
-                sound = nil
-            end
-            local id = string.match(tostring(cfg.Music or ""), "%d+")
-            if id then
-                sound = New("Sound", {
-                    SoundId = "rbxassetid://" .. id,
-                    Looped = true,
-                    Volume = math.clamp((tonumber(cfg.Volume) or 50) / 100, 0, 1) * 2,
-                    Parent = SoundService,
-                })
-                sound:Play()
-            end
-        end
-        function dog.RefreshSound()
-            refreshSound()
-        end
-        function dog.RefreshVolume()
-            if sound then
-                sound.Volume = math.clamp((tonumber(cfg.Volume) or 50) / 100, 0, 1) * 2
-            end
-        end
-        refreshSound()
-
-        -- keeps the emote playing (restarts it after respawning or if something stops it)
-        maid:Give(task.spawn(function()
-            local animationId = resolveEmote()
-            while not stopped do
-                local _, hum = Util.GetCharacter(LocalPlayer)
-                if not hum or hum.Health <= 0 then
-                    stopEmote()
-                elseif hum ~= trackHum or not (track and track.IsPlaying) then
-                    stopEmote()
-                    local ok, err = pcall(function()
-                        local anim = Instance.new("Animation")
-                        anim.AnimationId = animationId
-                        local animator = hum:FindFirstChildOfClass("Animator") or hum
-                        track = animator:LoadAnimation(anim)
-                        track.Priority = Enum.AnimationPriority.Action
-                        track.Looped = true
-                        track:Play(0.2)
-                        trackHum = hum
-                    end)
-                    if ok then
-                        warned = false
-                        mod:SetStatus("Woof")
-                    elseif not warned then
-                        warned = true
-                        mod:SetStatus("The emote couldn't load: " .. tostring(err), "error")
-                        Nova.Notify("Dog", "The emote couldn't load in this game: " .. string.sub(tostring(err), 1, 90), 5, "error", true)
+            local found
+            pcall(function()
+                for _, root in ipairs(game:GetObjects("rbxassetid://" .. EMOTE_CATALOG_ID)) do
+                    local candidates = { root }
+                    for _, inst in ipairs(root:GetDescendants()) do
+                        candidates[#candidates + 1] = inst
                     end
-                end
-                task.wait(0.5)
-            end
-        end))
-
-        local function stop()
-            if stopped then
-                return
-            end
-            stopped = true
-            stopEmote()
-            if sound then
-                pcall(function()
-                    sound:Destroy()
-                end)
-                sound = nil
-            end
-            if current == dog then
-                current = nil
-            end
-        end
-        maid:Give(stop)
-        Nova.Maid:Give(stop) -- uninject always stops it, whatever state the module is in
-    end
-
-    local dogModule = Tabs.Blatant:CreateModule({
-        Name = "Dog",
-        Description = "Become a dog: plays the Good Boy Dog emote on loop. Everyone sees it.",
-        OnEnable = function(mod)
-            local maid = mod.Maid
-            if mod.Config.Ask == false then
-                startDog(mod, maid)
-                return
-            end
-            askConfirm(maid, "Become a dog?", "Are you sure you wanna become a dog?", "Yes, woof", function(yes)
-                -- the module may have been switched off (or back on) while the popup was open
-                if not mod.Enabled or mod.Maid ~= maid then
-                    return
-                end
-                if yes then
-                    local ok, err = pcall(startDog, mod, maid)
-                    if ok then
-                        Nova.Notify("Dog", "Woof.", 2, "success", true)
-                    else
-                        warn("[Nova] Dog couldn't start: " .. tostring(err))
-                        Nova.Notify("Dog", "Couldn't start: " .. string.sub(tostring(err), 1, 120), 6, "error", true)
-                    end
-                else
-                    task.defer(function()
-                        if mod.Enabled and mod.Maid == maid then
-                            mod:SetEnabled(false, true)
-                            Nova.Notify("Dog", "Maybe next time.", 2)
+                    for _, inst in ipairs(candidates) do
+                        if inst:IsA("Animation") and inst.AnimationId ~= "" then
+                            if not found or string.find(string.lower(inst.Name), "r15", 1, true) then
+                                found = inst.AnimationId
+                            end
                         end
-                    end)
+                    end
                 end
             end)
-        end,
-    })
+            emoteAnimationId = found or ("rbxassetid://" .. EMOTE_CATALOG_ID)
+            return emoteAnimationId
+        end
 
-    dogModule:AddToggle({ Label = "Ask First", Key = "Ask", Default = true, Tip = "Asks \"Are you sure you wanna become a dog?\" every time you turn it on." })
-    dogModule:AddSection("Music")
-    dogModule:AddTextBox({
-        Label = "Sound ID", Key = "Music", Default = "", Placeholder = "audio asset id",
-        Tip = "Plays while you're a dog (only you hear it). Leave empty for no music. Many uploaded sounds are private, so not every ID works.",
-        Callback = function()
-            if current then
-                current.RefreshSound()
+        local current -- the running dog, so the music settings can update it live
+
+        local function startDog(mod, maid)
+            local cfg = mod.Config
+            local dog = {}
+            current = dog
+            local track, trackHum, warned = nil, nil, false
+            local sound
+            local stopped = false
+
+            local function stopEmote()
+                if track then
+                    pcall(function()
+                        track:Stop(0.2)
+                        track:Destroy()
+                    end)
+                end
+                track, trackHum = nil, nil
             end
-        end,
-    })
-    dogModule:AddSlider({
-        Label = "Volume", Key = "Volume", Min = 0, Max = 100, Step = 5, Default = 50, Suffix = "%",
-        Callback = function()
-            if current then
-                current.RefreshVolume()
+
+            local function refreshSound()
+                if sound then
+                    pcall(function()
+                        sound:Destroy()
+                    end)
+                    sound = nil
+                end
+                local id = string.match(tostring(cfg.Music or ""), "%d+")
+                if id then
+                    sound = New("Sound", {
+                        SoundId = "rbxassetid://" .. id,
+                        Looped = true,
+                        Volume = math.clamp((tonumber(cfg.Volume) or 50) / 100, 0, 1) * 2,
+                        Parent = SoundService,
+                    })
+                    sound:Play()
+                end
             end
-        end,
+            function dog.RefreshSound()
+                refreshSound()
+            end
+            function dog.RefreshVolume()
+                if sound then
+                    sound.Volume = math.clamp((tonumber(cfg.Volume) or 50) / 100, 0, 1) * 2
+                end
+            end
+            refreshSound()
+
+            -- keeps the emote playing (restarts it after respawning or if something stops it)
+            maid:Give(task.spawn(function()
+                local animationId = resolveEmote()
+                while not stopped do
+                    local _, hum = Util.GetCharacter(LocalPlayer)
+                    if not hum or hum.Health <= 0 then
+                        stopEmote()
+                    elseif hum ~= trackHum or not (track and track.IsPlaying) then
+                        stopEmote()
+                        local ok, err = pcall(function()
+                            local anim = Instance.new("Animation")
+                            anim.AnimationId = animationId
+                            local animator = hum:FindFirstChildOfClass("Animator") or hum
+                            track = animator:LoadAnimation(anim)
+                            track.Priority = Enum.AnimationPriority.Action
+                            track.Looped = true
+                            track:Play(0.2)
+                            trackHum = hum
+                        end)
+                        if ok then
+                            warned = false
+                            mod:SetStatus(def.Status)
+                        elseif not warned then
+                            warned = true
+                            mod:SetStatus("The emote couldn't load: " .. tostring(err), "error")
+                            Nova.Notify(def.Name, "The emote couldn't load in this game: " .. string.sub(tostring(err), 1, 90), 5, "error", true)
+                        end
+                    end
+                    task.wait(0.5)
+                end
+            end))
+
+            local function stop()
+                if stopped then
+                    return
+                end
+                stopped = true
+                stopEmote()
+                if sound then
+                    pcall(function()
+                        sound:Destroy()
+                    end)
+                    sound = nil
+                end
+                if current == dog then
+                    current = nil
+                end
+            end
+            maid:Give(stop)
+            Nova.Maid:Give(stop) -- uninject always stops it, whatever state the module is in
+        end
+
+        local dogModule = Tabs.Blatant:CreateModule({
+            Name = def.Name,
+            Description = def.Description,
+            OnEnable = function(mod)
+                local maid = mod.Maid
+                if mod.Config.Ask == false then
+                    startDog(mod, maid)
+                    return
+                end
+                askConfirm(maid, "Become a " .. def.Noun .. "?", "Are you sure you wanna become a " .. def.Noun .. "?", def.Yes, function(yes)
+                    -- the module may have been switched off (or back on) while the popup was open
+                    if not mod.Enabled or mod.Maid ~= maid then
+                        return
+                    end
+                    if yes then
+                        local ok, err = pcall(startDog, mod, maid)
+                        if ok then
+                            Nova.Notify(def.Name, def.Status .. ".", 2, "success", true)
+                        else
+                            warn("[Nova] " .. def.Name .. " couldn't start: " .. tostring(err))
+                            Nova.Notify(def.Name, "Couldn't start: " .. string.sub(tostring(err), 1, 120), 6, "error", true)
+                        end
+                    else
+                        task.defer(function()
+                            if mod.Enabled and mod.Maid == maid then
+                                mod:SetEnabled(false, true)
+                                Nova.Notify(def.Name, "Maybe next time.", 2)
+                            end
+                        end)
+                    end
+                end)
+            end,
+        })
+
+        dogModule:AddToggle({ Label = "Ask First", Key = "Ask", Default = true, Tip = "Asks \"Are you sure you wanna become a " .. def.Noun .. "?\" every time you turn it on." })
+        dogModule:AddSection("Music")
+        dogModule:AddTextBox({
+            Label = "Sound ID", Key = "Music", Default = "", Placeholder = "audio asset id",
+            Tip = "Plays while you're a " .. def.Noun .. " (only you hear it). Leave empty for no music. Many uploaded sounds are private, so not every ID works.",
+            Callback = function()
+                if current then
+                    current.RefreshSound()
+                end
+            end,
+        })
+        dogModule:AddSlider({
+            Label = "Volume", Key = "Volume", Min = 0, Max = 100, Step = 5, Default = 50, Suffix = "%",
+            Callback = function()
+                if current then
+                    current.RefreshVolume()
+                end
+            end,
+        })
+        dogModule:AddLabel("Everyone sees the emote, with or without Nova. Only you hear the music.")
+    end
+
+    makeEmoteModule({
+        Name = "Dog", Noun = "dog", Id = "100737291015384", -- Good Boy Dog Emote
+        Description = "Become a dog: plays the Good Boy Dog emote on loop. Everyone sees it.",
+        Yes = "Yes, woof", Status = "Woof",
     })
-    dogModule:AddLabel("Everyone sees the emote, with or without Nova. Only you hear the music.")
+    makeEmoteModule({
+        Name = "Fish", Noun = "fish", Id = "117563235602125",
+        Description = "Become a fish: plays the fish emote on loop. Everyone sees it.",
+        Yes = "Yes, blub", Status = "Blub",
+    })
 end
 
 -- ====================== VAPE GUI ======================
