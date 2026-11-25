@@ -6917,9 +6917,6 @@ do
                 end
 
                 lastTarget, lastTargetAt = entry, os.clock()
-                if cfg.ShowTarget then
-                    box.Adornee = root
-                end
 
                 local result = {}
                 for k, v in pairs(native) do
