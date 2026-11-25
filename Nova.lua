@@ -2629,15 +2629,24 @@ function UI:CreateTab(name, subtitle, icon)
             ensureFooter()
         end
 
+        -- Every control is also recorded (kind + options + Nova's handle) so another layout -
+        -- the optional Vape GUI - can rebuild the same settings bound to the same config keys.
+        mod.Defs = {}
+        local function remember(kind, o, extra, handle)
+            mod.Defs[#mod.Defs + 1] = { Kind = kind, O = o, B = extra, Handle = handle, Host = host }
+        end
+
         function mod:AddSection(title)
             register(nil)
             Controls.Section(host, title)
+            remember("Section", title)
             host:RefreshVisibility()
         end
 
         function mod:AddToggle(o)
             register(o.Label)
             local handle = Controls.Toggle(host, o)
+            remember("Toggle", o, nil, handle)
             host:RefreshVisibility()
             return handle
         end
@@ -2645,6 +2654,7 @@ function UI:CreateTab(name, subtitle, icon)
         function mod:AddSlider(o)
             register(o.Label)
             local handle = Controls.Slider(host, o)
+            remember("Slider", o, nil, handle)
             host:RefreshVisibility()
             return handle
         end
@@ -2652,6 +2662,7 @@ function UI:CreateTab(name, subtitle, icon)
         function mod:AddOption(o)
             register(o.Label)
             local handle = Controls.Option(host, o)
+            remember("Option", o, nil, handle)
             host:RefreshVisibility()
             return handle
         end
@@ -2659,6 +2670,7 @@ function UI:CreateTab(name, subtitle, icon)
         function mod:AddTextBox(o)
             register(o.Label)
             local handle = Controls.TextBox(host, o)
+            remember("TextBox", o, nil, handle)
             host:RefreshVisibility()
             return handle
         end
@@ -2666,12 +2678,14 @@ function UI:CreateTab(name, subtitle, icon)
         function mod:AddButton(o)
             register(o.Label)
             Controls.Button(host, o)
+            remember("Button", o)
             host:RefreshVisibility()
         end
 
         function mod:AddLabel(text, o)
             register(nil)
             Controls.Note(host, text, o)
+            remember("Note", text, o)
             host:RefreshVisibility()
         end
         mod.AddNote = mod.AddLabel
@@ -3794,6 +3808,19 @@ do
     local host = newHost(SettingsContent, Nova.Config.UI, nil)
     host.InnerWidth = POP_W - 32
     UI.SettingsHost = host
+    -- Same recording as modules do (see mod.Defs), so the Vape GUI can show these settings too.
+    -- Shadows Controls for this block only; each call still goes to the real control.
+    UI.SettingsDefs = {}
+    local Controls = setmetatable({}, {
+        __index = function(_, kind)
+            local real = Controls[kind]
+            return function(h, a, b)
+                local handle = real(h, a, b)
+                UI.SettingsDefs[#UI.SettingsDefs + 1] = { Kind = kind, O = a, B = b, Handle = handle, Host = h }
+                return handle
+            end
+        end,
+    })
     host.OnLayout = function()
         SettingsMenu.Size = UDim2.fromOffset(POP_W, math.min(POP_HEADER + host:ContentHeight(), POP_MAX_H))
     end
@@ -3826,6 +3853,15 @@ do
         Tip = "Applied when you let go of the slider.",
         Callback = function()
             UI:QueueScale()
+        end,
+    })
+    Controls.Toggle(host, {
+        Label = "Vape GUI", Key = "VapeGUI", Default = false,
+        Tip = "Use the real Vape V4 click GUI instead of Nova's window. Same modules, settings and keybinds either way; turn it off from Vape's settings (gear > Nova).",
+        Callback = function()
+            if UI.Vape then
+                UI.Vape.Apply()
+            end
         end,
     })
     Controls.Toggle(host, {
@@ -4106,7 +4142,8 @@ Nova.Maid:Give(UserInputService.InputBegan:Connect(function(input)
     if UserInputService:GetFocusedTextBox() then
         return
     end
-    if input.KeyCode == Enum.KeyCode.RightShift then
+    local vapeActive = UI.Vape and UI.Vape.Active
+    if input.KeyCode == Enum.KeyCode.RightShift and not vapeActive then
         UI:SetVisible(not UI.Visible)
         return
     end
@@ -4122,6 +4159,9 @@ Nova.Maid:Give(UserInputService.InputBegan:Connect(function(input)
         if UI.DropdownFrame.Visible or SettingsMenu.Visible then
             UI:CloseOverlays()
         end
+        return
+    end
+    if vapeActive then
         return
     end
     for _, mod in ipairs(Nova.ModuleList) do
@@ -7115,6 +7155,476 @@ do
     aim:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
     aim:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
     aim:AddLabel("Bedwars only. Doesn't move your camera: it redirects the arrow you release. Wall check and velocity handling are tuned automatically.")
+
+    -- ====================== MODULE: SILENT AIM ======================
+    -- Same intercept maths as Projectile Aimbot, but nothing on your screen changes: the game
+    -- launches its own local arrow exactly where you aimed, and only the copy of the shot that is
+    -- sent to the server (the ProjectileFire remote) gets the redirected velocity. This is the same
+    -- approach aero takes: rewrite argument 6 (velocity) of the ProjectileFire InvokeServer call.
+    --
+    -- The hook itself is installed once and kept in getgenv() so re-executing Nova never stacks a
+    -- second hook; turning the module off just clears the handler and the hook passes everything
+    -- through untouched. It prefers a __namecall hook (catches the remote however the game sends
+    -- it) and falls back to wrapping Bedwars' Client:Get on executors without hookmetamethod.
+    -- Nothing in the rewrite path touches the GUI: it runs on the game's own thread, where writes
+    -- to anything under CoreGui are rejected (that is what broke Show Target on Projectile Aimbot).
+    local SilentHook = {}
+    function SilentHook.Hub()
+        local genv = getgenv()
+        local hub = genv.__NovaSilentAimHub
+        if type(hub) ~= "table" then
+            hub = { Names = { ProjectileFire = true } }
+            genv.__NovaSilentAimHub = hub
+        end
+        return hub
+    end
+
+    function SilentHook.FindNames(hub)
+        hub.Names.ProjectileFire = true
+        pcall(function()
+            local launch = Bedwars.ProjectileController and Bedwars.ProjectileController.launchProjectileWithValues
+            if type(launch) ~= "function" or not (debug and debug.getproto and debug.getconstants) then
+                return
+            end
+            local fn = debug.getproto(launch, 2)
+            local constants = type(fn) == "function" and debug.getconstants(fn)
+            if type(constants) ~= "table" then
+                return
+            end
+            for index, value in pairs(constants) do
+                if value == "Client" and type(constants[index + 1]) == "string" and constants[index + 1] ~= "" then
+                    hub.Names[constants[index + 1]] = true
+                    break
+                end
+            end
+        end)
+    end
+
+    function SilentHook.Namecall(hub)
+        if hub.Namecall then
+            return true
+        end
+        if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
+            return false, "no hookmetamethod"
+        end
+        local wrap = type(newcclosure) == "function" and newcclosure or function(f) return f end
+        local ok, err = pcall(function()
+            local old
+            old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+                local method = getnamecallmethod()
+                local handler = hub.Handler
+                if handler and method == "InvokeServer" and not (checkcaller and checkcaller()) then
+                    local isFire = false
+                    pcall(function()
+                        isFire = typeof(self) == "Instance" and hub.Names[self.Name] == true
+                    end)
+                    if isFire then
+                        local args = table.pack(...)
+                        local good, out = pcall(handler, args)
+                        if good and type(out) == "table" then
+                            -- Called by index, not with ':' - a nested namecall inside the handler
+                            -- (raycasts etc.) can change the stored namecall method
+                            return self.InvokeServer(self, table.unpack(out, 1, out.n))
+                        end
+                    end
+                end
+                return old(self, ...)
+            end))
+        end)
+        if not ok then
+            return false, "hook failed: " .. tostring(err)
+        end
+        hub.Namecall = true
+        return true
+    end
+
+    function SilentHook.ClientGet(hub)
+        local client = Bedwars.Client
+        if not client or type(client.Get) ~= "function" then
+            return false, "Bedwars Client not found"
+        end
+        if hub.ClientGetFor == client then
+            return true
+        end
+        local oldGet = client.Get
+        local ok, err = pcall(function()
+            client.Get = function(selfClient, name, ...)
+                local call = oldGet(selfClient, name, ...)
+                if not (hub.Handler and hub.Names[name] and type(call) == "table") then
+                    return call
+                end
+                local proxy = setmetatable({}, { __index = call })
+                for _, method in ipairs({ "CallServerAsync", "CallServer", "InvokeServer" }) do
+                    if type(call[method]) == "function" then
+                        proxy[method] = function(_, ...)
+                            local args = table.pack(...)
+                            local handler = hub.Handler
+                            if handler then
+                                local good, out = pcall(handler, args)
+                                if good and type(out) == "table" then
+                                    args = out
+                                end
+                            end
+                            return call[method](call, table.unpack(args, 1, args.n))
+                        end
+                    end
+                end
+                return proxy
+            end
+        end)
+        if not ok then
+            return false, "couldn't wrap Client:Get: " .. tostring(err)
+        end
+        hub.ClientGetFor = client
+        return true
+    end
+
+    SilentHook.Module = Tabs.Combat:CreateModule({
+        Name = "Silent Aim",
+        Description = "Redirects your projectiles server-side; your screen shows a normal shot (Bedwars).",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local hub = SilentHook.Hub()
+            local installed, method = false, nil
+            local lastTryAt = 0
+            local lastTarget, lastTargetAt = nil, 0
+            local lockedRandomPart = nil
+
+            local setStatus = makeStatusLabel(mod, "Silent Aim", -160)
+
+            local box = mod.Maid:Give(New("BoxHandleAdornment", {
+                Size = Vector3.new(3.6, 5.2, 3.6),
+                CFrame = CFrame.new(0, -0.55, 0),
+                Transparency = 0.7,
+                Color3 = Theme.Accent,
+                AlwaysOnTop = true,
+                ZIndex = 1,
+                Adornee = nil,
+                Parent = UI.Gui,
+            }))
+
+            local circle
+            if HAS_DRAWING then
+                circle = mod.Maid:Give(Drawing.new("Circle"))
+                circle.Thickness = 1
+                circle.NumSides = 64
+                circle.Filled = false
+                circle.Color = Theme.Accent
+                circle.Transparency = 0.8
+                circle.Visible = false
+            end
+
+            local function shouldWork()
+                local mode = cfg.WorkMode or "Both"
+                local first = Util.IsFirstPerson()
+                if mode == "First Person" then
+                    return first
+                elseif mode == "Third Person" then
+                    return not first
+                end
+                return true
+            end
+
+            local function isBlacklisted(projectileName)
+                if not cfg.OtherProjectiles then
+                    local turret = projectileName:find("turret", 1, true) ~= nil or projectileName:find("vulcan", 1, true) ~= nil
+                    return not projectileName:find("arrow", 1, true) and not turret and not projectileName:find("owl", 1, true)
+                end
+                for _, word in ipairs(wordSet(cfg.Blacklist)) do
+                    if projectileName:find(word, 1, true) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function closestPart(char, cam)
+                local point = aimReference(cam)
+                local ray = cam:ViewportPointToRay(point.X, point.Y, 0)
+                local bestAngle, bestPart = math.huge, nil
+                for _, part in ipairs(char:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        local toPart = part.Position - ray.Origin
+                        if toPart.Magnitude > 0.01 then
+                            local angle = math.acos(math.clamp(ray.Direction:Dot(toPart.Unit), -1, 1))
+                            if angle < bestAngle then
+                                bestAngle, bestPart = angle, part
+                            end
+                        end
+                    end
+                end
+                return bestPart
+            end
+
+            local function choosePart(entry, cam)
+                local mode = cfg.Part or "RootPart"
+                local char = entry.Model
+                if mode == "Head" then
+                    return char:FindFirstChild("Head") or entry.Root
+                elseif mode == "Closest" then
+                    return closestPart(char, cam) or entry.Root
+                elseif mode == "Randomize" then
+                    if lockedRandomPart and (not lockedRandomPart.Parent or lockedRandomPart.Parent ~= char) then
+                        lockedRandomPart = nil
+                    end
+                    if not lockedRandomPart then
+                        local roll = math.random(1, 100)
+                        local headChance = tonumber(cfg.HeadChance) or 50
+                        local torsoChance = tonumber(cfg.TorsoChance) or 50
+                        if roll <= headChance then
+                            lockedRandomPart = char:FindFirstChild("Head")
+                        elseif roll <= headChance + torsoChance then
+                            lockedRandomPart = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+                        end
+                        lockedRandomPart = lockedRandomPart or entry.Root
+                    end
+                    return lockedRandomPart
+                end
+                return entry.Root
+            end
+
+            local function pickTarget(origin, cam)
+                local best, bestScore = nil, math.huge
+                local reference = aimReference(cam)
+                local fov = tonumber(cfg.FOV) or 300
+                local range = tonumber(cfg.Range) or 100
+                local sortMode = cfg.Sort or "Cursor"
+                for _, entry in ipairs(Util.GetTargets(cfg.Targets or "Players + NPCs")) do
+                    local root, hum = entry.Root, entry.Humanoid
+                    if root and root.Parent and hum and hum.Health > 0
+                        and not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player)) then
+                        local dist = (root.Position - origin).Magnitude
+                        if dist <= range then
+                            local sp, onScreen = cam:WorldToViewportPoint(root.Position)
+                            local pixels = (Vector2.new(sp.X, sp.Y) - reference).Magnitude
+                            if onScreen and sp.Z > 0 and pixels <= fov then
+                                local score = pixels
+                                if sortMode == "Distance" then
+                                    score = dist
+                                elseif sortMode == "Health" then
+                                    score = hum.Health
+                                end
+                                if score < bestScore and (not cfg.WallCheck or Util.HasLineOfSight(origin, root.Position)) then
+                                    best, bestScore = entry, score
+                                end
+                            end
+                        end
+                    end
+                end
+                return best
+            end
+
+            -- args = the packed ProjectileFire arguments: [1] tool, [3] projectile type,
+            -- [4]/[5] launch position, [6] launch velocity, [8] draw info. Returns a new pack or nil.
+            local function rewrite(args)
+                if not mod.Enabled or not shouldWork() then
+                    return nil
+                end
+                local velocity = args[6]
+                if typeof(velocity) ~= "Vector3" or velocity.Magnitude < 1 then
+                    return nil
+                end
+                local origin = typeof(args[4]) == "Vector3" and args[4] or args[5]
+                if typeof(origin) ~= "Vector3" then
+                    return nil
+                end
+                local projectileType = tostring(args[3] or "")
+                local projectileName = projectileType:lower()
+                if isBlacklisted(projectileName) then
+                    return nil
+                end
+                local cam = Workspace.CurrentCamera
+                if not cam then
+                    return nil
+                end
+
+                local entry = pickTarget(origin, cam)
+                if not entry then
+                    lockedRandomPart = nil
+                    return nil
+                end
+                local root, hum = entry.Root, entry.Humanoid
+                local part = choosePart(entry, cam)
+                if not part then
+                    return nil
+                end
+
+                local meta = Bedwars.ProjectileMeta and Bedwars.ProjectileMeta[projectileType]
+                if type(meta) ~= "table" then
+                    meta = {}
+                end
+                local gravity = tonumber(meta.gravitationalAcceleration) or 196.2
+                if gravity < 1 then
+                    gravity = 0
+                end
+                local lifetime = tonumber(meta.lifetimeSec) or 3
+                local speed = velocity.Magnitude
+
+                -- Target motion (same model as Projectile Aimbot)
+                local char = entry.Model
+                local playerGravity = Workspace.Gravity
+                local balloons = char:GetAttribute("InflatedBalloons")
+                if type(balloons) == "number" and balloons > 0 then
+                    playerGravity = balloonGravity(balloons, char)
+                end
+                if char.PrimaryPart and char.PrimaryPart:FindFirstChild(FLOATY_MARKER) then
+                    playerGravity = 6
+                end
+
+                local rawVel = root.AssemblyLinearVelocity
+                local hip = hum.HipHeight or 2
+                local aimTarget = part.Position
+                if projectileName:find("fireball", 1, true) then
+                    aimTarget = splashAimPoint(root, hip) or aimTarget
+                end
+                local vel = projectileName == "telepearl" and Vector3.zero or rawVel
+                local airborne = hum.FloorMaterial == Enum.Material.Air or math.abs(rawVel.Y) > 0.01
+                local jumping = false
+                pcall(function()
+                    jumping = hum:GetState() == Enum.HumanoidStateType.Jumping
+                end)
+                local jumpVel = (jumping and not airborne) and JUMP_SPEED or nil
+
+                local flat = Vector3.new(vel.X, 0, vel.Z)
+                if flat.Magnitude > MAX_LEAD_SPEED then
+                    flat = flat.Unit * MAX_LEAD_SPEED
+                end
+                local moving = airborne or jumpVel ~= nil
+                local vy = airborne and vel.Y or (jumpVel or 0)
+                local floorY = moving and floorLevel(root, hip, aimTarget.Y) or nil
+
+                local function pathFor(offset)
+                    local base = aimTarget + (offset or Vector3.zero)
+                    return function(t)
+                        local y = base.Y
+                        if moving then
+                            y = base.Y + vy * t - 0.5 * playerGravity * t * t
+                            if floorY and y < floorY + (offset and offset.Y or 0) then
+                                y = floorY + (offset and offset.Y or 0)
+                            end
+                        end
+                        return Vector3.new(base.X + flat.X * t, y, base.Z + flat.Z * t)
+                    end
+                end
+
+                local maxTime = math.min(lifetime, 5)
+                local launch, flight = solveLaunch(origin, speed, gravity, pathFor(nil), maxTime)
+                if not launch then
+                    return nil
+                end
+                if not arcIsClear(origin, launch, gravity, flight) then
+                    local los = (aimTarget - origin) * Vector3.new(1, 0, 1)
+                    local side = los.Magnitude > 0.01 and Vector3.new(-los.Z, 0, los.X).Unit or Vector3.new(1, 0, 0)
+                    local up = Vector3.new(0, 1, 0)
+                    for _, offset in ipairs({
+                        up * 0.8, up * -0.8, side * 0.9, side * -0.9, up * 1.6, up * -1.6,
+                        side * 0.9 + up * 1.2, side * -0.9 + up * 1.2, up * 2.1, up * -2.4,
+                        side * 0.9 - up * 1.2, side * -0.9 - up * 1.2,
+                    }) do
+                        local altLaunch, altFlight = solveLaunch(origin, speed, gravity, pathFor(offset), maxTime)
+                        if altLaunch and arcIsClear(origin, altLaunch, gravity, altFlight) then
+                            launch, flight = altLaunch, altFlight
+                            break
+                        end
+                    end
+                end
+                if flight > lifetime then
+                    return nil
+                end
+
+                -- Only plain values here; the Heartbeat loop below draws the target box
+                lastTarget, lastTargetAt = entry, os.clock()
+                local out = table.pack(table.unpack(args, 1, args.n))
+                out[6] = launch
+                return out
+            end
+
+            local function install()
+                local ready, why = Bedwars.Resolve()
+                if not ready then
+                    return false, why
+                end
+                SilentHook.FindNames(hub)
+                local ok, err = SilentHook.Namecall(hub)
+                if ok then
+                    return true, "namecall"
+                end
+                local ok2, err2 = SilentHook.ClientGet(hub)
+                if ok2 then
+                    return true, "client"
+                end
+                return false, tostring(err) .. " / " .. tostring(err2)
+            end
+
+            mod.Maid:Give(RunService.Heartbeat:Connect(function()
+                local cam = Workspace.CurrentCamera
+                local now = os.clock()
+
+                if circle then
+                    circle.Visible = cfg.ShowFOV and installed
+                    circle.Position = cam and aimReference(cam) or UserInputService:GetMouseLocation()
+                    circle.Radius = cfg.FOV
+                end
+
+                if cfg.ShowTarget and lastTarget and now - lastTargetAt < 1.2
+                    and lastTarget.Root and lastTarget.Root.Parent then
+                    box.Adornee = lastTarget.Root
+                else
+                    box.Adornee = nil
+                end
+
+                if not installed then
+                    if now - lastTryAt >= 1.5 then
+                        lastTryAt = now
+                        local ok, info = install()
+                        if ok then
+                            installed, method = true, info
+                            hub.Handler = rewrite
+                            Nova.Notify("Silent Aim", "Hooked. Shoot near a target.", 3, "success")
+                        else
+                            setStatus(cfg.StatusLine, "unavailable - " .. tostring(info))
+                        end
+                    end
+                    return
+                end
+
+                if now - lastTargetAt < 1.2 and lastTarget then
+                    setStatus(cfg.StatusLine, "hit sent to " .. tostring(lastTarget.Name))
+                else
+                    setStatus(cfg.StatusLine, "ready (" .. tostring(method) .. ")")
+                end
+            end))
+
+            mod.Maid:Give(function()
+                if hub.Handler == rewrite then
+                    hub.Handler = nil
+                end
+            end)
+        end,
+    })
+
+    SilentHook.Module:AddSection("Targeting")
+    SilentHook.Module:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players + NPCs" })
+    SilentHook.Module:AddOption({
+        Label = "Part", Key = "Part", Options = { "RootPart", "Head", "Closest", "Randomize" }, Default = "RootPart",
+        Tip = "Where on the target the server shot goes. Closest is the body part nearest your cursor.",
+    })
+    SilentHook.Module:AddSlider({ Label = "Head Chance", Key = "HeadChance", Min = 0, Max = 100, Default = 50, Step = 5, Suffix = "%", ShowIf = function(c) return c.Part == "Randomize" end })
+    SilentHook.Module:AddSlider({ Label = "Torso Chance", Key = "TorsoChance", Min = 0, Max = 100, Default = 50, Step = 5, Suffix = "%", ShowIf = function(c) return c.Part == "Randomize" end, Tip = "Whatever head + torso don't add up to goes to the root part." })
+    SilentHook.Module:AddOption({ Label = "Sort Method", Key = "Sort", Options = { "Cursor", "Distance", "Health" }, Default = "Cursor" })
+    SilentHook.Module:AddOption({ Label = "Work Mode", Key = "WorkMode", Options = { "Both", "First Person", "Third Person" }, Default = "Both" })
+    SilentHook.Module:AddSlider({ Label = "Range", Key = "Range", Min = 10, Max = 500, Default = 100, Step = 5, Suffix = " studs" })
+    SilentHook.Module:AddSlider({ Label = "FOV", Key = "FOV", Min = 1, Max = 1000, Default = 300, Step = 5, Suffix = " px", Tip = "How close to your crosshair a target has to be." })
+    SilentHook.Module:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, Tip = "Only pick targets you can see (line of sight)." })
+    SilentHook.Module:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true })
+    SilentHook.Module:AddSection("Projectiles")
+    SilentHook.Module:AddToggle({ Label = "Other Projectiles", Key = "OtherProjectiles", Default = true, Tip = "Also redirect fireballs and other projectiles, not just arrows." })
+    SilentHook.Module:AddTextBox({ Label = "Blacklist", Key = "Blacklist", Default = "telepearl", Placeholder = "telepearl, fireball", ShowIf = function(c) return c.OtherProjectiles end, Tip = "Comma-separated projectile ids to leave alone." })
+    SilentHook.Module:AddSection("Visuals")
+    SilentHook.Module:AddToggle({ Label = "Show FOV Circle", Key = "ShowFOV", Default = false })
+    SilentHook.Module:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
+    SilentHook.Module:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
+    SilentHook.Module:AddLabel("Bedwars only. Your arrow looks normal on your screen; the server gets the redirected one. Uses your real charge, so a weak tap shot still flies slow. Turn Projectile Aimbot off if you want no visible change.")
 end
 
 -- ====================== MODULE: AUTO CAITLYN ======================
@@ -11548,9 +12058,52 @@ do
 
     local abilityRemote
     local abilityAt = {}
+    -- The game's own AbilityController (a Flamework dependency, not a Knit controller). Going
+    -- through it is what actually triggers kit abilities - it runs the game's own checks and
+    -- sends the request the way the server expects. Firing the raw useAbility remote by hand
+    -- (the old way) is only kept as a fallback for when the controller can't be found.
+    local abilityController, abilityLookupAt = nil, 0
+    local function getAbilityController()
+        if abilityController then
+            return abilityController
+        end
+        if os.clock() - abilityLookupAt < 3 then
+            return nil
+        end
+        abilityLookupAt = os.clock()
+        pcall(function()
+            local flamework = require(ReplicatedStorage.rbxts_include.node_modules["@flamework"].core.out).Flamework
+            local found = flamework.resolveDependency("@easy-games/game-core:client/controllers/ability/ability-controller@AbilityController")
+            if type(found) == "table" and type(found.useAbility) == "function" then
+                abilityController = found
+            end
+        end)
+        return abilityController
+    end
+
     local function useAbility(name, data, gap)
         if os.clock() - (abilityAt[name] or 0) < (gap or 0.5) then
             return false
+        end
+        local ctrl = getAbilityController()
+        if ctrl then
+            if type(ctrl.canUseAbility) == "function" then
+                local okCheck, can = pcall(ctrl.canUseAbility, ctrl, name)
+                if okCheck and not can then
+                    return false
+                end
+            end
+            local okUse = pcall(function()
+                if data ~= nil then
+                    ctrl:useAbility(name, data)
+                else
+                    ctrl:useAbility(name)
+                end
+            end)
+            if okUse then
+                abilityAt[name] = os.clock()
+                return true
+            end
         end
         if not (abilityRemote and abilityRemote.Parent) then
             abilityRemote = nil
@@ -12165,7 +12718,9 @@ do
                 end
             elseif type(raw) == "table" then
                 for _, id in pairs(raw) do
-                    add(tostring(id))
+                    if type(id) == "string" then
+                        add(id)
+                    end
                 end
             end
         end
@@ -12183,11 +12738,10 @@ do
         pcall(function()
             if Bedwars.Store then
                 local state = Bedwars.Store:getState()
-                if state then
-                    absorb(state.Kit)
-                    if state.Bedwars then
-                        absorb(state.Bedwars.kit)
-                    end
+                if state and state.Bedwars then
+                    -- Same field aero uses: Bedwars.kit ('none' when no kit is picked)
+                    absorb(state.Bedwars.kit)
+                    absorb(state.Bedwars.kits)
                 end
             end
         end)
@@ -12246,12 +12800,13 @@ do
                     table.sort(active)
 
                     local status
+                    local detected = ready and equippedKits() or {}
                     if not ready then
                         status = "Join a Bedwars match"
                     elseif #active > 0 then
                         status = "Running: " .. table.concat(active, ", ")
-                    elseif #equippedKits() > 0 then
-                        status = "Your kit isn't supported or is switched off"
+                    elseif #detected > 0 then
+                        status = "Not supported or switched off: " .. table.concat(detected, ", ")
                     else
                         status = "Waiting for you to pick a kit"
                     end
@@ -16600,6 +17155,570 @@ do
             end))
         end,
     })
+end
+
+-- ====================== VAPE GUI ======================
+-- Optional alternate layout (Settings > Interface > Vape GUI, off by default): the real Vape V4
+-- click GUI - the open-source library a lot of scripts use (the aerov4 fork, patched so it runs
+-- inside Nova: its own Nova/vape folder, no asset downloads, Nova's categories, aero's reload
+-- buttons swapped for Nova's). The library is ui/vape.lua in the repo, fetched on first use.
+-- Nova doesn't redraw anything here, it registers into it:
+--   * every Nova module becomes a Vape module (click toggles, right-click opens its settings)
+--   * every setting the module recorded (mod.Defs) becomes a Vape toggle / slider / dropdown /
+--     textbox, writing the same config key, firing the same callback and mirroring Nova's widget
+--   * Nova's own settings show up as a "Nova" pane under Vape's settings (the gear)
+--   * keybinds use Vape's bind buttons and are written back to the module's Nova key
+-- Nova stays the source of truth for module states and settings, so switching layouts back and
+-- forth never loses anything. The library is only compiled the first time the layout is used.
+do
+    local V = { Active = false, Map = {} }
+    UI.Vape = V
+
+    -- The Vape library itself lives in ui/vape.lua in the repo (it's standalone, so it doesn't
+    -- need to be inside this file). It's downloaded the first time the layout is turned on and
+    -- cached in Nova/vape/vapegui.lua, so it still works offline after the first time.
+    local VAPE_URL = "https://raw.githubusercontent.com/Zynthire/Nova/main/ui/vape.lua"
+    local VAPE_CACHE = "Nova/vape/vapegui.lua"
+    local function fetchVapeSource()
+        local ok, body = pcall(function()
+            return game:HttpGet(VAPE_URL, true)
+        end)
+        if ok and type(body) == "string" and #body > 1000 and not body:find("^404") then
+            pcall(writefile, VAPE_CACHE, body)
+            return body
+        end
+        local okFile, cached = pcall(readfile, VAPE_CACHE)
+        if okFile and type(cached) == "string" and #cached > 1000 then
+            return cached
+        end
+        return nil, "couldn't download ui/vape.lua from GitHub (and no cached copy yet)"
+    end
+
+    -- Vape icon per Nova tab (Vape's own icon set), in Vape's usual category order
+    local CATEGORY_ICONS = {
+        Combat = { "combaticon.png", 13, 14 },
+        Blatant = { "blatanticon.png", 14, 14 },
+        Render = { "rendericon.png", 15, 14 },
+        Utility = { "utilityicon.png", 15, 14 },
+        World = { "worldicon.png", 14, 14 },
+        Kits = { "inventoryicon.png", 15, 14 },
+        Automation = { "miniicon.png", 19, 12 },
+        FPS = { "textguiicon.png", 16, 12 },
+    }
+    local CATEGORY_ORDER = { "Combat", "Blatant", "Render", "Utility", "World", "Kits", "Automation", "FPS" }
+
+    local function vapeWanted()
+        return Nova.Config.UI.VapeGUI == true
+    end
+
+    local function categoryList()
+        local list, seen = {}, {}
+        local function add(tab)
+            if not tab or seen[tab] then
+                return
+            end
+            seen[tab] = true
+            local icon = CATEGORY_ICONS[tab.Name] or { "utilityicon.png", 15, 14 }
+            list[#list + 1] = { Name = tab.Name, Icon = icon[1], Size = UDim2.fromOffset(icon[2], icon[3]) }
+        end
+        for _, name in ipairs(CATEGORY_ORDER) do
+            add(UI.Tabs[name])
+        end
+        for _, tab in ipairs(UI.TabList) do
+            add(tab)
+        end
+        return list
+    end
+
+    -- Writes a value exactly like Nova's own control would: config, Nova's widget, callback, ShowIf
+    local function commit(def, value)
+        local o, host = def.O, def.Host
+        host.Cfg[o.Key] = value
+        if def.Handle and def.Handle.Set then
+            pcall(def.Handle.Set, value, true)
+        end
+        host:Changed(o.Key, host.Cfg[o.Key], o.Callback)
+    end
+
+    -- Same rounding as Nova's slider
+    local function snap(o, value)
+        local min, max, step = o.Min, o.Max, tonumber(o.Step) or 1
+        value = math.clamp(tonumber(value) or min, min, max)
+        value = math.floor(value / step + 0.5) * step
+        value = math.clamp(value, min, max)
+        return tonumber(string.format("%.4f", value))
+    end
+
+    -- Vape's "Decimal" is a multiplier (10 = one decimal place)
+    local function decimalFor(o)
+        local step = tonumber(o.Step) or 1
+        if step < 1 then
+            return math.max(1, math.floor(1 / step + 0.5))
+        end
+        return 1
+    end
+
+    -- Options whose ShowIf no longer passes are hidden, like in Nova's own window
+    local function refreshShown(shown)
+        for _, item in ipairs(shown) do
+            if item.ShowIf and item.Api and typeof(item.Api.Object) == "Instance" then
+                local ok, result = pcall(item.ShowIf, item.Cfg)
+                item.Api.Object.Visible = (not ok) or (result and true or false)
+            end
+        end
+    end
+
+    local function runButton(callback)
+        if callback then
+            local ok, err = pcall(callback)
+            if not ok then
+                pcall(Nova.Notify, "Nova", "Button error: " .. tostring(err), 4, "error", true)
+            end
+        end
+    end
+
+    -- Recreates recorded controls (mod.Defs / UI.SettingsDefs) as Vape options on `target`
+    -- (a Vape module or settings pane). Sections and notes have no Vape equivalent and are skipped.
+    local function buildOptions(target, defs, shown)
+        local used = {}
+        local function uniqueName(label)
+            local name = tostring(label or "Option")
+            local final, n = name, 2
+            while used[final] do
+                final = name .. " (" .. n .. ")"
+                n = n + 1
+            end
+            used[final] = true
+            return final
+        end
+
+        local building = true
+        for _, def in ipairs(defs or {}) do
+            local o, kind = def.O, def.Kind
+            local ok, err = pcall(function()
+                if kind == "Toggle" then
+                    local cfg = def.Host.Cfg
+                    local api = target:CreateToggle({
+                        Name = uniqueName(o.Label),
+                        Tooltip = o.Tip,
+                        Default = cfg[o.Key] and true or false,
+                        Function = function(value)
+                            if building then
+                                return
+                            end
+                            if (cfg[o.Key] and true or false) ~= (value and true or false) then
+                                commit(def, value and true or false)
+                            end
+                            refreshShown(shown)
+                        end,
+                    })
+                    shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                elseif kind == "Slider" then
+                    local cfg = def.Host.Cfg
+                    local api
+                    api = target:CreateSlider({
+                        Name = uniqueName(o.Label),
+                        Tooltip = o.Tip,
+                        Min = o.Min,
+                        Max = o.Max,
+                        Default = snap(o, cfg[o.Key] or o.Default or o.Min),
+                        Decimal = decimalFor(o),
+                        Suffix = o.Suffix and (string.gsub(o.Suffix, "^%s+", "")) or nil,
+                        Function = function(value, final)
+                            if building then
+                                return
+                            end
+                            local snapped = snap(o, value)
+                            if snapped ~= cfg[o.Key] then
+                                commit(def, snapped)
+                            end
+                            -- steps like 5 can't be expressed as a Vape "Decimal": settle the bar on release
+                            if final and api and snapped ~= api.Value then
+                                api:SetValue(snapped)
+                            end
+                            refreshShown(shown)
+                        end,
+                    })
+                    shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                elseif kind == "Option" then
+                    local cfg = def.Host.Cfg
+                    local list, lookup = {}, {}
+                    for index, value in ipairs(o.Options or {}) do
+                        list[index] = tostring(value)
+                        lookup[list[index]] = value
+                    end
+                    local api = target:CreateDropdown({
+                        Name = uniqueName(o.Label),
+                        Tooltip = o.Tip,
+                        List = list,
+                        Function = function(value)
+                            if building then
+                                return
+                            end
+                            local real = lookup[value]
+                            if real ~= nil and cfg[o.Key] ~= real then
+                                commit(def, real)
+                            end
+                            refreshShown(shown)
+                        end,
+                    })
+                    api:SetValue(tostring(cfg[o.Key]))
+                    shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                elseif kind == "TextBox" then
+                    local cfg = def.Host.Cfg
+                    local api
+                    api = target:CreateTextBox({
+                        Name = uniqueName(o.Label),
+                        Tooltip = o.Tip,
+                        Default = tostring(cfg[o.Key] or ""),
+                        Placeholder = o.Placeholder,
+                        Function = function(enter)
+                            -- fires on every keystroke with nil; commit only when focus is lost
+                            if building or enter == nil or not api then
+                                return
+                            end
+                            if cfg[o.Key] ~= api.Value then
+                                commit(def, tostring(api.Value or ""))
+                            end
+                            refreshShown(shown)
+                        end,
+                    })
+                    shown[#shown + 1] = { Api = api, ShowIf = o.ShowIf, Cfg = cfg }
+                elseif kind == "Button" then
+                    target:CreateButton({
+                        Name = uniqueName(o.Label),
+                        Tooltip = o.Tip,
+                        Function = function()
+                            runButton(o.Callback)
+                        end,
+                    })
+                elseif kind == "ButtonRow" then
+                    for _, button in ipairs(type(o) == "table" and o or {}) do
+                        target:CreateButton({
+                            Name = uniqueName(button.Label),
+                            Tooltip = button.Tip,
+                            Function = function()
+                                runButton(button.Callback)
+                            end,
+                        })
+                    end
+                end
+            end)
+            if not ok then
+                warn("[Nova] Vape GUI option skipped: " .. tostring(err))
+            end
+        end
+        building = false
+        refreshShown(shown)
+    end
+
+    local function bindList(t)
+        local out = {}
+        if type(t) == "table" then
+            for key, value in pairs(t) do
+                local index = tonumber(key)
+                if index and type(value) == "string" then
+                    out[index] = value
+                end
+            end
+        end
+        return out
+    end
+
+    -- One Nova module -> one Vape module
+    local function bridgeModule(lib, category, mod)
+        if lib.Categories[mod.Name] or lib.Modules[mod.Name] then
+            return
+        end
+        local cfg = mod.Config
+        local vm
+        vm = category:CreateModule({
+            Name = mod.Name,
+            Tooltip = mod.Definition and mod.Definition.Description or nil,
+            Function = function(state)
+                state = state and true or false
+                if mod.Enabled ~= state then
+                    mod:SetEnabled(state, true)
+                    if state and not mod.Enabled then
+                        Nova.Notify(mod.Name, mod.StatusText or "Couldn't start", 4, "error", true)
+                    end
+                end
+                -- a module that refused to start (or stopped) puts the Vape button back
+                if vm and vm.Enabled ~= mod.Enabled then
+                    task.defer(function()
+                        if vm.Enabled ~= mod.Enabled and not Nova.Unloaded then
+                            vm:SetEnabled(mod.Enabled)
+                        end
+                    end)
+                end
+            end,
+        })
+
+        -- Vape's bind button writes the module's Nova key too (first key of a multi-key bind)
+        local baseSetBind = vm.SetBind
+        vm.SetBind = function(self, tab, mouse)
+            baseSetBind(self, tab, mouse)
+            if type(tab) == "table" and not tab.Mobile then
+                local first = tab[1]
+                cfg.Key = type(first) == "string" and first or "None"
+                cfg.VapeBind = (#tab > 1) and table.clone(tab) or nil
+            end
+        end
+        local key = cfg.Key
+        if type(key) == "string" and key ~= "None" then
+            local bind = bindList(cfg.VapeBind)
+            if bind[1] ~= key then
+                bind = { key }
+            end
+            pcall(baseSetBind, vm, bind)
+        end
+
+        buildOptions(vm, mod.Defs, {})
+        V.Map[mod] = vm
+        return vm
+    end
+
+    local function ensureFolders()
+        if type(makefolder) ~= "function" or type(isfolder) ~= "function" then
+            return
+        end
+        for _, dir in ipairs({ "Nova", "Nova/vape", "Nova/vape/profiles", "Nova/vape/assets", "Nova/vape/assets/new" }) do
+            pcall(function()
+                if not isfolder(dir) then
+                    makefolder(dir)
+                end
+            end)
+        end
+    end
+
+    local function setClickGui(state)
+        local lib, click = V.Lib, V.ClickGui
+        if not (lib and click) then
+            return
+        end
+        pcall(function()
+            if lib.ThreadFix and setthreadidentity then
+                setthreadidentity(8)
+            end
+            for _, window in pairs(lib.Windows or {}) do
+                window.Visible = false
+            end
+            click.Visible = state and true or false
+            lib:BlurCheck()
+        end)
+    end
+
+    -- Compiles the library and registers everything into it (once)
+    function V.Load()
+        if V.Lib then
+            return true
+        end
+        if V.Failed then
+            return false, V.Failed
+        end
+        ensureFolders()
+        local source, fetchErr = fetchVapeSource()
+        if not source then
+            -- not cached as a failure: pushing ui/vape.lua and trying again should just work
+            return false, fetchErr
+        end
+        local fn, compileErr = loadstring(source, "=NovaVapeGUI")
+        if not fn then
+            V.Failed = tostring(compileErr)
+            return false, V.Failed
+        end
+        local ok, lib = pcall(fn, { Categories = categoryList() })
+        if not ok or type(lib) ~= "table" then
+            V.Failed = tostring(lib)
+            return false, V.Failed
+        end
+        lib.NovaBridge = true
+        lib.NovaUnload = function()
+            pcall(Nova.AutoSave)
+            Nova.Unload(false)
+        end
+        lib.NovaReinject = function()
+            pcall(Nova.AutoSave)
+            Nova.Reinject()
+        end
+        V.Lib = lib
+        Nova.Maid:Give(function()
+            pcall(function()
+                lib:Uninject()
+            end)
+        end)
+
+        for _, tab in ipairs(UI.TabList) do
+            local category = lib.Categories[tab.Name]
+            if category and category.CreateModule then
+                for _, mod in ipairs(tab.Modules) do
+                    local okMod, errMod = pcall(bridgeModule, lib, category, mod)
+                    if not okMod then
+                        warn("[Nova] Vape GUI couldn't add " .. tostring(mod.Name) .. ": " .. tostring(errMod))
+                    end
+                end
+            end
+        end
+
+        -- Nova's own settings (including the switch back to Nova's window) under Vape's gear
+        pcall(function()
+            buildOptions(lib.Categories.Main:CreateSettingsPane({ Name = "Nova" }), UI.SettingsDefs, {})
+        end)
+
+        local okLoad, errLoad = pcall(function()
+            lib:Load()
+        end)
+        if not okLoad then
+            warn("[Nova] Vape GUI profile load: " .. tostring(errLoad))
+            pcall(function()
+                lib.gui.Enabled = true
+                lib.Loaded = true
+            end)
+        end
+
+        local scaled = lib.gui and lib.gui:FindFirstChild("ScaledGui")
+        V.ClickGui = scaled and scaled:FindFirstChild("ClickGui")
+        if V.ClickGui then
+            V.ClickGui:GetPropertyChangedSignal("Visible"):Connect(function()
+                if V.Active then
+                    UI.Visible = V.ClickGui.Visible
+                    if not V.ClickGui.Visible then
+                        pcall(Nova.AutoSave)
+                    end
+                end
+            end)
+        end
+
+        for mod, vm in pairs(V.Map) do
+            if vm.Enabled ~= mod.Enabled then
+                pcall(vm.SetEnabled, vm, mod.Enabled)
+            end
+        end
+        return true
+    end
+
+    -- Switch layouts (called by the "Vape GUI" toggle in Nova's settings)
+    local baseSetVisible = UI.SetVisible
+    function V.Apply()
+        if vapeWanted() then
+            local ok, why = V.Load()
+            if not ok then
+                Nova.Config.UI.VapeGUI = false
+                local handle = UI.SettingsHost and UI.SettingsHost.Controls.VapeGUI
+                if handle then
+                    pcall(handle.Set, false, true)
+                end
+                Nova.Notify("Vape GUI", "Couldn't load: " .. tostring(why), 6, "error", true)
+                return
+            end
+            local wasVisible = UI.Visible
+            V.Active = true
+            V.Lib.NovaPaused = false
+            pcall(function()
+                V.Lib.gui.Enabled = true
+            end)
+            UI:CloseOverlays()
+            UI.ModalButton.Modal = false
+            UI.Main.Visible = false
+            UI.Visible = wasVisible
+            setClickGui(wasVisible)
+        else
+            local wasVisible = UI.Visible
+            V.Active = false
+            if V.Lib then
+                setClickGui(false)
+                V.Lib.NovaPaused = true
+                pcall(function()
+                    V.Lib.gui.Enabled = false
+                end)
+            end
+            if wasVisible then
+                UI.Visible = false
+                baseSetVisible(UI, true)
+            end
+        end
+        UI:RefreshHud()
+    end
+
+    function UI:SetVisible(state)
+        -- Like Vape: on load the GUI stays closed and tells you the key
+        local firstCall = not V.BootDone
+        V.BootDone = true
+        if not V.Active then
+            return baseSetVisible(self, state)
+        end
+        if Nova.Unloaded then
+            return
+        end
+        state = state and true or false
+        if firstCall and state then
+            UI.Visible = false
+            pcall(function()
+                local keys = #V.Lib.Keybind > 0 and table.concat(V.Lib.Keybind, " + ") or "RightShift"
+                V.Lib:CreateNotification("Finished Loading", "Press " .. string.upper(keys) .. " to open GUI", 5)
+            end)
+            return
+        end
+        UI.Visible = state
+        UI.Main.Visible = false
+        setClickGui(state)
+        if not state then
+            UI:CloseOverlays()
+            pcall(Nova.AutoSave)
+        end
+    end
+
+    -- Every Nova toggle (keybind, auto-restore, a module stopping itself, Disable All...) is
+    -- mirrored onto the Vape buttons; Vape's own Text GUI replaces Nova's module list
+    local baseRefreshHud = UI.RefreshHud
+    function UI:RefreshHud()
+        if Nova.Unloaded then
+            return
+        end
+        if V.Lib then
+            for mod, vm in pairs(V.Map) do
+                if vm.Enabled ~= mod.Enabled then
+                    pcall(vm.SetEnabled, vm, mod.Enabled)
+                end
+            end
+        end
+        if V.Active then
+            ModuleHud.Visible = false
+            return
+        end
+        return baseRefreshHud(self)
+    end
+
+    -- Nova's pop-ups use Vape's notifications while this layout is active
+    local baseNotify = Nova.Notify
+    function Nova.Notify(title, text, duration, kind, force)
+        if not (V.Active and V.Lib) then
+            return baseNotify(title, text, duration, kind, force)
+        end
+        if Nova.Unloaded or (not force and not Nova.Config.UI.Notifications) then
+            return
+        end
+        local function escape(value)
+            value = string.gsub(tostring(value or ""), "&", "&amp;")
+            value = string.gsub(value, "<", "&lt;")
+            return (string.gsub(value, ">", "&gt;"))
+        end
+        local vapeType = (kind == "error" and "alert") or (kind == "warn" and "warning") or nil
+        pcall(function()
+            V.Lib:CreateNotification(escape(title or "Nova"), escape(text), duration or 3, vapeType)
+        end)
+    end
+
+    -- Vape's GUI file (window positions, favorites, GUI colour) saves along with Nova's config
+    local baseAutoSave = Nova.AutoSave
+    function Nova.AutoSave()
+        baseAutoSave()
+        if V.Lib and V.Lib.Loaded and not Nova.Unloaded then
+            pcall(function()
+                V.Lib:Save()
+            end)
+        end
+    end
 end
 
 -- ====================== BOOT ======================
