@@ -7403,8 +7403,29 @@ do
         end)
     end
 
+    -- The hook is installed once per game session and stays installed (kept in getgenv), so
+    -- the hook itself only forwards to hub.Route, which every injection replaces with its own
+    -- latest version. Older Nova versions' hooks are left alone: they only act when hub.Handler
+    -- is set, and this version never sets it (it uses hub.Handler2).
+    --
+    -- Route always calls the remote by name (self.InvokeServer(self, ...)), never through the
+    -- original __namecall: the target picking runs other method calls (raycasts, FindFirstChild),
+    -- and those overwrite the remembered method name, so passing the call on to the original
+    -- __namecall afterwards called the wrong method and the throw failed. That is what broke
+    -- pearls, fireballs, and any arrow with no target in range.
+    function SilentHook.Route(hub, self, ...)
+        local handler = hub.Handler2
+        local args = table.pack(...)
+        local good, out = pcall(handler, args)
+        if good and type(out) == "table" then
+            args = out
+        end
+        return self.InvokeServer(self, table.unpack(args, 1, args.n))
+    end
+
     function SilentHook.Namecall(hub)
-        if hub.Namecall then
+        hub.Route = SilentHook.Route
+        if hub.NamecallV2 then
             return true
         end
         if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
@@ -7414,22 +7435,10 @@ do
         local ok, err = pcall(function()
             local old
             old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-                local method = getnamecallmethod()
-                local handler = hub.Handler
-                if handler and method == "InvokeServer" and not (checkcaller and checkcaller()) then
-                    local isFire = false
-                    pcall(function()
-                        isFire = typeof(self) == "Instance" and hub.Names[self.Name] == true
-                    end)
-                    if isFire then
-                        local args = table.pack(...)
-                        local good, out = pcall(handler, args)
-                        if good and type(out) == "table" then
-                            -- Called by index, not with ':' - a nested namecall inside the handler
-                            -- (raycasts etc.) can change the stored namecall method
-                            return self.InvokeServer(self, table.unpack(out, 1, out.n))
-                        end
-                    end
+                if hub.Handler2 and hub.Route and getnamecallmethod() == "InvokeServer"
+                    and typeof(self) == "Instance" and self.ClassName == "RemoteFunction"
+                    and hub.Names[self.Name] == true and not (checkcaller and checkcaller()) then
+                    return hub.Route(hub, self, ...)
                 end
                 return old(self, ...)
             end))
@@ -7437,7 +7446,7 @@ do
         if not ok then
             return false, "hook failed: " .. tostring(err)
         end
-        hub.Namecall = true
+        hub.NamecallV2 = true
         return true
     end
 
@@ -7453,7 +7462,7 @@ do
         local ok, err = pcall(function()
             client.Get = function(selfClient, name, ...)
                 local call = oldGet(selfClient, name, ...)
-                if not (hub.Handler and hub.Names[name] and type(call) == "table") then
+                if not (hub.Handler2 and hub.Names[name] and type(call) == "table") then
                     return call
                 end
                 local proxy = setmetatable({}, { __index = call })
@@ -7461,7 +7470,7 @@ do
                     if type(call[method]) == "function" then
                         proxy[method] = function(_, ...)
                             local args = table.pack(...)
-                            local handler = hub.Handler
+                            local handler = hub.Handler2
                             if handler then
                                 local good, out = pcall(handler, args)
                                 if good and type(out) == "table" then
@@ -7631,9 +7640,39 @@ do
                 if typeof(origin) ~= "Vector3" then
                     return nil
                 end
-                local projectileType = tostring(args[3] or "")
+                -- Work out what's being thrown from every name in the call (the projectile, the ammo
+                -- and the item you're holding), not just one argument, so the blacklist and the
+                -- projectile's real gravity/speed are always found. Anything that can't be
+                -- identified is left completely alone: guessing its physics is what made pearls,
+                -- fireballs etc. fly off and do nothing.
+                local names = {}
+                local projectileType
+                local allMeta = Bedwars.ProjectileMeta
+                local function consider(value)
+                    if type(value) ~= "string" or value == "" then
+                        return
+                    end
+                    names[#names + 1] = value:lower()
+                    if not projectileType and type(allMeta) == "table" and type(allMeta[value]) == "table" then
+                        projectileType = value
+                    end
+                end
+                consider(args[3])
+                consider(args[2])
+                if typeof(args[1]) == "Instance" then
+                    consider(args[1].Name)
+                end
+                local allNames = table.concat(names, " ")
+                if allNames:find("pearl", 1, true) then
+                    return nil -- ender pearls are never redirected
+                end
+                local arrowLike = allNames:find("arrow", 1, true) or allNames:find("bow", 1, true)
+                if not projectileType and not arrowLike then
+                    return nil
+                end
+                projectileType = projectileType or tostring(args[3] or "")
                 local projectileName = projectileType:lower()
-                if isBlacklisted(projectileName) then
+                if isBlacklisted(allNames) then
                     return nil
                 end
                 local cam = Workspace.CurrentCamera
@@ -7782,7 +7821,7 @@ do
                         local ok, info = install()
                         if ok then
                             installed, method = true, info
-                            hub.Handler = rewrite
+                            hub.Handler2 = rewrite
                             Nova.Notify("Silent Aim", "Hooked. Shoot near a target.", 3, "success")
                         else
                             setStatus(cfg.StatusLine, "unavailable - " .. tostring(info))
@@ -7799,8 +7838,8 @@ do
             end))
 
             mod.Maid:Give(function()
-                if hub.Handler == rewrite then
-                    hub.Handler = nil
+                if hub.Handler2 == rewrite then
+                    hub.Handler2 = nil
                 end
             end)
         end,
@@ -18457,6 +18496,92 @@ do
         end,
     })
     noFall:AddSlider({ Label = "Chance", Key = "Chance", Min = 1, Max = 100, Step = 1, Default = 100, Suffix = "%", Tip = "How often it kicks in per frame. Lower looks less obvious." })
+end
+
+-- ====================== MODULE: DESYNC ======================
+-- Makes the server (and everyone else) see you somewhere other than where you really are.
+-- Each frame, right before your position is sent to the server, your character is moved to the
+-- fake spot; right before the next frame is drawn it's put back. You play normally on your
+-- screen, other players see the fake position.
+do
+    local RENDER_NAME = "NovaDesync_" .. Util.RandomName(6)
+    local desync = Tabs.Blatant:CreateModule({
+        Name = "Desync",
+        Description = "Other players see you somewhere else than where you actually are.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local frozen -- Freeze mode: where the server keeps seeing you
+            local saved, savedRoot
+            local ghost = mod.Maid:Give(New("BoxHandleAdornment", {
+                Size = Vector3.new(2, 5, 1.2),
+                Transparency = 0.55,
+                Color3 = Theme.Accent,
+                AlwaysOnTop = true,
+                ZIndex = 1,
+                Adornee = Workspace.Terrain,
+                Visible = false,
+                Parent = UI.Gui,
+            }))
+
+            local function fakeFor(root)
+                local real = root.CFrame
+                local mode = cfg.Mode or "Freeze"
+                if mode == "Underground" then
+                    return real - Vector3.new(0, tonumber(cfg.Depth) or 8, 0)
+                elseif mode == "Jitter" then
+                    local r = tonumber(cfg.Radius) or 4
+                    local angle = math.random() * math.pi * 2
+                    return real + Vector3.new(math.cos(angle) * r, 0, math.sin(angle) * r)
+                end
+                -- Freeze: stay where you were, but catch up once you've moved too far away
+                -- (otherwise the server snaps you back when you turn it off, or kills hit range)
+                local limit = tonumber(cfg.MaxDistance) or 20
+                if not frozen or (frozen.Position - real.Position).Magnitude > limit then
+                    frozen = real
+                end
+                return frozen
+            end
+
+            mod.Maid:Give(RunService.Heartbeat:Connect(function()
+                local _, hum, root = Util.GetCharacter(LocalPlayer)
+                if not root or hum.Health <= 0 then
+                    frozen, saved, savedRoot = nil, nil, nil
+                    ghost.Visible = false
+                    return
+                end
+                local fake = fakeFor(root)
+                saved, savedRoot = root.CFrame, root
+                root.CFrame = fake
+                ghost.CFrame = fake
+                ghost.Visible = cfg.ShowGhost == true
+            end))
+
+            local function restore()
+                if saved and savedRoot and savedRoot.Parent then
+                    savedRoot.CFrame = saved
+                end
+                saved, savedRoot = nil, nil
+            end
+            RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.First.Value, restore)
+            mod.Maid:Give(function()
+                pcall(function()
+                    RunService:UnbindFromRenderStep(RENDER_NAME)
+                end)
+                restore()
+            end)
+        end,
+    })
+    desync:AddOption({ Label = "Mode", Key = "Mode", Options = { "Freeze", "Underground", "Jitter" }, Default = "Freeze",
+        Tip = "Freeze: others see you standing where you were. Underground: others see you below the floor. Jitter: others see you shaking around." })
+    desync:AddSlider({ Label = "Max Distance", Key = "MaxDistance", Min = 5, Max = 60, Step = 1, Default = 20, Suffix = " studs",
+        ShowIf = function(c) return (c.Mode or "Freeze") == "Freeze" end,
+        Tip = "How far you can walk away from your frozen spot before it catches up. Too far and the game's anticheat may pull you back." })
+    desync:AddSlider({ Label = "Depth", Key = "Depth", Min = 2, Max = 20, Step = 1, Default = 8, Suffix = " studs",
+        ShowIf = function(c) return c.Mode == "Underground" end })
+    desync:AddSlider({ Label = "Radius", Key = "Radius", Min = 1, Max = 10, Step = 0.5, Default = 4, Suffix = " studs",
+        ShowIf = function(c) return c.Mode == "Jitter" end })
+    desync:AddToggle({ Label = "Show Server Position", Key = "ShowGhost", Default = true, Tip = "Draws a box where other players see you." })
+    desync:AddLabel("Your own hits still count from where the server sees you, so stay close to it.")
 end
 
 -- ====================== MODULE: DOG ======================
