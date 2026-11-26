@@ -5112,338 +5112,6 @@ do
     aim:AddNote("Hold either mouse button (or spam-click / autoclick) to engage - there's no separate on/off toggle for that anymore.")
 end
 
--- ====================== MODULE: HITBOX EXPANDER ======================
--- Player mode adds an extra invisible box around each enemy (the enemy's own body is never touched,
--- so nothing freezes when they die). Sword mode widens the game's own sword swing region instead.
-do
-    local CollectionService = service("CollectionService")
-
-    local SWORD_REGION_DEFAULT = 3.8
-    local COLORS = {
-        Accent = nil, -- filled in below (follows the theme)
-        Red = Color3.fromRGB(255, 0, 0),
-        Blue = Color3.fromRGB(0, 100, 255),
-        Green = Color3.fromRGB(0, 255, 0),
-        Yellow = Color3.fromRGB(255, 255, 0),
-        Orange = Color3.fromRGB(255, 140, 0),
-        Purple = Color3.fromRGB(180, 0, 255),
-        White = Color3.fromRGB(255, 255, 255),
-        Cyan = Color3.fromRGB(0, 255, 255),
-        Pink = Color3.fromRGB(255, 50, 150),
-        Black = Color3.fromRGB(0, 0, 0),
-    }
-    local COLOR_NAMES = { "Accent", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "White", "Cyan", "Pink", "Black" }
-
-    local function boxSize(expand)
-        return Vector3.new(3, 6, 3) + Vector3.one * ((tonumber(expand) or 14.4) / 5)
-    end
-
-    local hitbox = Tabs.Combat:CreateModule({
-        Name = "Hitbox Expander",
-        Description = "Expands hitboxes of players / NPCs (client side).",
-        OnEnable = function(mod)
-            local cfg = mod.Config
-            local records = setmetatable({}, { __mode = "k" }) -- [model] = { Part, Connections }
-            local wallCache = setmetatable({}, { __mode = "k" })
-            local swordApplied = false
-
-            local function destroyRecord(model)
-                local record = records[model]
-                if not record then
-                    return
-                end
-                records[model] = nil
-                for _, connection in ipairs(record.Connections) do
-                    connection:Disconnect()
-                end
-                pcall(function()
-                    record.Part:Destroy()
-                end)
-            end
-
-            local function destroyAll()
-                for model in pairs(records) do
-                    destroyRecord(model)
-                end
-                -- Anything left over from an earlier run
-                for _, plr in ipairs(Players:GetPlayers()) do
-                    local char = plr.Character
-                    if char then
-                        for _, child in ipairs(char:GetChildren()) do
-                            if child.Name == "NovaHitbox" then
-                                child:Destroy()
-                            end
-                        end
-                    end
-                end
-            end
-
-            -- The swing size is a number inside the game's swingSwordInRegion function. aero always
-            -- writes slot 6, but the slot moves whenever Bedwars updates that function, and writing
-            -- the wrong slot silently does nothing - a big part of "hitboxes do nothing". So the
-            -- slot holding the default size (3.8) is looked up once and remembered.
-            local regionSlot
-            local function findRegionSlot(swing)
-                if regionSlot then
-                    return regionSlot
-                end
-                local ok, constants = pcall(debug.getconstants, swing)
-                if ok and type(constants) == "table" then
-                    for index, value in pairs(constants) do
-                        if type(value) == "number" and math.abs(value - SWORD_REGION_DEFAULT) < 0.001 then
-                            regionSlot = index
-                            return index
-                        end
-                    end
-                end
-                local okSix, six = pcall(debug.getconstant, swing, 6)
-                if okSix and type(six) == "number" then
-                    regionSlot = 6
-                end
-                return regionSlot
-            end
-            local lastRegion
-            local function setSwordRegion(on)
-                local ok = pcall(function()
-                    local swing = Bedwars.SwordController.swingSwordInRegion
-                    local slot = findRegionSlot(swing)
-                    assert(slot, "swing size not found")
-                    local value = on and math.max((tonumber(cfg.Expand) or 14.4) / 3, SWORD_REGION_DEFAULT) or SWORD_REGION_DEFAULT
-                    if value ~= lastRegion then
-                        debug.setconstant(swing, slot, value)
-                        lastRegion = value
-                    end
-                end)
-                return ok
-            end
-
-            local function colorFor()
-                if cfg.HitboxColor == "Accent" or not COLORS[cfg.HitboxColor] then
-                    return Theme.Accent
-                end
-                return COLORS[cfg.HitboxColor]
-            end
-
-            local function createFor(entry)
-                local model, root, hum = entry.Model, entry.Root, entry.Humanoid
-                local part = Instance.new("Part")
-                part.Name = "NovaHitbox"
-                part.Archivable = false
-                part.Size = boxSize(cfg.Expand)
-                part.Position = root.Position
-                part.CanCollide = false
-                part.CanQuery = true
-                part.Massless = true
-                part.Transparency = cfg.ShowHitbox and (tonumber(cfg.Transparency) or 0.7) or 1
-                part.LocalTransparencyModifier = cfg.ShowHitbox and 0 or 1
-                part.Color = colorFor()
-                part.Parent = model
-
-                local weld = Instance.new("Motor6D")
-                weld.Part0 = part
-                weld.Part1 = root
-                weld.Parent = part
-
-                local owner = Instance.new("ObjectValue")
-                owner.Name = "EntityValue"
-                owner.Value = model
-                owner.Parent = part
-                CollectionService:AddTag(part, "Hitbox")
-
-                local connections = {}
-                -- Gone the instant the target dies or leaves, so the game's own death handling runs untouched
-                if hum then
-                    connections[#connections + 1] = hum.HealthChanged:Connect(function(health)
-                        if health <= 0 then
-                            destroyRecord(model)
-                        end
-                    end)
-                    connections[#connections + 1] = hum.Died:Connect(function()
-                        destroyRecord(model)
-                    end)
-                end
-                connections[#connections + 1] = model.AncestryChanged:Connect(function(_, parent)
-                    if not parent then
-                        destroyRecord(model)
-                    end
-                end)
-                connections[#connections + 1] = root.AncestryChanged:Connect(function(_, parent)
-                    if not parent then
-                        destroyRecord(model)
-                    end
-                end)
-                records[model] = { Part = part, Connections = connections }
-            end
-
-            local function holdingSword()
-                if not Bedwars.Ready then
-                    return false
-                end
-                local item = Bedwars.GetHeldSword()
-                return item ~= nil
-            end
-
-            mod.Maid:Give(function()
-                destroyAll()
-                if swordApplied then
-                    swordApplied = false
-                    setSwordRegion(false)
-                end
-            end)
-
-            local acc = 0
-            mod.Maid:Give(RunService.Heartbeat:Connect(function(dt)
-                acc = acc + dt
-                if acc < 0.2 then
-                    return
-                end
-                acc = 0
-
-                local mode = cfg.Mode or "Both"
-                if mode == "Sword" or mode == "Both" then
-                    if Bedwars.Ready or Bedwars.Resolve() then
-                        -- Re-applied on every pass so slider changes take effect straight away
-                        swordApplied = setSwordRegion(true)
-                        if not swordApplied then
-                            mod:SetStatus("Sword mode couldn't find the swing size (Bedwars update?)", "error")
-                        end
-                    end
-                    if mode == "Sword" then
-                        if next(records) ~= nil then
-                            destroyAll()
-                        end
-                        return
-                    end
-                elseif swordApplied then
-                    swordApplied = false
-                    setSwordRegion(false)
-                end
-
-                if cfg.AutoToggle and not holdingSword() then
-                    destroyAll()
-                    return
-                end
-
-                local cam = Workspace.CurrentCamera
-                local now = os.clock()
-                local wanted = {}
-                for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
-                    local root, hum, model = entry.Root, entry.Humanoid, entry.Model
-                    if root and root.Parent and hum and hum.Health > 0 and model and model.Parent then
-                        local expand = not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player))
-                        if expand and cfg.WallCheck and cam then
-                            local cache = wallCache[entry]
-                            if not cache or now - cache.Time > 0.1 then
-                                cache = { Time = now, Visible = Util.HasLineOfSight(cam.CFrame.Position, root.Position) }
-                                wallCache[entry] = cache
-                            end
-                            expand = cache.Visible
-                        end
-                        if expand then
-                            wanted[model] = true
-                            local record = records[model]
-                            if not record or not record.Part.Parent then
-                                if record then
-                                    destroyRecord(model)
-                                end
-                                createFor(entry)
-                            else
-                                local part = record.Part
-                                local size = boxSize(cfg.Expand)
-                                if part.Size ~= size then
-                                    part.Size = size
-                                end
-                                local transparency = cfg.ShowHitbox and (tonumber(cfg.Transparency) or 0.7) or 1
-                                if part.Transparency ~= transparency then
-                                    part.Transparency = transparency
-                                end
-                                local modifier = cfg.ShowHitbox and 0 or 1
-                                if part.LocalTransparencyModifier ~= modifier then
-                                    part.LocalTransparencyModifier = modifier
-                                end
-                                part.Color = colorFor()
-                            end
-                        end
-                    end
-                end
-                for model in pairs(records) do
-                    if not wanted[model] then
-                        destroyRecord(model)
-                    end
-                end
-            end))
-        end,
-    })
-
-    hitbox:AddSection("Mode")
-    hitbox:AddOption({
-        Label = "Mode", Key = "Mode", Options = { "Both", "Player", "Sword" }, Default = "Both",
-        Tip = "Player adds a bigger box around each enemy. Sword widens the game's own swing area. Both does both (strongest).",
-    })
-    hitbox:AddSlider({ Label = "Expand Amount", Key = "Expand", Min = 0, Max = 30, Default = 14.4, Step = 0.1, Tip = "How much bigger the hitbox gets." })
-    hitbox:AddSection("Targeting")
-    hitbox:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players", ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Whose hitboxes get expanded." })
-    hitbox:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, ShowIf = function(c) return c.Mode ~= "Sword" end })
-    hitbox:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Leave your teammates alone." })
-    hitbox:AddToggle({ Label = "Auto Toggle", Key = "AutoToggle", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Only expands hitboxes while you hold a sword." })
-    hitbox:AddSection("Visuals")
-    hitbox:AddToggle({ Label = "Show Hitbox", Key = "ShowHitbox", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Makes the expanded hitbox visible. The expansion works either way - this is just a preview." })
-    hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.7, Step = 0.05, ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
-    hitbox:AddOption({ Label = "Color", Key = "HitboxColor", Options = COLOR_NAMES, Default = "Accent", ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
-end
-
--- ====================== MODULE: HIT FIX ======================
--- Same as aero's HitFix: the game's swingSwordAtMouse looks for what you're hitting with a plain
--- workspace Raycast. This points it at the game's own GameQueryUtil raycast instead (the one the
--- rest of the combat code uses, which handles hitboxes properly), so clicks register more often.
--- Turning it off puts back exactly what was there before.
-do
-    local function queryUtil()
-        local ok, util = pcall(function()
-            local out = service("ReplicatedStorage"):WaitForChild("rbxts_include", 5)
-                :WaitForChild("node_modules", 5):WaitForChild("@easy-games", 5)
-                :WaitForChild("game-core", 5):WaitForChild("out", 5)
-            return require(out).GameQueryUtil
-        end)
-        return ok and util or nil
-    end
-
-    Tabs.Combat:CreateModule({
-        Name = "HitFix",
-        Description = "Makes sword clicks register more reliably (uses the game's own hit raycast).",
-        OnEnable = function(mod)
-            assert(debug and debug.getconstant and debug.setconstant and debug.getupvalue and debug.setupvalue,
-                "your executor is missing debug.setconstant / setupvalue")
-            assert(Bedwars.Resolve(), "Bedwars not loaded")
-            local controller = Bedwars.SwordController
-            local swing = controller and controller.swingSwordAtMouse
-            assert(type(swing) == "function", "swingSwordAtMouse not found")
-            local util = queryUtil()
-            assert(util, "GameQueryUtil not found")
-
-            local slot, originalConstant
-            for i = 1, 60 do
-                local ok, value = pcall(debug.getconstant, swing, i)
-                if ok and (value == "Raycast" or value == "raycast") then
-                    slot, originalConstant = i, value
-                    break
-                end
-            end
-            assert(slot, "raycast call not found in swingSwordAtMouse (Bedwars update?)")
-            local okUp, originalUpvalue = pcall(debug.getupvalue, swing, 4)
-            assert(okUp and (originalUpvalue == Workspace or originalUpvalue == util),
-                "swingSwordAtMouse changed shape (Bedwars update?)")
-
-            debug.setconstant(swing, slot, "raycast")
-            debug.setupvalue(swing, 4, util)
-            mod.Maid:Give(function()
-                pcall(debug.setconstant, swing, slot, originalConstant == "raycast" and "Raycast" or originalConstant)
-                pcall(debug.setupvalue, swing, 4, originalUpvalue == util and Workspace or originalUpvalue)
-            end)
-        end,
-    })
-end
-
 -- ====================== MODULE: BEDWARS BRIDGE ======================
 -- Shared plumbing for the two Bedwars modules below. Everything is resolved lazily and inside
 -- pcall, so on any other game (or an executor missing require / debug.getupvalue) the modules
@@ -5943,6 +5611,338 @@ do
         local meta = Bedwars.ItemMeta and Bedwars.ItemMeta[itemType]
         return meta and meta.image or ""
     end
+end
+
+-- ====================== MODULE: HITBOX EXPANDER ======================
+-- Player mode adds an extra invisible box around each enemy (the enemy's own body is never touched,
+-- so nothing freezes when they die). Sword mode widens the game's own sword swing region instead.
+do
+    local CollectionService = service("CollectionService")
+
+    local SWORD_REGION_DEFAULT = 3.8
+    local COLORS = {
+        Accent = nil, -- filled in below (follows the theme)
+        Red = Color3.fromRGB(255, 0, 0),
+        Blue = Color3.fromRGB(0, 100, 255),
+        Green = Color3.fromRGB(0, 255, 0),
+        Yellow = Color3.fromRGB(255, 255, 0),
+        Orange = Color3.fromRGB(255, 140, 0),
+        Purple = Color3.fromRGB(180, 0, 255),
+        White = Color3.fromRGB(255, 255, 255),
+        Cyan = Color3.fromRGB(0, 255, 255),
+        Pink = Color3.fromRGB(255, 50, 150),
+        Black = Color3.fromRGB(0, 0, 0),
+    }
+    local COLOR_NAMES = { "Accent", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "White", "Cyan", "Pink", "Black" }
+
+    local function boxSize(expand)
+        return Vector3.new(3, 6, 3) + Vector3.one * ((tonumber(expand) or 14.4) / 5)
+    end
+
+    local hitbox = Tabs.Combat:CreateModule({
+        Name = "Hitbox Expander",
+        Description = "Expands hitboxes of players / NPCs (client side).",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local records = setmetatable({}, { __mode = "k" }) -- [model] = { Part, Connections }
+            local wallCache = setmetatable({}, { __mode = "k" })
+            local swordApplied = false
+
+            local function destroyRecord(model)
+                local record = records[model]
+                if not record then
+                    return
+                end
+                records[model] = nil
+                for _, connection in ipairs(record.Connections) do
+                    connection:Disconnect()
+                end
+                pcall(function()
+                    record.Part:Destroy()
+                end)
+            end
+
+            local function destroyAll()
+                for model in pairs(records) do
+                    destroyRecord(model)
+                end
+                -- Anything left over from an earlier run
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    local char = plr.Character
+                    if char then
+                        for _, child in ipairs(char:GetChildren()) do
+                            if child.Name == "NovaHitbox" then
+                                child:Destroy()
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- The swing size is a number inside the game's swingSwordInRegion function. aero always
+            -- writes slot 6, but the slot moves whenever Bedwars updates that function, and writing
+            -- the wrong slot silently does nothing - a big part of "hitboxes do nothing". So the
+            -- slot holding the default size (3.8) is looked up once and remembered.
+            local regionSlot
+            local function findRegionSlot(swing)
+                if regionSlot then
+                    return regionSlot
+                end
+                local ok, constants = pcall(debug.getconstants, swing)
+                if ok and type(constants) == "table" then
+                    for index, value in pairs(constants) do
+                        if type(value) == "number" and math.abs(value - SWORD_REGION_DEFAULT) < 0.001 then
+                            regionSlot = index
+                            return index
+                        end
+                    end
+                end
+                local okSix, six = pcall(debug.getconstant, swing, 6)
+                if okSix and type(six) == "number" then
+                    regionSlot = 6
+                end
+                return regionSlot
+            end
+            local lastRegion
+            local function setSwordRegion(on)
+                local ok = pcall(function()
+                    local swing = Bedwars.SwordController.swingSwordInRegion
+                    local slot = findRegionSlot(swing)
+                    assert(slot, "swing size not found")
+                    local value = on and math.max((tonumber(cfg.Expand) or 14.4) / 3, SWORD_REGION_DEFAULT) or SWORD_REGION_DEFAULT
+                    if value ~= lastRegion then
+                        debug.setconstant(swing, slot, value)
+                        lastRegion = value
+                    end
+                end)
+                return ok
+            end
+
+            local function colorFor()
+                if cfg.HitboxColor == "Accent" or not COLORS[cfg.HitboxColor] then
+                    return Theme.Accent
+                end
+                return COLORS[cfg.HitboxColor]
+            end
+
+            local function createFor(entry)
+                local model, root, hum = entry.Model, entry.Root, entry.Humanoid
+                local part = Instance.new("Part")
+                part.Name = "NovaHitbox"
+                part.Archivable = false
+                part.Size = boxSize(cfg.Expand)
+                part.Position = root.Position
+                part.CanCollide = false
+                part.CanQuery = true
+                part.Massless = true
+                part.Transparency = cfg.ShowHitbox and (tonumber(cfg.Transparency) or 0.7) or 1
+                part.LocalTransparencyModifier = cfg.ShowHitbox and 0 or 1
+                part.Color = colorFor()
+                part.Parent = model
+
+                local weld = Instance.new("Motor6D")
+                weld.Part0 = part
+                weld.Part1 = root
+                weld.Parent = part
+
+                local owner = Instance.new("ObjectValue")
+                owner.Name = "EntityValue"
+                owner.Value = model
+                owner.Parent = part
+                CollectionService:AddTag(part, "Hitbox")
+
+                local connections = {}
+                -- Gone the instant the target dies or leaves, so the game's own death handling runs untouched
+                if hum then
+                    connections[#connections + 1] = hum.HealthChanged:Connect(function(health)
+                        if health <= 0 then
+                            destroyRecord(model)
+                        end
+                    end)
+                    connections[#connections + 1] = hum.Died:Connect(function()
+                        destroyRecord(model)
+                    end)
+                end
+                connections[#connections + 1] = model.AncestryChanged:Connect(function(_, parent)
+                    if not parent then
+                        destroyRecord(model)
+                    end
+                end)
+                connections[#connections + 1] = root.AncestryChanged:Connect(function(_, parent)
+                    if not parent then
+                        destroyRecord(model)
+                    end
+                end)
+                records[model] = { Part = part, Connections = connections }
+            end
+
+            local function holdingSword()
+                if not Bedwars.Ready then
+                    return false
+                end
+                local item = Bedwars.GetHeldSword()
+                return item ~= nil
+            end
+
+            mod.Maid:Give(function()
+                destroyAll()
+                if swordApplied then
+                    swordApplied = false
+                    setSwordRegion(false)
+                end
+            end)
+
+            local acc = 0
+            mod.Maid:Give(RunService.Heartbeat:Connect(function(dt)
+                acc = acc + dt
+                if acc < 0.2 then
+                    return
+                end
+                acc = 0
+
+                local mode = cfg.Mode or "Both"
+                if mode == "Sword" or mode == "Both" then
+                    if Bedwars.Ready or Bedwars.Resolve() then
+                        -- Re-applied on every pass so slider changes take effect straight away
+                        swordApplied = setSwordRegion(true)
+                        if not swordApplied then
+                            mod:SetStatus("Sword mode couldn't find the swing size (Bedwars update?)", "error")
+                        end
+                    end
+                    if mode == "Sword" then
+                        if next(records) ~= nil then
+                            destroyAll()
+                        end
+                        return
+                    end
+                elseif swordApplied then
+                    swordApplied = false
+                    setSwordRegion(false)
+                end
+
+                if cfg.AutoToggle and not holdingSword() then
+                    destroyAll()
+                    return
+                end
+
+                local cam = Workspace.CurrentCamera
+                local now = os.clock()
+                local wanted = {}
+                for _, entry in ipairs(Util.GetTargets(cfg.Targets)) do
+                    local root, hum, model = entry.Root, entry.Humanoid, entry.Model
+                    if root and root.Parent and hum and hum.Health > 0 and model and model.Parent then
+                        local expand = not (cfg.TeamCheck and entry.Player and Util.IsTeammate(entry.Player))
+                        if expand and cfg.WallCheck and cam then
+                            local cache = wallCache[entry]
+                            if not cache or now - cache.Time > 0.1 then
+                                cache = { Time = now, Visible = Util.HasLineOfSight(cam.CFrame.Position, root.Position) }
+                                wallCache[entry] = cache
+                            end
+                            expand = cache.Visible
+                        end
+                        if expand then
+                            wanted[model] = true
+                            local record = records[model]
+                            if not record or not record.Part.Parent then
+                                if record then
+                                    destroyRecord(model)
+                                end
+                                createFor(entry)
+                            else
+                                local part = record.Part
+                                local size = boxSize(cfg.Expand)
+                                if part.Size ~= size then
+                                    part.Size = size
+                                end
+                                local transparency = cfg.ShowHitbox and (tonumber(cfg.Transparency) or 0.7) or 1
+                                if part.Transparency ~= transparency then
+                                    part.Transparency = transparency
+                                end
+                                local modifier = cfg.ShowHitbox and 0 or 1
+                                if part.LocalTransparencyModifier ~= modifier then
+                                    part.LocalTransparencyModifier = modifier
+                                end
+                                part.Color = colorFor()
+                            end
+                        end
+                    end
+                end
+                for model in pairs(records) do
+                    if not wanted[model] then
+                        destroyRecord(model)
+                    end
+                end
+            end))
+        end,
+    })
+
+    hitbox:AddSection("Mode")
+    hitbox:AddOption({
+        Label = "Mode", Key = "Mode", Options = { "Both", "Player", "Sword" }, Default = "Both",
+        Tip = "Player adds a bigger box around each enemy. Sword widens the game's own swing area. Both does both (strongest).",
+    })
+    hitbox:AddSlider({ Label = "Expand Amount", Key = "Expand", Min = 0, Max = 30, Default = 14.4, Step = 0.1, Tip = "How much bigger the hitbox gets." })
+    hitbox:AddSection("Targeting")
+    hitbox:AddOption({ Label = "Targets", Key = "Targets", Options = TARGET_MODES, Default = "Players", ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Whose hitboxes get expanded." })
+    hitbox:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true, ShowIf = function(c) return c.Mode ~= "Sword" end })
+    hitbox:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = true, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Leave your teammates alone." })
+    hitbox:AddToggle({ Label = "Auto Toggle", Key = "AutoToggle", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Only expands hitboxes while you hold a sword." })
+    hitbox:AddSection("Visuals")
+    hitbox:AddToggle({ Label = "Show Hitbox", Key = "ShowHitbox", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Makes the expanded hitbox visible. The expansion works either way - this is just a preview." })
+    hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.7, Step = 0.05, ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
+    hitbox:AddOption({ Label = "Color", Key = "HitboxColor", Options = COLOR_NAMES, Default = "Accent", ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
+end
+
+-- ====================== MODULE: HIT FIX ======================
+-- Same as aero's HitFix: the game's swingSwordAtMouse looks for what you're hitting with a plain
+-- workspace Raycast. This points it at the game's own GameQueryUtil raycast instead (the one the
+-- rest of the combat code uses, which handles hitboxes properly), so clicks register more often.
+-- Turning it off puts back exactly what was there before.
+do
+    local function queryUtil()
+        local ok, util = pcall(function()
+            local out = service("ReplicatedStorage"):WaitForChild("rbxts_include", 5)
+                :WaitForChild("node_modules", 5):WaitForChild("@easy-games", 5)
+                :WaitForChild("game-core", 5):WaitForChild("out", 5)
+            return require(out).GameQueryUtil
+        end)
+        return ok and util or nil
+    end
+
+    Tabs.Combat:CreateModule({
+        Name = "HitFix",
+        Description = "Makes sword clicks register more reliably (uses the game's own hit raycast).",
+        OnEnable = function(mod)
+            assert(debug and debug.getconstant and debug.setconstant and debug.getupvalue and debug.setupvalue,
+                "your executor is missing debug.setconstant / setupvalue")
+            assert(Bedwars.Resolve(), "Bedwars not loaded")
+            local controller = Bedwars.SwordController
+            local swing = controller and controller.swingSwordAtMouse
+            assert(type(swing) == "function", "swingSwordAtMouse not found")
+            local util = queryUtil()
+            assert(util, "GameQueryUtil not found")
+
+            local slot, originalConstant
+            for i = 1, 60 do
+                local ok, value = pcall(debug.getconstant, swing, i)
+                if ok and (value == "Raycast" or value == "raycast") then
+                    slot, originalConstant = i, value
+                    break
+                end
+            end
+            assert(slot, "raycast call not found in swingSwordAtMouse (Bedwars update?)")
+            local okUp, originalUpvalue = pcall(debug.getupvalue, swing, 4)
+            assert(okUp and (originalUpvalue == Workspace or originalUpvalue == util),
+                "swingSwordAtMouse changed shape (Bedwars update?)")
+
+            debug.setconstant(swing, slot, "raycast")
+            debug.setupvalue(swing, 4, util)
+            mod.Maid:Give(function()
+                pcall(debug.setconstant, swing, slot, originalConstant == "raycast" and "Raycast" or originalConstant)
+                pcall(debug.setupvalue, swing, 4, originalUpvalue == util and Workspace or originalUpvalue)
+            end)
+        end,
+    })
 end
 
 -- ====================== MODULE: KILL AURA ======================
@@ -9765,23 +9765,30 @@ do
         local icon = host:FindFirstChild("NovaKitRender")
         if not icon then
             icon = New("ImageLabel", {
+                -- Kit art on the right side of the card, exactly card height so it never sticks
+                -- out above or below, fading in from the left so it blends into the card.
                 Name = "NovaKitRender",
                 AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1.05, 0, 0.5, 0),
-                Size = UDim2.new(1.5, 0, 1.5, 0),
+                Position = UDim2.new(1, 0, 0.5, 0),
+                Size = UDim2.new(1.15, 0, 1, 0),
                 SizeConstraint = Enum.SizeConstraint.RelativeYY,
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
-                ImageTransparency = 0.08,
+                ImageTransparency = 0,
                 ScaleType = Enum.ScaleType.Crop,
+                ClipsDescendants = true,
                 Visible = false,
-                ZIndex = 5,
+                ZIndex = 1, -- behind the card's text (SELECTING KIT..., rank)
                 Parent = host,
             }, {
-                New("UIAspectRatioConstraint", {
-                    AspectRatio = 1,
-                    AspectType = Enum.AspectType.FitWithinMaxSize,
-                    DominantAxis = Enum.DominantAxis.Width,
+                New("UIGradient", {
+                    Rotation = 0,
+                    Transparency = NumberSequence.new({
+                        NumberSequenceKeypoint.new(0, 1),
+                        NumberSequenceKeypoint.new(0.4, 0.35),
+                        NumberSequenceKeypoint.new(0.7, 0.05),
+                        NumberSequenceKeypoint.new(1, 0),
+                    }),
                 }),
             })
         end
