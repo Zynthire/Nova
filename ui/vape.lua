@@ -3934,21 +3934,35 @@ function mainapi:CreateGUI()
 	addBlur(window)
 	addCorner(window)
 	makeDraggable(window)
-	local logo = Instance.new('ImageLabel')
+	-- Nova: "NOVA" wordmark instead of the VAPE V4 images. The little dot after it takes the
+	-- GUI theme color (set in UpdateGUI, where the V4 image used to be colored).
+	local logo = Instance.new('TextLabel')
 	logo.Name = 'VapeLogo'
 	logo.Size = UDim2.fromOffset(62, 18)
 	logo.Position = UDim2.fromOffset(11, 10)
 	logo.BackgroundTransparency = 1
-	logo.Image = getcustomasset('Nova/vape/assets/new/guivape.png')
-	logo.ImageColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
+	logo.Text = 'NOVA'
+	logo.TextSize = 19
+	logo.FontFace = Font.new('rbxasset://fonts/families/Montserrat.json', Enum.FontWeight.ExtraBold)
+	logo.TextXAlignment = Enum.TextXAlignment.Left
+	logo.TextYAlignment = Enum.TextYAlignment.Center
+	logo.TextColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
 	logo.Parent = window
-	local logov4 = Instance.new('ImageLabel')
+	local logov4 = Instance.new('Frame')
 	logov4.Name = 'V4Logo'
-	logov4.Size = UDim2.fromOffset(28, 16)
-	logov4.Position = UDim2.new(1, 1, 0, 1)
-	logov4.BackgroundTransparency = 1
-	logov4.Image = getcustomasset('Nova/vape/assets/new/guiv4.png')
+	logov4.AnchorPoint = Vector2.new(0, 1)
+	logov4.Size = UDim2.fromOffset(5, 5)
+	logov4.BorderSizePixel = 0
+	logov4.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 	logov4.Parent = logo
+	local logodot = Instance.new('UICorner')
+	logodot.CornerRadius = UDim.new(1, 0)
+	logodot.Parent = logov4
+	local function placeDot()
+		logov4.Position = UDim2.new(0, logo.TextBounds.X + 2, 0.5, 6)
+	end
+	placeDot()
+	logo:GetPropertyChangedSignal('TextBounds'):Connect(placeDot)
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
 	children.Size = UDim2.new(1, 0, 1, -33)
@@ -10929,7 +10943,14 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 
 	for i, v in mainapi.Categories do
 		if i == 'Main' then
-			v.Object.VapeLogo.V4Logo.ImageColor3 = Color3.fromHSV(hue, sat, val)
+			local logoAccent = v.Object.VapeLogo:FindFirstChild('V4Logo')
+			if logoAccent then
+				if logoAccent:IsA('ImageLabel') then
+					logoAccent.ImageColor3 = Color3.fromHSV(hue, sat, val)
+				else
+					logoAccent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+				end
+			end
 			for _, button in v.Buttons do
 				local basec = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or Color3.fromHSV(hue, sat, val)
 				if button.Enabled then
