@@ -5931,15 +5931,27 @@ do
                 end
             end
             assert(slot, "raycast call not found in swingSwordAtMouse (Bedwars update?)")
-            local okUp, originalUpvalue = pcall(debug.getupvalue, swing, 4)
-            assert(okUp and (originalUpvalue == Workspace or originalUpvalue == util),
-                "swingSwordAtMouse changed shape (Bedwars update?)")
+            -- aero always uses upvalue 4, but its position changes between Bedwars versions, so
+            -- look for the upvalue that actually holds workspace (or the query util, if a previous
+            -- run already swapped it and didn't get to put it back)
+            local upIndex, originalUpvalue
+            for i = 1, 40 do
+                local okUp, value = pcall(debug.getupvalue, swing, i)
+                if not okUp then
+                    break
+                end
+                if value == Workspace or value == util then
+                    upIndex, originalUpvalue = i, value
+                    break
+                end
+            end
+            assert(upIndex, "swingSwordAtMouse doesn't use a workspace raycast anymore (Bedwars update?)")
 
             debug.setconstant(swing, slot, "raycast")
-            debug.setupvalue(swing, 4, util)
+            debug.setupvalue(swing, upIndex, util)
             mod.Maid:Give(function()
                 pcall(debug.setconstant, swing, slot, originalConstant == "raycast" and "Raycast" or originalConstant)
-                pcall(debug.setupvalue, swing, 4, originalUpvalue == util and Workspace or originalUpvalue)
+                pcall(debug.setupvalue, swing, upIndex, originalUpvalue == util and Workspace or originalUpvalue)
             end)
         end,
     })
@@ -11894,6 +11906,195 @@ do
     })
     blockIn:AddSlider({ Label = "Place Speed", Key = "PlaceSpeed", Min = 0, Max = 0.5, Default = 0.07, Step = 0.01, Suffix = " s" })
     blockIn:AddToggle({ Label = "Limit to Items", Key = "LimitToItems", Default = false, Tip = "Only use the block you are holding." })
+    -- Auto Patch: remembers the blocks around your bed and, when one gets broken, puts a block
+    -- from your inventory back in the same spot. Uses the same placing as Block In, so you
+    -- have to be close enough to the bed for the game to let you place there.
+    do
+        local CollectionService = service("CollectionService")
+        local EXCLUDED = { tnt = true, siege_tnt = true, cannon = true }
+
+        local function ownBed()
+            local team = LocalPlayer:GetAttribute("Team")
+            if team == nil then
+                return nil
+            end
+            for _, bed in ipairs(CollectionService:GetTagged("bed")) do
+                if bed.Parent and bed:GetAttribute("Team" .. tostring(team) .. "NoBreak") then
+                    return bed
+                end
+            end
+            return nil
+        end
+
+        local function positionOf(inst)
+            if inst:IsA("BasePart") then
+                return inst.Position
+            end
+            local ok, pivot = pcall(function()
+                return inst:GetPivot().Position
+            end)
+            return ok and pivot or nil
+        end
+
+        local function keyOf(position)
+            local p = snap(position)
+            return p.X .. "," .. p.Y .. "," .. p.Z, p
+        end
+
+        local autoPatch = Tabs.Blatant:CreateModule({
+            Name = "AutoPatch",
+            Description = "Puts blocks back in your bed defense as soon as they get broken.",
+            OnEnable = function(mod)
+                local cfg = mod.Config
+                local defense = {} -- [key] = { Position, Type, Part }
+                local queue, queued = {}, {}
+                local bed, bedPos
+
+                local function inRange(position)
+                    return bedPos and (position - bedPos).Magnitude <= (tonumber(cfg.Radius) or 12)
+                end
+
+                local function remember(part)
+                    if not (part:IsA("BasePart") and part.Parent) or CollectionService:HasTag(part, "bed") then
+                        return
+                    end
+                    if not inRange(part.Position) then
+                        return
+                    end
+                    local key, p = keyOf(part.Position)
+                    defense[key] = { Position = p, Type = part.Name, Part = part }
+                end
+
+                local function scan()
+                    bed = ownBed()
+                    bedPos = bed and positionOf(bed)
+                    table.clear(defense)
+                    if not bedPos then
+                        return
+                    end
+                    for _, part in ipairs(CollectionService:GetTagged("block")) do
+                        remember(part)
+                    end
+                end
+
+                local function onRemoved(part)
+                    if not part:IsA("BasePart") then
+                        return
+                    end
+                    for key, entry in pairs(defense) do
+                        if entry.Part == part then
+                            if not queued[key] then
+                                queued[key] = true
+                                queue[#queue + 1] = key
+                            end
+                            break
+                        end
+                    end
+                end
+
+                -- the best block you have: the same kind that was broken if you have it, else the
+                -- strongest (or wool first, if Prefer Wool is on)
+                local function chooseBlock(wanted)
+                    local inventory = Bedwars.GetInventory()
+                    local best, bestScore
+                    for _, item in pairs(inventory and inventory.inventory.items or {}) do
+                        local meta = metaOf(item.itemType)
+                        if meta and meta.block and (item.amount or 0) > 0 and not EXCLUDED[item.itemType] then
+                            if cfg.SameType ~= false and item.itemType == wanted then
+                                return item.itemType
+                            end
+                            local score = meta.block.health or 0
+                            if cfg.PreferWool and string.find(item.itemType, "wool", 1, true) then
+                                score = score + 100000
+                            end
+                            if not bestScore or score > bestScore then
+                                best, bestScore = item.itemType, score
+                            end
+                        end
+                    end
+                    return best
+                end
+
+                scan()
+                mod.Maid:Give(CollectionService:GetInstanceAddedSignal("block"):Connect(function(part)
+                    task.defer(function()
+                        if part.Parent then
+                            remember(part)
+                        end
+                    end)
+                end))
+                mod.Maid:Give(CollectionService:GetInstanceRemovedSignal("block"):Connect(onRemoved))
+
+                local running = true
+                mod.Maid:Give(function()
+                    running = false
+                end)
+                local shown = false
+                local function status(text, kind)
+                    if text ~= shown then
+                        shown = text
+                        mod:SetStatus(text, kind)
+                    end
+                end
+                mod.Maid:Give(task.spawn(function()
+                    local lastScan = os.clock()
+                    while running do
+                        -- re-find the bed now and then (new match, respawned map, team change)
+                        if not (bed and bed.Parent) or os.clock() - lastScan > 15 then
+                            lastScan = os.clock()
+                            local before = bed
+                            scan()
+                            if bed ~= before then
+                                table.clear(queue)
+                                table.clear(queued)
+                            end
+                        end
+                        if not bed then
+                            status("No bed")
+                        elseif #queue == 0 then
+                            status(nil)
+                        end
+
+                        local _, hum, root = Util.GetCharacter(LocalPlayer)
+                        if bed and #queue > 0 and Bedwars.Ready and root and hum.Health > 0 then
+                            local i = 1
+                            while i <= #queue and running do
+                                local key = queue[i]
+                                local entry = defense[key]
+                                if not entry or worldBlockAt(entry.Position) then
+                                    -- already filled (by you, a teammate, or a new block)
+                                    table.remove(queue, i)
+                                    queued[key] = nil
+                                elseif (root.Position - entry.Position).Magnitude > (tonumber(cfg.Reach) or 20) then
+                                    status("Too far from bed")
+                                    i = i + 1
+                                else
+                                    local block = chooseBlock(entry.Type)
+                                    if not block then
+                                        status("No blocks", "error")
+                                        break
+                                    end
+                                    placeBlockAt(entry.Position, block)
+                                    table.remove(queue, i)
+                                    queued[key] = nil
+                                    local delay = tonumber(cfg.Delay) or 0.05
+                                    if delay > 0 then
+                                        task.wait(delay)
+                                    end
+                                end
+                            end
+                        end
+                        task.wait(0.05)
+                    end
+                end))
+            end,
+        })
+        autoPatch:AddSlider({ Label = "Defense Radius", Key = "Radius", Min = 4, Max = 24, Step = 1, Default = 12, Suffix = " studs", Tip = "How far from your bed a block counts as part of the defense." })
+        autoPatch:AddSlider({ Label = "Reach", Key = "Reach", Min = 6, Max = 30, Step = 1, Default = 20, Suffix = " studs", Tip = "Only patches while you're this close to the broken spot (the game won't let you place further away)." })
+        autoPatch:AddSlider({ Label = "Delay", Key = "Delay", Min = 0, Max = 0.5, Step = 0.01, Default = 0.05, Suffix = " s", Tip = "Wait between placing blocks." })
+        autoPatch:AddToggle({ Label = "Same Block", Key = "SameType", Default = true, Tip = "Use the same kind of block that was broken, if you have it." })
+        autoPatch:AddToggle({ Label = "Prefer Wool", Key = "PreferWool", Default = false, Tip = "Otherwise use wool first instead of your strongest block." })
+    end
 end
 
 -- ====================== MODULE: STAFF DETECTOR ======================
