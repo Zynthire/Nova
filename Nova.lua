@@ -5178,10 +5178,41 @@ do
                 end
             end
 
+            -- The swing size is a number inside the game's swingSwordInRegion function. aero always
+            -- writes slot 6, but the slot moves whenever Bedwars updates that function, and writing
+            -- the wrong slot silently does nothing - a big part of "hitboxes do nothing". So the
+            -- slot holding the default size (3.8) is looked up once and remembered.
+            local regionSlot
+            local function findRegionSlot(swing)
+                if regionSlot then
+                    return regionSlot
+                end
+                local ok, constants = pcall(debug.getconstants, swing)
+                if ok and type(constants) == "table" then
+                    for index, value in pairs(constants) do
+                        if type(value) == "number" and math.abs(value - SWORD_REGION_DEFAULT) < 0.001 then
+                            regionSlot = index
+                            return index
+                        end
+                    end
+                end
+                local okSix, six = pcall(debug.getconstant, swing, 6)
+                if okSix and type(six) == "number" then
+                    regionSlot = 6
+                end
+                return regionSlot
+            end
+            local lastRegion
             local function setSwordRegion(on)
                 local ok = pcall(function()
                     local swing = Bedwars.SwordController.swingSwordInRegion
-                    debug.setconstant(swing, 6, on and ((tonumber(cfg.Expand) or 14.4) / 3) or SWORD_REGION_DEFAULT)
+                    local slot = findRegionSlot(swing)
+                    assert(slot, "swing size not found")
+                    local value = on and math.max((tonumber(cfg.Expand) or 14.4) / 3, SWORD_REGION_DEFAULT) or SWORD_REGION_DEFAULT
+                    if value ~= lastRegion then
+                        debug.setconstant(swing, slot, value)
+                        lastRegion = value
+                    end
                 end)
                 return ok
             end
@@ -5268,17 +5299,22 @@ do
                 end
                 acc = 0
 
-                if cfg.Mode == "Sword" then
-                    if next(records) ~= nil then
-                        destroyAll()
-                    end
+                local mode = cfg.Mode or "Both"
+                if mode == "Sword" or mode == "Both" then
                     if Bedwars.Ready or Bedwars.Resolve() then
                         -- Re-applied on every pass so slider changes take effect straight away
                         swordApplied = setSwordRegion(true)
+                        if not swordApplied then
+                            mod:SetStatus("Sword mode couldn't find the swing size (Bedwars update?)", "error")
+                        end
                     end
-                    return
-                end
-                if swordApplied then
+                    if mode == "Sword" then
+                        if next(records) ~= nil then
+                            destroyAll()
+                        end
+                        return
+                    end
+                elseif swordApplied then
                     swordApplied = false
                     setSwordRegion(false)
                 end
@@ -5341,8 +5377,8 @@ do
 
     hitbox:AddSection("Mode")
     hitbox:AddOption({
-        Label = "Mode", Key = "Mode", Options = { "Player", "Sword" }, Default = "Player",
-        Tip = "Player adds an extra box around each enemy. Sword widens the game's own swing region instead.",
+        Label = "Mode", Key = "Mode", Options = { "Both", "Player", "Sword" }, Default = "Both",
+        Tip = "Player adds a bigger box around each enemy. Sword widens the game's own swing area. Both does both (strongest).",
     })
     hitbox:AddSlider({ Label = "Expand Amount", Key = "Expand", Min = 0, Max = 30, Default = 14.4, Step = 0.1, Tip = "How much bigger the hitbox gets." })
     hitbox:AddSection("Targeting")
@@ -5354,6 +5390,58 @@ do
     hitbox:AddToggle({ Label = "Show Hitbox", Key = "ShowHitbox", Default = false, ShowIf = function(c) return c.Mode ~= "Sword" end, Tip = "Makes the expanded hitbox visible. The expansion works either way - this is just a preview." })
     hitbox:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.7, Step = 0.05, ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
     hitbox:AddOption({ Label = "Color", Key = "HitboxColor", Options = COLOR_NAMES, Default = "Accent", ShowIf = function(c) return c.Mode ~= "Sword" and c.ShowHitbox end })
+end
+
+-- ====================== MODULE: HIT FIX ======================
+-- Same as aero's HitFix: the game's swingSwordAtMouse looks for what you're hitting with a plain
+-- workspace Raycast. This points it at the game's own GameQueryUtil raycast instead (the one the
+-- rest of the combat code uses, which handles hitboxes properly), so clicks register more often.
+-- Turning it off puts back exactly what was there before.
+do
+    local function queryUtil()
+        local ok, util = pcall(function()
+            local out = service("ReplicatedStorage"):WaitForChild("rbxts_include", 5)
+                :WaitForChild("node_modules", 5):WaitForChild("@easy-games", 5)
+                :WaitForChild("game-core", 5):WaitForChild("out", 5)
+            return require(out).GameQueryUtil
+        end)
+        return ok and util or nil
+    end
+
+    Tabs.Combat:CreateModule({
+        Name = "HitFix",
+        Description = "Makes sword clicks register more reliably (uses the game's own hit raycast).",
+        OnEnable = function(mod)
+            assert(debug and debug.getconstant and debug.setconstant and debug.getupvalue and debug.setupvalue,
+                "your executor is missing debug.setconstant / setupvalue")
+            assert(Bedwars.Resolve(), "Bedwars not loaded")
+            local controller = Bedwars.SwordController
+            local swing = controller and controller.swingSwordAtMouse
+            assert(type(swing) == "function", "swingSwordAtMouse not found")
+            local util = queryUtil()
+            assert(util, "GameQueryUtil not found")
+
+            local slot, originalConstant
+            for i = 1, 60 do
+                local ok, value = pcall(debug.getconstant, swing, i)
+                if ok and (value == "Raycast" or value == "raycast") then
+                    slot, originalConstant = i, value
+                    break
+                end
+            end
+            assert(slot, "raycast call not found in swingSwordAtMouse (Bedwars update?)")
+            local okUp, originalUpvalue = pcall(debug.getupvalue, swing, 4)
+            assert(okUp and (originalUpvalue == Workspace or originalUpvalue == util),
+                "swingSwordAtMouse changed shape (Bedwars update?)")
+
+            debug.setconstant(swing, slot, "raycast")
+            debug.setupvalue(swing, 4, util)
+            mod.Maid:Give(function()
+                pcall(debug.setconstant, swing, slot, originalConstant == "raycast" and "Raycast" or originalConstant)
+                pcall(debug.setupvalue, swing, 4, originalUpvalue == util and Workspace or originalUpvalue)
+            end)
+        end,
+    })
 end
 
 -- ====================== MODULE: BEDWARS BRIDGE ======================
@@ -9828,11 +9916,20 @@ do
     end
 
     local function ensureParty(host, plr)
+        -- The badge sits on the player's card itself (top-right corner, inside the card). It used
+        -- to sit on the kit icon, which is taller than the card, so it poked up into the card above.
         local icon = host:FindFirstChild("NovaKitRender")
+        local badge = host:FindFirstChild("NovaParty")
         if not icon then
+            if badge then
+                badge.Visible = false
+            end
             return
         end
-        local badge = icon:FindFirstChild("NovaParty")
+        local oldBadge = icon:FindFirstChild("NovaParty")
+        if oldBadge then
+            oldBadge:Destroy()
+        end
         local number = kitRender.Config.Party and partyNumbers[plr.UserId]
         if not number then
             if badge then
@@ -9844,7 +9941,7 @@ do
             badge = New("TextLabel", {
                 Name = "NovaParty",
                 AnchorPoint = Vector2.new(1, 0),
-                Position = UDim2.new(1, 2, 0, -2),
+                Position = UDim2.new(1, -3, 0, 3),
                 Size = UDim2.fromOffset(16, 16),
                 BackgroundColor3 = Color3.fromRGB(40, 120, 255),
                 BorderSizePixel = 0,
@@ -9852,7 +9949,7 @@ do
                 TextSize = 11,
                 Font = Enum.Font.GothamBold,
                 ZIndex = 10003,
-                Parent = icon,
+                Parent = host,
             }, {
                 New("UICorner", { CornerRadius = UDim.new(1, 0) }),
                 New("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Thickness = 1, Color = Color3.new(0, 0, 0) }),
@@ -9883,6 +9980,7 @@ do
                 destroyNamed(host, "NovaKitRender")
                 destroyNamed(host, "NovaKitLevel")
                 destroyNamed(host, "NovaLastKit")
+                destroyNamed(host, "NovaParty")
             end
             return
         end
