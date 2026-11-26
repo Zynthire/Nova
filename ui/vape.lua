@@ -1,10 +1,11 @@
+-- Vape V4 GUI library (aerov4 fork), patched to run inside Nova. See Nova's VAPE GUI section.
 local __novaOptions = (...) or {}
 local mainapi = {
 	Categories = {},
-	GUIColor = {
-		Hue = 0.46,
-		Sat = 0.96,
-		Value = 0.52
+	GUIColor = { -- Nova purple (139, 108, 255) instead of Vape green
+		Hue = 0.7018,
+		Sat = 0.5765,
+		Value = 1
 	},
 	HeldKeybinds = {},
 	Keybind = {'RightShift'},
@@ -1779,14 +1780,14 @@ components = {
 	ColorSlider = function(optionsettings, children, api)
 		local optionapi = {
 			Type = 'ColorSlider',
-			Hue = optionsettings.DefaultHue or 0.44,
-			Sat = optionsettings.DefaultSat or 1,
+			Hue = optionsettings.DefaultHue or 0.7018,
+			Sat = optionsettings.DefaultSat or 0.5765,
 			Value = optionsettings.DefaultValue or 1,
 			Opacity = optionsettings.DefaultOpacity or 1,
 			Rainbow = false,
 			Default = {
-				Hue = optionsettings.DefaultHue or 0.44,
-				Sat = optionsettings.DefaultSat or 1,
+				Hue = optionsettings.DefaultHue or 0.7018,
+				Sat = optionsettings.DefaultSat or 0.5765,
 				Value = optionsettings.DefaultValue or 1,
 				Opacity = optionsettings.DefaultOpacity or 1
 			},
@@ -4570,10 +4571,10 @@ function mainapi:CreateGUI()
 	function categoryapi:CreateGUISlider(optionsettings)
 		local optionapi = {
 			Type = 'GUISlider',
-			Notch = 4,
-			Hue = 0.46,
-			Sat = 0.96,
-			Value = 0.52,
+			Notch = 6,
+			Hue = 0.7018,
+			Sat = 0.5765,
+			Value = 1,
 			Rainbow = false,
 			CustomColor = false
 		}
@@ -4583,7 +4584,7 @@ function mainapi:CreateGUI()
 			Color3.fromRGB(252, 179, 22),
 			Color3.fromRGB(5, 133, 104),
 			Color3.fromRGB(47, 122, 229),
-			Color3.fromRGB(126, 84, 217),
+			Color3.fromRGB(139, 108, 255), -- Nova purple (was Vape's 126, 84, 217)
 			Color3.fromRGB(255, 255, 255)
 		}
 		local slidercolorpos = {
@@ -4834,7 +4835,8 @@ function mainapi:CreateGUI()
 				Value = self.Value,
 				Notch = self.Notch,
 				CustomColor = self.CustomColor,
-				Rainbow = self.Rainbow
+				Rainbow = self.Rainbow,
+				NovaTheme = true
 			}
 		end
 
@@ -4845,7 +4847,13 @@ function mainapi:CreateGUI()
 			if self.Rainbow or tab.CustomColor then
 				self:SetValue(tab.Hue, tab.Sat, tab.Value)
 			else
-				self:SetValue(nil, nil, nil, tab.Notch)
+				-- profiles saved before the Nova purple default still say green (notch 4):
+				-- move those to purple once; after that, whatever you pick is kept
+				local notch = tab.Notch
+				if not tab.NovaTheme and (notch == nil or notch == 4) then
+					notch = 6
+				end
+				self:SetValue(nil, nil, nil, notch or 6)
 			end
 		end
 
@@ -7989,7 +7997,7 @@ end
 function mainapi:Load(skipgui, profile)
 	self.Loading = true
 	if not skipgui then
-		self.GUIColor:SetValue(nil, nil, nil, 4)
+		self.GUIColor:SetValue(nil, nil, nil, 6)
 	end
 
 	local guidata = {Categories = {}}
@@ -10602,7 +10610,7 @@ targetinfohealthblur.ImageColor3 = Color3.new()
 targetinfohealthblur.Visible = false
 local targetinfob = Instance.new('UIStroke')
 targetinfob.Enabled = false
-targetinfob.Color = Color3.fromHSV(0.44, 1, 1)
+targetinfob.Color = Color3.fromHSV(0.7018, 0.5765, 1)
 targetinfob.Parent = targetinfobkg
 
 targetinfoobj:CreateFont({
