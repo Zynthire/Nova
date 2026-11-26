@@ -3934,35 +3934,34 @@ function mainapi:CreateGUI()
 	addBlur(window)
 	addCorner(window)
 	makeDraggable(window)
-	-- Nova: "NOVA" wordmark instead of the VAPE V4 images. The little dot after it takes the
-	-- GUI theme color (set in UpdateGUI, where the V4 image used to be colored).
+	-- Nova: "NOVA" wordmark instead of the VAPE V4 images. White fading into the GUI theme
+	-- color toward the end (the gradient is named V4Logo so UpdateGUI recolors it like the old
+	-- V4 image).
 	local logo = Instance.new('TextLabel')
 	logo.Name = 'VapeLogo'
-	logo.Size = UDim2.fromOffset(62, 18)
-	logo.Position = UDim2.fromOffset(11, 10)
+	logo.Size = UDim2.fromOffset(0, 18)
+	logo.AutomaticSize = Enum.AutomaticSize.X -- label = text width, so the gradient spans just the text
+	logo.Position = UDim2.fromOffset(12, 8)
 	logo.BackgroundTransparency = 1
 	logo.Text = 'NOVA'
-	logo.TextSize = 19
+	logo.TextSize = 18
 	logo.FontFace = Font.new('rbxasset://fonts/families/Montserrat.json', Enum.FontWeight.ExtraBold)
 	logo.TextXAlignment = Enum.TextXAlignment.Left
 	logo.TextYAlignment = Enum.TextYAlignment.Center
-	logo.TextColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
+	logo.TextColor3 = Color3.new(1, 1, 1)
 	logo.Parent = window
-	local logov4 = Instance.new('Frame')
+	local logov4 = Instance.new('UIGradient')
 	logov4.Name = 'V4Logo'
-	logov4.AnchorPoint = Vector2.new(0, 1)
-	logov4.Size = UDim2.fromOffset(5, 5)
-	logov4.BorderSizePixel = 0
-	logov4.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-	logov4.Parent = logo
-	local logodot = Instance.new('UICorner')
-	logodot.CornerRadius = UDim.new(1, 0)
-	logodot.Parent = logov4
-	local function placeDot()
-		logov4.Position = UDim2.new(0, logo.TextBounds.X + 2, 0.5, 6)
+	local function logoGradient(accent)
+		return ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(0.35, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(1, accent),
+		})
 	end
-	placeDot()
-	logo:GetPropertyChangedSignal('TextBounds'):Connect(placeDot)
+	logov4.Color = logoGradient(Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value))
+	logov4.Parent = logo
+	mainapi.NovaLogoGradient = logoGradient
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
 	children.Size = UDim2.new(1, 0, 1, -33)
@@ -10947,6 +10946,8 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 			if logoAccent then
 				if logoAccent:IsA('ImageLabel') then
 					logoAccent.ImageColor3 = Color3.fromHSV(hue, sat, val)
+				elseif logoAccent:IsA('UIGradient') then
+					logoAccent.Color = mainapi.NovaLogoGradient(Color3.fromHSV(hue, sat, val))
 				else
 					logoAccent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
 				end
