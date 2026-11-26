@@ -18890,6 +18890,81 @@ do
     desync:AddLabel("Your own hits still count from where the server sees you, so stay close to it.")
 end
 
+-- ====================== MODULE: ANTI LASSO ======================
+-- Same idea as aero's AntiLasso: when a lasso hooks you, a rope accessory gets added to your
+-- character. While it's there your root part is anchored so the pull can't drag you; it's
+-- released half a second after the rope goes away (or after 4 s at most, just in case).
+do
+    local antiLasso = Tabs.Kits:CreateModule({
+        Name = "Anti Lasso",
+        Description = "Stops you getting yanked by the lasso.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local holding = 0 -- ropes currently anchoring us
+            local anchoredRoot
+
+            local function release(root)
+                holding = math.max(0, holding - 1)
+                if holding == 0 and root and root.Parent then
+                    root.Anchored = false
+                    if anchoredRoot == root then
+                        anchoredRoot = nil
+                    end
+                end
+            end
+
+            local function watch(char)
+                if not char then
+                    return
+                end
+                holding = 0
+                mod.Maid:Give(char.ChildAdded:Connect(function(child)
+                    if not (child:IsA("Accessory") and child:FindFirstChild("Rope")) then
+                        return
+                    end
+                    if math.random() * 100 >= (tonumber(cfg.Chance) or 100) then
+                        return
+                    end
+                    local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+                    if not root then
+                        return
+                    end
+                    holding = holding + 1
+                    anchoredRoot = root
+                    root.Anchored = true
+                    local done = false
+                    local function finish()
+                        if done then
+                            return
+                        end
+                        done = true
+                        task.delay(0.5, release, root)
+                    end
+                    child.Destroying:Once(finish)
+                    child.AncestryChanged:Connect(function(_, parent)
+                        if not parent then
+                            finish()
+                        end
+                    end)
+                    task.delay(4, finish)
+                end))
+            end
+
+            watch(LocalPlayer.Character)
+            mod.Maid:Give(LocalPlayer.CharacterAdded:Connect(watch))
+            mod.Maid:Give(function()
+                holding = 0
+                local root = anchoredRoot
+                anchoredRoot = nil
+                if root and root.Parent then
+                    root.Anchored = false
+                end
+            end)
+        end,
+    })
+    antiLasso:AddSlider({ Label = "Chance", Key = "Chance", Min = 0, Max = 100, Step = 1, Default = 100, Suffix = "%", Tip = "How often it blocks a lasso." })
+end
+
 -- ====================== MODULE: DOG ======================
 -- Dog and Fish: each plays a catalog emote on your character on loop (Good Boy Dog Emote /
 -- the fish emote). Catalog emote animations are owned by Roblox, so they play in any game and
