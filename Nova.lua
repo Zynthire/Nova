@@ -15095,6 +15095,67 @@ do
             local avoid = opts.avoid or {} -- [key] = true: cells that failed recently (cost a lot more)
 
             local solidCache = {}
+
+            -- Not everything you can stand on is a game block: some maps have bridges, planks,
+            -- logs etc. that are plain parts. Those are collected once per plan (around you and
+            -- the target) and marked on the grid too. A cell counts as filled if a part covers
+            -- at least 1 stud of it in every direction.
+            local CollectionService = service("CollectionService")
+            do
+                local lo = Vector3.new(
+                    math.min(fromWorld.X, toWorld.X), math.min(fromWorld.Y, toWorld.Y), math.min(fromWorld.Z, toWorld.Z))
+                local hi = Vector3.new(
+                    math.max(fromWorld.X, toWorld.X), math.max(fromWorld.Y, toWorld.Y), math.max(fromWorld.Z, toWorld.Z))
+                lo = lo - Vector3.new(45, 30, 45)
+                hi = hi + Vector3.new(45, 30, 45)
+                local size = hi - lo
+                size = Vector3.new(math.min(size.X, 500), math.min(size.Y, 160), math.min(size.Z, 500))
+                local overlap = OverlapParams.new()
+                overlap.FilterType = Enum.RaycastFilterType.Exclude
+                local ignore = { Workspace.CurrentCamera }
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr.Character then
+                        ignore[#ignore + 1] = plr.Character
+                    end
+                end
+                overlap.FilterDescendantsInstances = ignore
+                local okParts, parts = pcall(function()
+                    return Workspace:GetPartBoundsInBox(CFrame.new((lo + hi) / 2), size, overlap)
+                end)
+                local marked = 0
+                for index, part in ipairs(okParts and parts or {}) do
+                    if opts.yieldEvery and index % 2000 == 0 then
+                        task.wait()
+                    end
+                    if part.CanCollide and not CollectionService:HasTag(part, "block")
+                        and not part:FindFirstAncestorOfClass("Tool")
+                        and not (part.Parent and part.Parent:FindFirstChildOfClass("Humanoid")) then
+                        -- world-space bounds of the (possibly rotated) part
+                        local cf, half = part.CFrame, part.Size / 2
+                        local ex = math.abs(cf.RightVector.X) * half.X + math.abs(cf.UpVector.X) * half.Y + math.abs(cf.LookVector.X) * half.Z
+                        local ey = math.abs(cf.RightVector.Y) * half.X + math.abs(cf.UpVector.Y) * half.Y + math.abs(cf.LookVector.Y) * half.Z
+                        local ez = math.abs(cf.RightVector.Z) * half.X + math.abs(cf.UpVector.Z) * half.Y + math.abs(cf.LookVector.Z) * half.Z
+                        local p = cf.Position
+                        local minV, maxV = Vector3.new(p.X - ex, p.Y - ey, p.Z - ez), Vector3.new(p.X + ex, p.Y + ey, p.Z + ez)
+                        -- cells (3 studs, centred on multiples of 3) overlapped by >= 1 stud each way
+                        local x0, x1 = math.ceil((minV.X + 0.5) / 3), math.floor((maxV.X - 0.5) / 3)
+                        local y0, y1 = math.ceil((minV.Y + 0.5) / 3), math.floor((maxV.Y - 0.5) / 3)
+                        local z0, z1 = math.ceil((minV.Z + 0.5) / 3), math.floor((maxV.Z - 0.5) / 3)
+                        local count = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1)
+                        if count > 0 and count <= 6000 and marked < 200000 then
+                            marked = marked + count
+                            for cx = x0, x1 do
+                                for cy = y0, y1 do
+                                    for cz = z0, z1 do
+                                        solidCache[cx .. "," .. cy .. "," .. cz] = true
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
             local function solid(x, y, z)
                 local key = x .. "," .. y .. "," .. z
                 local v = solidCache[key]
