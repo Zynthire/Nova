@@ -5930,7 +5930,10 @@ do
                     break
                 end
             end
-            assert(slot, "raycast call not found in swingSwordAtMouse (Bedwars update?)")
+            if not slot then
+                mod:SetStatus("Not needed: Bedwars already does this")
+                return
+            end
             -- aero always uses upvalue 4, but its position changes between Bedwars versions, so
             -- look for the upvalue that actually holds workspace (or the query util, if a previous
             -- run already swapped it and didn't get to put it back)
@@ -5945,7 +5948,12 @@ do
                     break
                 end
             end
-            assert(upIndex, "swingSwordAtMouse doesn't use a workspace raycast anymore (Bedwars update?)")
+            if not upIndex then
+                -- Bedwars no longer does its sword raycast through workspace here, so there's
+                -- nothing to swap (it already uses its own query code). Stay on, do nothing.
+                mod:SetStatus("Not needed: Bedwars already does this")
+                return
+            end
 
             debug.setconstant(swing, slot, "raycast")
             debug.setupvalue(swing, upIndex, util)
@@ -8509,93 +8517,244 @@ do
         hiveEsp:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.45, Step = 0.05 })
     end
 
-    local genEsp = Tabs.Render:CreateModule({
-        Name = "Generator ESP",
-        Description = "Highlights iron / diamond / emerald generators.",
-        OnEnable = function(mod)
-            local cfg = mod.Config
-            local adorns = {}
-            local CollectionService = game:GetService("CollectionService")
-            local COLORS = {
-                iron = Color3.fromRGB(200, 200, 210),
-                diamond = Color3.fromRGB(80, 200, 255),
-                emerald = Color3.fromRGB(80, 255, 140),
-            }
-            local TAGS = {
-                "iron-generator", "diamond-generator", "emerald-generator",
-                "IronGenerator", "DiamondGenerator", "EmeraldGenerator", "generator",
-            }
+    -- Generator ESP: a label over every generator (same style as Beehive ESP) with its type and
+    -- what's lying in it right now, e.g. "Diamond Generator | 3 Diamond". Generators are looked
+    -- up every few seconds and the drops counted twice a second; only the label positions update
+    -- every frame. (The old version re-scanned the whole map every frame, which killed FPS.)
+    do
+        local CollectionService = service("CollectionService")
+        local KIND_COLORS = {
+            iron = Color3.fromRGB(215, 215, 225),
+            diamond = Color3.fromRGB(90, 200, 255),
+            emerald = Color3.fromRGB(90, 255, 150),
+        }
+        local GEN_TAGS = {
+            "iron-generator", "diamond-generator", "emerald-generator",
+            "IronGenerator", "DiamondGenerator", "EmeraldGenerator", "generator",
+        }
+        local ITEM_NAMES = { iron = "Iron", diamond = "Diamond", emerald = "Emerald" }
 
-            local function clear()
-                for part, box in pairs(adorns) do
-                    pcall(function() box:Destroy() end)
-                    adorns[part] = nil
+        local function kindFrom(text)
+            text = tostring(text or ""):lower()
+            if text:find("diamond", 1, true) then return "diamond" end
+            if text:find("emerald", 1, true) then return "emerald" end
+            if text:find("iron", 1, true) then return "iron" end
+            return nil
+        end
+
+        local function positionOf(inst)
+            if inst:IsA("BasePart") then
+                return inst.Position
+            end
+            local ok, pivot = pcall(function()
+                return inst:GetPivot().Position
+            end)
+            return ok and pivot or nil
+        end
+
+        local genEsp = Tabs.Render:CreateModule({
+            Name = "Generator ESP",
+            Description = "Labels every iron / diamond / emerald generator with what's in it.",
+            OnEnable = function(mod)
+                local cfg = mod.Config
+                local gens = {} -- [inst] = { Label, Box, Kind, Pos, Text }
+                local running = true
+
+                local function removeGen(inst)
+                    local g = gens[inst]
+                    if g then
+                        pcall(function() g.Label:Destroy() end)
+                        if g.Box then pcall(function() g.Box:Destroy() end) end
+                        gens[inst] = nil
+                    end
                 end
-            end
-            mod.Maid:Give(clear)
+                mod.Maid:Give(function()
+                    running = false
+                    for inst in pairs(gens) do
+                        removeGen(inst)
+                    end
+                end)
 
-            local function kindFrom(name, tag)
-                local s = (tostring(tag or "") .. " " .. tostring(name or "")):lower()
-                if s:find("diamond", 1, true) then return "diamond" end
-                if s:find("emerald", 1, true) then return "emerald" end
-                return "iron"
-            end
+                local function addGen(inst, hint)
+                    if gens[inst] then
+                        return
+                    end
+                    local kind = kindFrom(hint) or kindFrom(inst.Name)
+                    if not kind then
+                        local id = inst:GetAttribute("Id") or inst:GetAttribute("GeneratorId") or inst:GetAttribute("ItemType")
+                        kind = kindFrom(id) or "iron"
+                    end
+                    local label = New("TextLabel", {
+                        Name = "NovaGenerator",
+                        AnchorPoint = Vector2.new(0.5, 0.5),
+                        AutomaticSize = Enum.AutomaticSize.XY,
+                        Size = UDim2.fromOffset(0, 0),
+                        BackgroundColor3 = Theme.Background,
+                        BackgroundTransparency = 0.45,
+                        BorderSizePixel = 0,
+                        Font = Enum.Font.GothamMedium,
+                        TextSize = 14,
+                        TextColor3 = KIND_COLORS[kind],
+                        TextStrokeTransparency = 0.6,
+                        Visible = false,
+                        ZIndex = 20,
+                        Parent = UI.Gui,
+                    }, {
+                        Round(6),
+                        New("UIPadding", {
+                            PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6),
+                            PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 2),
+                        }),
+                    })
+                    gens[inst] = { Label = label, Kind = kind, Pos = positionOf(inst), Text = ITEM_NAMES[kind] .. " Generator" }
+                end
 
-            mod.Maid:Give(RunService.Heartbeat:Connect(function()
-                local seen = {}
-                local candidates = {}
-                for _, tag in ipairs(TAGS) do
-                    pcall(function()
-                        for _, inst in ipairs(CollectionService:GetTagged(tag)) do
-                            candidates[#candidates + 1] = { inst = inst, tag = tag }
+                -- finding generators: by tag, else by name (only the outermost "generator" object,
+                -- not every part inside it). Runs every 3 s, not every frame.
+                local function discover()
+                    local found = {}
+                    for _, tag in ipairs(GEN_TAGS) do
+                        local ok, list = pcall(CollectionService.GetTagged, CollectionService, tag)
+                        if ok then
+                            for _, inst in ipairs(list) do
+                                found[inst] = tag
+                            end
                         end
-                    end)
-                end
-                if #candidates == 0 then
-                    pcall(function()
+                    end
+                    if next(found) == nil then
                         for _, inst in ipairs(Workspace:GetDescendants()) do
-                            if inst:IsA("BasePart") or inst:IsA("Model") then
-                                local n = inst.Name:lower()
-                                if n:find("generator", 1, true) then
-                                    candidates[#candidates + 1] = { inst = inst, tag = n }
+                            if (inst:IsA("BasePart") or inst:IsA("Model"))
+                                and inst.Name:lower():find("generator", 1, true) then
+                                local parent, nested = inst.Parent, false
+                                while parent and parent ~= Workspace do
+                                    if parent.Name:lower():find("generator", 1, true) then
+                                        nested = true
+                                        break
+                                    end
+                                    parent = parent.Parent
+                                end
+                                if not nested then
+                                    found[inst] = inst.Name
                                 end
                             end
                         end
-                    end)
-                end
-                for _, row in ipairs(candidates) do
-                    local part = row.inst
-                    if not part:IsA("BasePart") then
-                        part = row.inst:FindFirstChildWhichIsA("BasePart", true)
                     end
-                    if part and part.Parent then
-                        seen[part] = true
-                        local box = adorns[part]
-                        if not box then
-                            box = Instance.new("BoxHandleAdornment")
-                            box.Adornee = part
-                            box.AlwaysOnTop = true
-                            box.ZIndex = 4
-                            box.Parent = UI.Gui
-                            adorns[part] = box
+                    for inst, hint in pairs(found) do
+                        if inst.Parent then
+                            addGen(inst, hint)
                         end
-                        local kind = kindFrom(row.inst.Name, row.tag)
-                        box.Color3 = COLORS[kind] or COLORS.iron
-                        box.Size = part.Size + Vector3.new(0.25, 0.25, 0.25)
-                        box.Transparency = tonumber(cfg.Transparency) or 0.5
-                        box.Visible = true
+                    end
+                    for inst in pairs(gens) do
+                        if not found[inst] or not inst.Parent then
+                            removeGen(inst)
+                        end
                     end
                 end
-                for part, box in pairs(adorns) do
-                    if not seen[part] then
-                        pcall(function() box:Destroy() end)
-                        adorns[part] = nil
+
+                -- what's in each generator: dropped items within a few studs of it
+                local function count()
+                    local radius = tonumber(cfg.Radius) or 6
+                    local totals = {}
+                    for inst, g in pairs(gens) do
+                        g.Pos = positionOf(inst) or g.Pos
+                        totals[inst] = {}
+                    end
+                    local drops = CollectionService:GetTagged("ItemDrop")
+                    if #drops == 0 then
+                        local cache = Workspace:FindFirstChild("ItemDropsCache")
+                        drops = cache and cache:GetChildren() or {}
+                    end
+                    for _, drop in ipairs(drops) do
+                        local pos = drop:IsA("BasePart") and drop.Position
+                            or (drop:IsA("Model") and drop.PrimaryPart and drop.PrimaryPart.Position)
+                        if pos then
+                            for inst, g in pairs(gens) do
+                                if g.Pos and (pos - g.Pos).Magnitude <= radius then
+                                    local itemType = drop:GetAttribute("ItemType") or drop:GetAttribute("itemType")
+                                    local kind = kindFrom(itemType) or kindFrom(drop.Name) or g.Kind
+                                    local amount = tonumber(drop:GetAttribute("Amount") or drop:GetAttribute("ItemAmount")
+                                        or drop:GetAttribute("amount")) or 1
+                                    totals[inst][kind] = (totals[inst][kind] or 0) + amount
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    for inst, g in pairs(gens) do
+                        local parts = {}
+                        for _, kind in ipairs({ "emerald", "diamond", "iron" }) do
+                            local n = totals[inst][kind]
+                            if n and n > 0 then
+                                parts[#parts + 1] = n .. " " .. ITEM_NAMES[kind]
+                            end
+                        end
+                        local contents = #parts > 0 and table.concat(parts, ", ") or "Empty"
+                        g.Text = ITEM_NAMES[g.Kind] .. " Generator | " .. contents
                     end
                 end
-            end))
-        end,
-    })
-    genEsp:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0.2, Max = 0.9, Default = 0.5, Step = 0.05 })
+
+                mod.Maid:Give(task.spawn(function()
+                    local lastDiscover = -math.huge
+                    while running do
+                        if os.clock() - lastDiscover > 3 then
+                            lastDiscover = os.clock()
+                            pcall(discover)
+                        end
+                        pcall(count)
+                        task.wait(0.5)
+                    end
+                end))
+
+                mod.Maid:Give(RunService.RenderStepped:Connect(function()
+                    local cam = Workspace.CurrentCamera
+                    if not cam then
+                        return
+                    end
+                    local _, _, root = Util.GetCharacter(LocalPlayer)
+                    local maxDistance = tonumber(cfg.MaxDistance) or 1000
+                    for inst, g in pairs(gens) do
+                        local show = false
+                        local pos = g.Pos
+                        if pos and (not root or (root.Position - pos).Magnitude <= maxDistance)
+                            and (g.Kind ~= "iron" or cfg.ShowIron ~= false) then
+                            local screen, on = cam:WorldToViewportPoint(pos + Vector3.new(0, 2.5, 0))
+                            if on and screen.Z > 0 then
+                                show = true
+                                g.Label.Text = g.Text
+                                g.Label.TextSize = 14 * (cfg.Scale or 1)
+                                g.Label.BackgroundTransparency = cfg.Transparency or 0.45
+                                g.Label.Position = UDim2.fromOffset(screen.X, screen.Y)
+                            end
+                        end
+                        g.Label.Visible = show
+                        if cfg.Boxes and show then
+                            if not g.Box then
+                                local part = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
+                                if part then
+                                    g.Box = New("BoxHandleAdornment", {
+                                        Adornee = part, AlwaysOnTop = true, ZIndex = 4,
+                                        Size = part.Size + Vector3.new(0.25, 0.25, 0.25),
+                                        Color3 = KIND_COLORS[g.Kind], Transparency = 0.6, Parent = UI.Gui,
+                                    })
+                                end
+                            end
+                            if g.Box then
+                                g.Box.Visible = true
+                            end
+                        elseif g.Box then
+                            g.Box.Visible = false
+                        end
+                    end
+                end))
+            end,
+        })
+        genEsp:AddToggle({ Label = "Show Iron", Key = "ShowIron", Default = true, Tip = "Turn off to only label diamond and emerald generators." })
+        genEsp:AddToggle({ Label = "Boxes", Key = "Boxes", Default = false, Tip = "Also outline the generator itself." })
+        genEsp:AddSlider({ Label = "Max Distance", Key = "MaxDistance", Min = 50, Max = 2000, Step = 50, Default = 1000, Suffix = " studs" })
+        genEsp:AddSlider({ Label = "Pickup Radius", Key = "Radius", Min = 2, Max = 15, Step = 1, Default = 6, Suffix = " studs", Tip = "How close a dropped item has to be to count as in the generator." })
+        genEsp:AddSlider({ Label = "Scale", Key = "Scale", Min = 0.5, Max = 1.5, Default = 1, Step = 0.1 })
+        genEsp:AddSlider({ Label = "Transparency", Key = "Transparency", Min = 0, Max = 1, Default = 0.45, Step = 0.05 })
+    end
 
     Tabs.Render:CreatePlaceholder("More render features coming soon...")
 end
@@ -14758,28 +14917,56 @@ do
         return nil, "no sword in hotbar"
     end
 
-    -- Shared navigation: wall slide, void detour, single ledge jump
-    local function makeNavigator()
+    -- Shared navigation: wall slide, void detour, single ledge jump.
+    -- Void rules are strict: a direction only counts as walkable if there's ground under EVERY
+    -- step of the next few studs, within `maxDrop` studs below your feet. Anything else is
+    -- treated as void (the old version accepted paths that were only partly over ground, which
+    -- is how it walked off edges). `getMaxDrop` lets a module make this adjustable.
+    local function makeNavigator(getMaxDrop)
         local lastJump = 0
         local lastPos, stuckFor = nil, 0
         local avoidDir, avoidUntil = nil, 0
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = false
 
-        local function groundAt(pos)
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
+        local function refreshFilter()
+            local list = { Workspace.CurrentCamera }
             local char = LocalPlayer.Character
-            if char then params.FilterDescendantsInstances = { char } end
-            local hit = Workspace:Raycast(pos + Vector3.new(0, 4, 0), Vector3.new(0, -14, 0), params)
-            return hit ~= nil, hit
+            if char then
+                list[#list + 1] = char
+            end
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and plr.Character then
+                    list[#list + 1] = plr.Character -- other players aren't floor
+                end
+            end
+            params.FilterDescendantsInstances = list
+        end
+
+        local function maxDrop()
+            return (getMaxDrop and tonumber(getMaxDrop())) or 8
+        end
+
+        -- ground under `pos` (a root-height position): within hip height + maxDrop below
+        local function groundAt(pos, depth)
+            local hit = Workspace:Raycast(pos + Vector3.new(0, 2, 0), Vector3.new(0, -(5 + (depth or maxDrop())), 0), params)
+            return hit ~= nil and hit.Instance.CanCollide ~= false, hit
         end
 
         local function blocked(origin, dir, dist)
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            local char = LocalPlayer.Character
-            if char then params.FilterDescendantsInstances = { char } end
             local hit = Workspace:Raycast(origin + Vector3.new(0, 1.5, 0), dir * dist, params)
             return hit and hit.Instance and hit.Instance.CanCollide or false
+        end
+
+        -- every stud of the next `dist` studs has ground under it
+        local function safeDir(origin, dir, dist)
+            for step = 1, math.max(1, math.floor(dist)) do
+                if not groundAt(origin + dir * step) then
+                    return false
+                end
+            end
+            return true
         end
 
         -- Score a candidate direction for progress toward goal + safety
@@ -14787,24 +14974,20 @@ do
             if blocked(origin, dir, 2.8) then
                 return -1000
             end
+            if not safeDir(origin, dir, 5) then
+                return -1000 -- any void in the next 5 studs rules it out
+            end
             local score = 0
-            -- ground samples along path
-            local grounded = 0
-            for s = 2, 10, 2 do
-                local p = origin + dir * s
-                if groundAt(p) then
-                    grounded = grounded + 1
+            for s = 6, 10, 2 do
+                if groundAt(origin + dir * s) then
+                    score = score + 3
                 else
-                    score = score - 8
+                    score = score - 4
                 end
                 if not blocked(origin, dir, s) then
                     score = score + 2
                 end
             end
-            if grounded == 0 then
-                return -500 -- pure void path
-            end
-            score = score + grounded * 3
             -- prefer directions that still head toward the goal
             if goalFlat.Magnitude > 0.1 then
                 score = score + dir:Dot(goalFlat.Unit) * 12
@@ -14813,6 +14996,7 @@ do
         end
 
         local function steer(root, desiredFlat, allowJump)
+            refreshFilter()
             if desiredFlat.Magnitude < 0.05 then
                 return nil, "arrived"
             end
@@ -14821,13 +15005,12 @@ do
             local origin = root.Position
             local now = os.clock()
 
-            if avoidDir and now < avoidUntil then
+            if avoidDir and now < avoidUntil and safeDir(origin, avoidDir, 4) then
                 dir = avoidDir
             end
 
-            -- If straight path is void/blocked, search for best detour (don't just stop)
-            local straightBad = blocked(origin, dir, 3.2) or not groundAt(origin + dir * 5)
-            if straightBad then
+            -- straight path blocked or over void: search for the best safe detour
+            if blocked(origin, dir, 3.2) or not safeDir(origin, dir, 5) then
                 local bestDir, bestScore = nil, -1e9
                 for _, deg in ipairs({ 0, 25, -25, 45, -45, 70, -70, 95, -95, 120, -120, 150, -150 }) do
                     local d = flatUnit(CFrame.Angles(0, math.rad(deg), 0) * goal)
@@ -14840,12 +15023,16 @@ do
                     dir = bestDir
                     avoidDir, avoidUntil = dir, now + 0.55
                 else
-                    -- Truly no safe path
                     return nil, "void ahead"
                 end
             end
 
-            -- Stuck → one ledge jump if ground exists ahead
+            -- last check right before moving: never step toward void
+            if not safeDir(origin, dir, 3) then
+                return nil, "void ahead"
+            end
+
+            -- Stuck -> one ledge jump, only if there's solid ground to land on
             if lastPos then
                 if (root.Position - lastPos).Magnitude < 0.55 then
                     stuckFor = stuckFor + 0.03
@@ -14857,7 +15044,7 @@ do
 
             if allowJump and stuckFor > 0.5 and now - lastJump > 1.15 then
                 local ahead = origin + dir * 4
-                if groundAt(ahead + Vector3.new(0, 2, 0)) and groundAt(ahead) then
+                if groundAt(ahead + Vector3.new(0, 3, 0), 3) and safeDir(origin, dir, 5) then
                     lastJump = now
                     stuckFor = 0
                     pcall(function()
@@ -14875,7 +15062,10 @@ do
             avoidDir, avoidUntil = nil, 0
         end
 
-        return { steer = steer, reset = reset, groundAt = groundAt }
+        return {
+            steer = steer, reset = reset, groundAt = groundAt, safeDir = safeDir,
+            refresh = refreshFilter, blocked = blocked,
+        }
     end
 
     -- Lightweight melee used by AutoFight + Auto Play (built-in)
@@ -14934,15 +15124,24 @@ do
     end
 
     -- ===================== AutoFight =====================
+    -- Faces, chases and swings at the best target, and never walks or jumps into the void:
+    -- every move goes through the navigator's ground checks, sideways slides near edges are
+    -- braked, and if you do end up over the void (knockback) it steers back to the last spot
+    -- you stood on.
     local autoFight = Tabs.Automation:CreateModule({
         Name = "AutoFight",
-        Description = "Faces, chases, and swings. Auto-equips sword. No mouse needed.",
+        Description = "Faces, chases, and swings. Auto-equips sword. Never walks into the void.",
         OnEnable = function(mod)
             local cfg = mod.Config
             local setStatus = makeStatusLabel(mod, "AutoFight", -110)
             local lastSend = 0
             local autoRotateOverridden = nil
-            local nav = makeNavigator()
+            local nav = makeNavigator(function()
+                return cfg.MaxDrop
+            end)
+            local locked -- Target Lock: the entry we're sticking with
+            local strafeSign, strafeFlipAt = 1, 0
+            local lastSafe -- last position we stood on solid ground
             local box = mod.Maid:Give(New("BoxHandleAdornment", {
                 Size = Vector3.new(3.6, 5.2, 3.6),
                 CFrame = CFrame.new(0, -0.55, 0),
@@ -14970,6 +15169,28 @@ do
                 return keys >= 2
             end
 
+            local safety = function()
+                return cfg.VoidSafety ~= false
+            end
+
+            -- Moves only if the direction is safe; otherwise stands still. Returns true if moved.
+            local function safeMove(hum, root, dir)
+                if dir and dir.Magnitude > 0.05 then
+                    dir = flatUnit(dir)
+                    if not safety() or nav.safeDir(root.Position, dir, 3) then
+                        hum:Move(dir, false)
+                        return true
+                    end
+                end
+                hum:Move(Vector3.zero, false)
+                return false
+            end
+
+            -- standing on (or right above) something solid
+            local function grounded(hum, root)
+                return hum.FloorMaterial ~= Enum.Material.Air or nav.groundAt(root.Position, 1)
+            end
+
             mod.Maid:Give(RunService.RenderStepped:Connect(function(dt)
                 local char, hum, root = Util.GetCharacter(LocalPlayer)
                 local function idle(text)
@@ -14984,8 +15205,41 @@ do
                     return
                 end
                 if not char or not hum or hum.Health <= 0 or not root then
+                    lastSafe = nil
+                    locked = nil
                     idle("waiting for character")
                     return
+                end
+                nav.refresh()
+
+                -- ---------- void safety (runs before anything else) ----------
+                -- (skipped while you're steering yourself, so it never fights your own bridging)
+                local steeringSelf = UserInputService:GetFocusedTextBox() == nil and (
+                    UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.A)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.D))
+                if safety() and not steeringSelf then
+                    if grounded(hum, root) then
+                        if hum.FloorMaterial ~= Enum.Material.Air then
+                            lastSafe = root.Position
+                        end
+                        -- edge brake: sliding toward an edge (knockback, momentum) -> push back
+                        local v = root.AssemblyLinearVelocity
+                        local flatV = Vector3.new(v.X, 0, v.Z)
+                        if cfg.EdgeBrake ~= false and flatV.Magnitude > 4
+                            and not nav.safeDir(root.Position, flatV.Unit, 3) then
+                            hum:Move(-flatV.Unit, false)
+                            setStatus(cfg.StatusLine, "edge - braking")
+                            return
+                        end
+                    elseif lastSafe and not nav.groundAt(root.Position, 80) then
+                        -- in the air over the void: steer back toward the last safe spot
+                        local back = Vector3.new(lastSafe.X - root.Position.X, 0, lastSafe.Z - root.Position.Z)
+                        if back.Magnitude > 0.5 then
+                            hum:Move(back.Unit, false)
+                        end
+                        setStatus(cfg.StatusLine, "over void - recovering")
+                        return
+                    end
                 end
 
                 local item, meta = ensureSword()
@@ -15003,52 +15257,75 @@ do
                 end
                 local halfCos = math.cos(math.rad(cfg.Angle or 360) / 2)
                 local useAngle = (cfg.Angle or 360) < 359
+                local maxHeight = tonumber(cfg.MaxHeight) or 30
+
+                -- a target standing over the void (bridging, falling) isn't worth chasing
+                local function chaseable(entry)
+                    if math.abs(entry.Root.Position.Y - root.Position.Y) > maxHeight then
+                        return false
+                    end
+                    if safety() and cfg.SkipVoidTargets ~= false and not nav.groundAt(entry.Root.Position, 12) then
+                        return false
+                    end
+                    return true
+                end
 
                 local closest, closestDist = nil, math.huge
                 local attackTarget, attackDist, attackScore = nil, nil, nil
+                local lockedStill = false
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets or "Players")) do
-                    if entry.Root and entry.Humanoid and entry.Humanoid.Health > 0 then
-                        if not (entry.Player and Util.IsTeammate(entry.Player)) then
-                            local offset = entry.Root.Position - root.Position
-                            local dist = offset.Magnitude
-                            if dist < closestDist and dist <= chaseRange then
-                                closest, closestDist = entry, dist
+                    if entry.Root and entry.Humanoid and entry.Humanoid.Health > 0
+                        and not (entry.Player and Util.IsTeammate(entry.Player)) then
+                        local offset = entry.Root.Position - root.Position
+                        local dist = offset.Magnitude
+                        if locked and entry.Model == locked.Model and dist <= chaseRange then
+                            lockedStill = true
+                            locked = entry
+                        end
+                        if dist < closestDist and dist <= chaseRange and chaseable(entry) then
+                            closest, closestDist = entry, dist
+                        end
+                        if dist <= attackRange then
+                            local toward = flatUnit(offset, camLook)
+                            local angOk = (not useAngle) or camLook:Dot(toward) >= halfCos
+                            local wallOk = true
+                            if cfg.WallCheck then
+                                wallOk = Util.HasLineOfSight(root.Position + Vector3.new(0, 1.5, 0), entry.Root.Position)
                             end
-                            if dist <= attackRange then
-                                local toward = flatUnit(offset, camLook)
-                                local angOk = (not useAngle) or camLook:Dot(toward) >= halfCos
-                                local wallOk = true
-                                if cfg.WallCheck then
-                                    wallOk = Util.HasLineOfSight(root.Position + Vector3.new(0, 1.5, 0), entry.Root.Position)
+                            if angOk and wallOk then
+                                local score = dist
+                                if cfg.Sort == "Health" then
+                                    score = entry.Humanoid.Health
+                                elseif cfg.Sort == "Angle" then
+                                    score = -camLook:Dot(toward)
                                 end
-                                if angOk and wallOk then
-                                    local score = dist
-                                    if cfg.Sort == "Health" then
-                                        score = entry.Humanoid.Health
-                                    elseif cfg.Sort == "Angle" then
-                                        score = -camLook:Dot(toward)
-                                    end
-                                    if not attackScore or score < attackScore then
-                                        attackTarget, attackDist, attackScore = entry, dist, score
-                                    end
+                                if cfg.TargetLock and locked and entry.Model == locked.Model then
+                                    score = -math.huge -- the locked target always wins while in range
+                                end
+                                if not attackScore or score < attackScore then
+                                    attackTarget, attackDist, attackScore = entry, dist, score
                                 end
                             end
                         end
                     end
                 end
 
-                local focus = attackTarget or closest
+                -- Target Lock: keep following the same player until they die or get away
+                local focus
+                if cfg.TargetLock and lockedStill and locked then
+                    focus = attackTarget and attackTarget.Model == locked.Model and attackTarget or locked
+                else
+                    focus = attackTarget or closest
+                    locked = focus
+                end
                 if not focus then
+                    locked = nil
                     idle(cfg.Chase ~= false and "no one in chase range" or "no target")
                     pcall(function() hum:Move(Vector3.zero, false) end)
                     return
                 end
 
-                if cfg.ShowTarget then
-                    box.Adornee = focus.Root
-                else
-                    box.Adornee = nil
-                end
+                box.Adornee = cfg.ShowTarget and focus.Root or nil
 
                 local flatTo = Vector3.new(focus.Root.Position.X - root.Position.X, 0, focus.Root.Position.Z - root.Position.Z)
                 local dist = flatTo.Magnitude
@@ -15061,28 +15338,48 @@ do
                     root.CFrame = root.CFrame:Lerp(goal, math.clamp(1 - math.exp(-18 * dt), 0, 1))
                 end
 
+                local healthPct = hum.Health / math.max(hum.MaxHealth, 1) * 100
+                local retreating = (tonumber(cfg.RetreatHealth) or 0) > 0 and healthPct <= cfg.RetreatHealth
                 local stick = tonumber(cfg.WalkUntil) or 4.5
-                if cfg.Chase ~= false and dist > stick and not userWantsControl() then
-                    local dir, reason = nav.steer(root, flatTo, cfg.LedgeJump ~= false)
-                    if dir then
-                        pcall(function() hum:Move(dir, false) end)
-                    else
-                        pcall(function() hum:Move(Vector3.zero, false) end)
-                        if reason == "void ahead" and not attackTarget then
-                            setStatus(cfg.StatusLine, "no safe path — stopped")
+                local userControl = userWantsControl()
+
+                if not userControl then
+                    if retreating and dist > 0.1 then
+                        -- low health: back off (safely), still swinging if they follow
+                        local dir = nav.steer(root, -flatTo, false)
+                        safeMove(hum, root, dir)
+                        setStatus(cfg.StatusLine, string.format("low health - backing off (%d%%)", healthPct))
+                    elseif cfg.Chase ~= false and dist > stick then
+                        local dir, reason = nav.steer(root, flatTo, cfg.LedgeJump ~= false)
+                        local moved = safeMove(hum, root, dir)
+                        if not moved and reason == "void ahead" and not attackTarget then
+                            setStatus(cfg.StatusLine, "no safe path - waiting")
                             return
                         end
+                        if not attackTarget then
+                            setStatus(cfg.StatusLine, string.format("chasing %s (%.0f)", focus.Name, closestDist))
+                            return
+                        end
+                    elseif cfg.Strafe and dist > 0.1 then
+                        -- circle the target; switch sides at edges/walls or every few seconds
+                        local side = Vector3.new(-flatTo.Z, 0, flatTo.X).Unit * strafeSign
+                        local now = os.clock()
+                        if now > strafeFlipAt or nav.blocked(root.Position, side, 2.5)
+                            or not nav.safeDir(root.Position, side, 3) then
+                            strafeSign = -strafeSign
+                            strafeFlipAt = now + math.random(15, 35) / 10
+                            side = -side
+                        end
+                        -- keep roughly at Stop Distance while circling
+                        local inward = (dist - stick) * 0.35
+                        safeMove(hum, root, side + flatTo.Unit * inward)
+                    else
+                        pcall(function() hum:Move(Vector3.zero, false) end)
                     end
-                    if not attackTarget then
-                        setStatus(cfg.StatusLine, string.format("chasing %s (%.0f)", focus.Name, closestDist))
-                        return
-                    end
-                elseif dist <= stick and not userWantsControl() then
-                    pcall(function() hum:Move(Vector3.zero, false) end)
                 end
 
                 if not attackTarget then
-                    setStatus(cfg.StatusLine, string.format("near %s — out of attack range/FOV", focus.Name))
+                    setStatus(cfg.StatusLine, string.format("near %s - out of attack range/FOV", focus.Name))
                     return
                 end
 
@@ -15090,7 +15387,9 @@ do
                 local interval = math.max(tonumber(cfg.MinInterval) or 0.05, swordFloor)
                 local now = os.clock()
                 if now - lastSend < interval then
-                    setStatus(cfg.StatusLine, string.format("%s (%.1f)", attackTarget.Name, attackDist))
+                    if not retreating then
+                        setStatus(cfg.StatusLine, string.format("%s (%.1f)", attackTarget.Name, attackDist))
+                    end
                     return
                 end
 
@@ -15100,7 +15399,9 @@ do
                     pcall(function()
                         Bedwars.SwordController:playSwordEffect(meta, false)
                     end)
-                    setStatus(cfg.StatusLine, string.format("hit %s (%.1f)", attackTarget.Name, attackDist))
+                    if not retreating then
+                        setStatus(cfg.StatusLine, string.format("hit %s (%.1f)", attackTarget.Name, attackDist))
+                    end
                 else
                     setStatus(cfg.StatusLine, tostring(err))
                 end
@@ -15119,9 +15420,10 @@ do
     autoFight:AddSlider({ Label = "Attack Range", Key = "Range", Min = 5, Max = 22, Default = 14, Step = 0.5, Suffix = " studs" })
     autoFight:AddSlider({ Label = "Max Angle", Key = "Angle", Min = 30, Max = 360, Default = 360, Step = 5, Suffix = "°" })
     autoFight:AddOption({ Label = "Sort", Key = "Sort", Options = { "Distance", "Health", "Angle" }, Default = "Distance" })
+    autoFight:AddToggle({ Label = "Target Lock", Key = "TargetLock", Default = true, Tip = "Stick with the same player until they die or get out of chase range, instead of switching to whoever is closest." })
     autoFight:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
     autoFight:AddSlider({ Label = "Min Interval", Key = "MinInterval", Min = 0.03, Max = 0.5, Default = 0.05, Step = 0.01, Suffix = "s" })
-    autoFight:AddSection("Chase")
+    autoFight:AddSection("Movement")
     autoFight:AddToggle({ Label = "Walk To Target", Key = "Chase", Default = true })
     autoFight:AddSlider({
         Label = "Chase Range", Key = "ChaseRange", Min = 20, Max = 1000, Default = 250, Step = 10, Suffix = " studs",
@@ -15131,13 +15433,34 @@ do
         Label = "Stop Distance", Key = "WalkUntil", Min = 2, Max = 12, Default = 4.5, Step = 0.5, Suffix = " studs",
         ShowIf = function(c) return c.Chase end,
     })
+    autoFight:AddSlider({
+        Label = "Max Height Diff", Key = "MaxHeight", Min = 5, Max = 100, Default = 30, Step = 5, Suffix = " studs",
+        ShowIf = function(c) return c.Chase end,
+        Tip = "Don't chase players this far above or below you (you can't reach them by walking anyway).",
+    })
     autoFight:AddToggle({
         Label = "Ledge Jump", Key = "LedgeJump", Default = true,
         ShowIf = function(c) return c.Chase end,
+        Tip = "Jump up one block when stuck. Only jumps where there's ground to land on.",
     })
+    autoFight:AddToggle({ Label = "Strafe", Key = "Strafe", Default = false, Tip = "Circle around the target while hitting, switching sides now and then (never toward the void)." })
+    autoFight:AddSlider({ Label = "Retreat Health", Key = "RetreatHealth", Min = 0, Max = 80, Default = 0, Step = 5, Suffix = "%",
+        Tip = "Back away when your health is at or below this (still hits if they follow). 0 = off." })
+    autoFight:AddSection("Void Safety")
+    autoFight:AddToggle({ Label = "Void Safety", Key = "VoidSafety", Default = true, Tip = "Never walk or jump toward a spot with no ground under it." })
+    autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 2, Max = 30, Default = 8, Step = 1, Suffix = " studs",
+        ShowIf = function(c) return c.VoidSafety ~= false end,
+        Tip = "How far down it's OK to step. Anything deeper counts as void." })
+    autoFight:AddToggle({ Label = "Skip Void Targets", Key = "SkipVoidTargets", Default = true,
+        ShowIf = function(c) return c.VoidSafety ~= false end,
+        Tip = "Don't chase players who are bridging or standing over the void." })
+    autoFight:AddToggle({ Label = "Edge Brake", Key = "EdgeBrake", Default = true,
+        ShowIf = function(c) return c.VoidSafety ~= false end,
+        Tip = "If you're sliding toward an edge (knockback), push back against it." })
+    autoFight:AddSection("Display")
     autoFight:AddToggle({ Label = "Show Target", Key = "ShowTarget", Default = true })
     autoFight:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
-    autoFight:AddLabel("Auto-equips sword. Detours around void when a safe path exists.")
+    autoFight:AddLabel("Auto-equips sword. If you get knocked over the void it steers back to the last ground you stood on.")
 
     -- ===================== Auto Play [BETA] =====================
     local autoPlay = Tabs.Automation:CreateModule({
@@ -18965,6 +19288,279 @@ do
     antiLasso:AddSlider({ Label = "Chance", Key = "Chance", Min = 0, Max = 100, Step = 1, Default = 100, Suffix = "%", Tip = "How often it blocks a lasso." })
 end
 
+-- ====================== MODULE: AUTO QUEUE ======================
+-- Queues you for the next game automatically, in matches and in the lobby. Same approach as
+-- aero's AutoPlay: it goes through the game's own QueueController:joinQueue, and only when you
+-- aren't in a custom match, aren't already queued, and you're the party leader (or solo).
+-- In a match it queues when the match ends (or, with "When Eliminated", as soon as you're out).
+-- In the lobby it queues straight away, for the mode you last played (remembered by Nova) or
+-- the one typed in Queue Type.
+do
+    local ReplicatedStorage = service("ReplicatedStorage")
+    local LOBBY_PLACE = 6872265039
+
+    local function walk(root, ...)
+        local node = root
+        for _, name in ipairs({ ... }) do
+            node = node and node:FindFirstChild(name)
+        end
+        return node
+    end
+
+    -- Knit and the store, looked up on their own (Nova's main Bedwars lookup needs match-only
+    -- pieces like the sword controller, which don't exist in the lobby)
+    local cache = {}
+    local function knit()
+        if cache.Knit then
+            return cache.Knit
+        end
+        local ok, value = pcall(function()
+            local lib = require(walk(LocalPlayer, "PlayerScripts", "TS", "knit"))
+            for i = 1, 30 do
+                local okUp, up = pcall(debug.getupvalue, lib.setup, i)
+                if not okUp then
+                    break
+                end
+                if type(up) == "table" and type(up.Controllers) == "table" then
+                    return up
+                end
+            end
+        end)
+        cache.Knit = ok and value or nil
+        return cache.Knit
+    end
+    local function store()
+        if cache.Store then
+            return cache.Store
+        end
+        if Bedwars.Store then
+            cache.Store = Bedwars.Store
+            return cache.Store
+        end
+        local ok, value = pcall(function()
+            return require(walk(LocalPlayer, "PlayerScripts", "TS", "ui", "store")).ClientStore
+        end)
+        cache.Store = ok and value or nil
+        return cache.Store
+    end
+    local function queueMeta()
+        if cache.Meta then
+            return cache.Meta
+        end
+        local ok, value = pcall(function()
+            return require(walk(ReplicatedStorage, "TS", "game", "queue-meta")).QueueMeta
+        end)
+        cache.Meta = ok and type(value) == "table" and value or nil
+        return cache.Meta
+    end
+
+    -- display name of a queue (what the game shows), e.g. "BedWars (Solo)"
+    local function titleOf(id, meta)
+        if type(meta) == "table" then
+            for _, field in ipairs({ "title", "displayName", "name" }) do
+                if type(meta[field]) == "string" and meta[field] ~= "" then
+                    return meta[field]
+                end
+            end
+        end
+        return tostring(id)
+    end
+
+    -- The dropdown is filled from the game's own queue list when Nova loads. If that list can't
+    -- be read yet, these common ones are offered instead (matched to the game's list later).
+    local FALLBACK_MODES = {
+        "BedWars (Solo)", "BedWars (Doubles)", "BedWars (Squads)", "BedWars (5v5)", "BedWars (16v16)",
+        "Bed Royale (48 PLAYERS)", "Arena Duels",
+    }
+    local MODE_LIST = { "Last Played", "Random" }
+    do
+        local titles, seen = {}, {}
+        local ok = pcall(function()
+            local folder = ReplicatedStorage:FindFirstChild("TS")
+            local module = folder and walk(folder, "game", "queue-meta")
+            local meta = module and require(module).QueueMeta
+            for id, entry in pairs(type(meta) == "table" and meta or {}) do
+                if type(entry) == "table" and not entry.disabled then
+                    local title = titleOf(id, entry)
+                    if not seen[title] then
+                        seen[title] = true
+                        titles[#titles + 1] = title
+                    end
+                end
+            end
+        end)
+        if not ok or #titles == 0 then
+            titles = table.clone(FALLBACK_MODES)
+        end
+        table.sort(titles)
+        for _, title in ipairs(titles) do
+            MODE_LIST[#MODE_LIST + 1] = title
+        end
+    end
+
+    -- dropdown entry -> the game's queue id
+    local function idForTitle(title)
+        for id, entry in pairs(queueMeta() or {}) do
+            if titleOf(id, entry) == title then
+                return id
+            end
+        end
+        return nil
+    end
+
+    local function state()
+        local s = store()
+        local ok, value = pcall(function()
+            return s:getState()
+        end)
+        return ok and value or nil
+    end
+
+    local autoQueue = Tabs.Utility:CreateModule({
+        Name = "Auto Queue",
+        Description = "Queues the next game for you, from the lobby or when a match ends.",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            local inLobby = game.PlaceId == LOBBY_PLACE
+            local running = true
+            mod.Maid:Give(function()
+                running = false
+            end)
+
+            local shown = false
+            local function status(text, kind)
+                if text ~= shown then
+                    shown = text
+                    mod:SetStatus(text, kind)
+                end
+            end
+
+            local function pickMode(current)
+                local choice = cfg.QueueMode or "Last Played"
+                if choice == "Random" then
+                    local list = {}
+                    for name, meta in pairs(queueMeta() or {}) do
+                        if type(meta) == "table" and not meta.disabled and not meta.voiceChatOnly and not meta.rankCategory then
+                            list[#list + 1] = name
+                        end
+                    end
+                    if #list > 0 then
+                        return list[math.random(1, #list)]
+                    end
+                end
+                if choice ~= "Last Played" and choice ~= "Random" then
+                    return idForTitle(choice), choice
+                end
+                return current or cfg.LastQueue
+            end
+
+            -- returns true once it has asked to join
+            local function tryJoin(current)
+                local s = state()
+                local controller = knit() and knit().Controllers.QueueController
+                if not (s and controller) then
+                    status("Waiting for the game to load")
+                    return false
+                end
+                if s.Game and s.Game.customMatch then
+                    status("Custom match: not queuing")
+                    return false
+                end
+                local party = s.Party
+                if party then
+                    if party.leader and party.leader.userId and party.leader.userId ~= LocalPlayer.UserId then
+                        status("Only the party leader can queue")
+                        return false
+                    end
+                    if party.queueState and party.queueState ~= 0 then
+                        status("In queue")
+                        return false
+                    end
+                end
+                local mode, title = pickMode(current)
+                if not mode or mode == "" then
+                    if title then
+                        status("\"" .. title .. "\" isn't available right now", "error")
+                    else
+                        status("Play one match first, or pick a Queue Type", "error")
+                    end
+                    return false
+                end
+                local shownName = title or titleOf(mode, (queueMeta() or {})[mode])
+                local ok, err = pcall(controller.joinQueue, controller, mode)
+                if not ok then
+                    status("Couldn't queue: " .. tostring(err), "error")
+                    return false
+                end
+                status("Queued: " .. shownName)
+                return true, shownName
+            end
+
+            -- Keeps trying about once a second until you're actually in a queue, and again any
+            -- time you drop out of it (cancelled, queue broke up, a join that didn't go through).
+            -- It only asks when the game says you're NOT queued, so it never re-joins a queue
+            -- you're already in.
+            mod.Maid:Give(task.spawn(function()
+                local endedAt, lastTry, notified = nil, -math.huge, false
+                local lobbyStart = os.clock()
+                while running do
+                    local s = state()
+                    local current = s and s.Game and s.Game.queueType
+                    if not inLobby and type(current) == "string" and current ~= "" and cfg.LastQueue ~= current then
+                        cfg.LastQueue = current -- remembered for the lobby
+                        pcall(Nova.AutoSave)
+                    end
+
+                    local queueState = s and s.Party and s.Party.queueState
+                    local inQueue = queueState ~= nil and queueState ~= 0
+                    local delay = tonumber(cfg.Delay) or 2
+
+                    local wantQueue
+                    if inLobby then
+                        wantQueue = os.clock() - lobbyStart >= delay
+                    else
+                        local over = s and s.Game and s.Game.matchState == 2
+                        local out = cfg.OnElimination and LocalPlayer:GetAttribute("Spectator") == true
+                        if over or out then
+                            endedAt = endedAt or os.clock()
+                            wantQueue = os.clock() - endedAt >= delay
+                        else
+                            endedAt = nil
+                            wantQueue = false
+                            status(nil)
+                        end
+                    end
+
+                    if wantQueue then
+                        if inQueue then
+                            status("In queue")
+                            notified = true
+                        else
+                            -- can't see the queue state at all: try less often
+                            local every = queueState == nil and 5 or 1
+                            if os.clock() - lastTry >= every then
+                                lastTry = os.clock()
+                                local ok, name = tryJoin(current)
+                                if ok and not notified then
+                                    notified = true
+                                    Nova.Notify("Auto Queue", "Queued for " .. tostring(name) .. ".", 3, "success", true)
+                                end
+                            end
+                        end
+                    else
+                        notified = false
+                    end
+                    task.wait(0.25)
+                end
+            end))
+        end,
+    })
+    autoQueue:AddToggle({ Label = "When Eliminated", Key = "OnElimination", Default = true, Tip = "Queue as soon as you're out of the match (final death), not only when the whole match ends." })
+    autoQueue:AddSlider({ Label = "Delay", Key = "Delay", Min = 0, Max = 10, Step = 0.5, Default = 2, Suffix = " s", Tip = "Wait before queuing." })
+    autoQueue:AddOption({ Label = "Queue Type", Key = "QueueMode", Options = MODE_LIST, Default = "Last Played", Dropdown = true,
+        Tip = "Last Played queues the mode you were just in (or last played, in the lobby). Random picks any available mode." })
+end
+
 -- ====================== MODULE: DOG ======================
 -- Dog and Fish: each plays a catalog emote on your character on loop (Good Boy Dog Emote /
 -- the fish emote). Catalog emote animations are owned by Roblox, so they play in any game and
@@ -19619,7 +20215,13 @@ do
             pcall(baseSetBind, vm, bind)
         end
 
-        buildOptions(vm, mod.Defs, {})
+        -- the Vape profile load replays its own old saved values into these options (shown on
+        -- screen, never written to Nova); this puts them back to Nova's real values afterwards
+        local resync = buildOptions(vm, mod.Defs, {})
+        if resync then
+            V.ModuleResyncs = V.ModuleResyncs or {}
+            V.ModuleResyncs[#V.ModuleResyncs + 1] = resync
+        end
         V.Map[mod] = vm
         return vm
     end
@@ -19694,6 +20296,7 @@ do
             end)
         end)
 
+        V.ModuleResyncs = {}
         for _, tab in ipairs(UI.TabList) do
             local category = lib.Categories[tab.Name]
             if category and category.CreateModule then
@@ -19725,12 +20328,24 @@ do
         pcall(function()
             resyncSettings = buildOptions(lib.Categories.Main:CreateSettingsPane({ Name = "Nova" }), UI.SettingsDefs, {})
         end)
-        if resyncSettings then
-            V.ResyncSettings = resyncSettings
+        -- one function that puts every Vape option (module settings and Nova's settings pane)
+        -- back in line with Nova's config
+        local function resyncEverything()
+            for _, resync in ipairs(V.ModuleResyncs or {}) do
+                pcall(resync)
+            end
+            if resyncSettings then
+                pcall(resyncSettings)
+            end
+        end
+        resyncEverything()
+        task.delay(1, resyncEverything) -- in case the profile finishes applying a moment later
+        do
+            V.ResyncSettings = resyncEverything
             local baseLoad = lib.Load
             lib.Load = function(self, ...)
                 local results = table.pack(pcall(baseLoad, self, ...))
-                pcall(resyncSettings)
+                resyncEverything()
                 if not results[1] then
                     error(results[2], 0)
                 end
@@ -19744,6 +20359,9 @@ do
             V.ClickGui:GetPropertyChangedSignal("Visible"):Connect(function()
                 if V.Active then
                     UI.Visible = V.ClickGui.Visible
+                    if V.ClickGui.Visible and V.ResyncSettings then
+                        pcall(V.ResyncSettings)
+                    end
                     if not V.ClickGui.Visible then
                         pcall(Nova.AutoSave)
                     end
