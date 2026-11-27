@@ -11708,12 +11708,13 @@ do
     Nova.Blocks = {
         Place = placeBlockAt,
         Exists = worldBlockAt,
-        -- any placeable block in your inventory, wool first (no TNT)
+        -- a placeable block in your HOTBAR (so it can actually be held), wool first, no TNT
         AnyBlock = function()
             local inventory = Bedwars.GetInventory()
             local fallback
-            for _, item in pairs(inventory and inventory.inventory.items or {}) do
-                local meta = metaOf(item.itemType)
+            for _, slot in ipairs(inventory and inventory.hotbar or {}) do
+                local item = slot and slot.item
+                local meta = item and metaOf(item.itemType)
                 if meta and meta.block and (item.amount or 0) > 0 and not string.find(item.itemType, "tnt", 1, true) then
                     if string.find(item.itemType, "wool", 1, true) then
                         return item.itemType
@@ -11722,6 +11723,20 @@ do
                 end
             end
             return fallback
+        end,
+        Held = heldName,
+        -- switch your hand to that block (like pressing its hotbar number)
+        Hold = function(itemType)
+            local inventory = Bedwars.GetInventory()
+            for index, slot in ipairs(inventory and inventory.hotbar or {}) do
+                if slot.item and slot.item.itemType == itemType then
+                    pcall(function()
+                        Bedwars.Store:dispatch({ type = "InventorySelectHotbarSlot", slot = index - 1 })
+                    end)
+                    return true
+                end
+            end
+            return false
         end,
     }
 
@@ -15429,6 +15444,7 @@ do
             local lastSafe -- last position we stood on solid ground
             local planner = makePathfinder()
             local bridgeStep -- defined below (needs the route state)
+            local bridgingUntil = 0
 
             -- Use Kit Ability: runs Nova's AutoKit (which knows how to use every supported kit's
             -- abilities on nearby enemies) while AutoFight is on. Only switches AutoKit off again
@@ -15577,14 +15593,25 @@ do
                     end
                     local block = Nova.Blocks.AnyBlock()
                     if not block then
-                        return false, "no blocks to bridge with"
+                        return false, "no blocks in your hotbar to bridge with"
                     end
+                    bridgingUntil = os.clock() + 0.6 -- keeps AutoFight from swapping back to the sword
+                    -- hold the block first, like a real player; place once it's in your hand
+                    if Nova.Blocks.Held() ~= block then
+                        Nova.Blocks.Hold(block)
+                        hum:Move(Vector3.zero, false)
+                        return true, "bridging (switching to blocks)"
+                    end
+                    local placed = nil
                     if os.clock() - lastPlace >= (tonumber(cfg.BridgeDelay) or 0.12) then
                         lastPlace = os.clock()
-                        Nova.Blocks.Place(nextWorld, block)
+                        placed = Nova.Blocks.Place(nextWorld, block)
                     end
                     -- stand still near the edge until the block is there
                     hum:Move(Vector3.zero, false)
+                    if placed == false then
+                        return true, "bridging (placing " .. block .. " failed)"
+                    end
                     return true, "bridging"
                 end
                 -- block is there: step onto it
@@ -15767,10 +15794,15 @@ do
                     end
                 end
 
-                local item, meta = ensureSword()
-                if not item then
-                    idle(tostring(meta))
-                    return
+                -- while bridging, keep the blocks in hand (the sword comes back when there's
+                -- someone to hit, or once bridging stops)
+                local item, meta
+                if os.clock() >= bridgingUntil then
+                    item, meta = ensureSword()
+                    if not item then
+                        idle(tostring(meta))
+                        return
+                    end
                 end
 
                 local cam = Workspace.CurrentCamera
@@ -15931,7 +15963,11 @@ do
                         end
                         if not attackTarget then
                             if moved then
-                                setStatus(cfg.StatusLine, string.format("%s %s (%.0f)", why == "bridging" and "bridging to" or "chasing", focus.Name, closestDist))
+                                if type(why) == "string" and why:sub(1, 8) == "bridging" then
+                                    setStatus(cfg.StatusLine, string.format("%s to %s (%.0f)", why, focus.Name, closestDist))
+                                else
+                                    setStatus(cfg.StatusLine, string.format("chasing %s (%.0f)", focus.Name, closestDist))
+                                end
                             else
                                 setStatus(cfg.StatusLine, "no way to reach " .. focus.Name .. (why and (" (" .. why .. ")") or ""))
                             end
@@ -15958,6 +15994,15 @@ do
                 if not attackTarget then
                     setStatus(cfg.StatusLine, string.format("near %s - out of attack range/FOV", focus.Name))
                     return
+                end
+                if not item then
+                    -- someone in range while we had blocks out: back to the sword first
+                    bridgingUntil = 0
+                    item, meta = ensureSword()
+                    if not item then
+                        setStatus(cfg.StatusLine, tostring(meta))
+                        return
+                    end
                 end
 
                 -- clicks at the CPS you set (with a little natural variation); the sword's own
@@ -20226,21 +20271,44 @@ do
                     return
                 end
                 local spread = cfg.UseDelay and (tonumber(cfg.Delay) or 1) or 0
-                nextLoot[chest] = os.clock() + math.max(0.2, spread)
-                pcall(function()
+                nextLoot[chest] = os.clock() + math.max(0.5, spread)
+                local okOpen, openErr = pcall(function()
                     observe:SendToServer(chest)
                 end)
+                if not okOpen then
+                    mod:SetStatus("open failed: " .. tostring(openErr), "error")
+                end
+                -- take everything, then close the chest once all the requests have come back
+                local pending = #items
+                local taken, lastErr = 0, nil
                 for _, item in ipairs(items) do
                     if spread > 0 then
                         task.wait(spread / #items)
                     end
-                    task.spawn(pcall, function()
-                        takeItem:CallServer(chest, item)
+                    task.spawn(function()
+                        local ok, result = pcall(function()
+                            return takeItem:CallServer(chest, item)
+                        end)
+                        if ok then
+                            taken = taken + 1
+                        else
+                            lastErr = result
+                        end
+                        pending = pending - 1
                     end)
+                end
+                local started = os.clock()
+                while pending > 0 and os.clock() - started < 2 do
+                    task.wait()
                 end
                 pcall(function()
                     observe:SendToServer(nil)
                 end)
+                if lastErr then
+                    mod:SetStatus("take failed: " .. tostring(lastErr), "error")
+                else
+                    mod:SetStatus(string.format("took %d item%s", taken, taken == 1 and "" or "s"))
+                end
             end
 
             mod.Maid:Give(task.spawn(function()
@@ -20263,7 +20331,11 @@ do
                         elseif root then
                             local range = tonumber(cfg.Range) or 18
                             local myTeam = LocalPlayer:GetAttribute("Team")
-                            for _, chest in ipairs(CollectionService:GetTagged("chest")) do
+                            local tagged = CollectionService:GetTagged("chest")
+                            if #tagged == 0 then
+                                mod:SetStatus("no chests found in this match")
+                            end
+                            for _, chest in ipairs(tagged) do
                                 if chest:IsA("BasePart") and (chest.Position - root.Position).Magnitude <= range then
                                     local skip = cfg.TeamCheck and myTeam ~= nil and tostring(teamOfChest(chest)) == tostring(myTeam)
                                     local value = chest:FindFirstChild("ChestFolderValue")
