@@ -15338,6 +15338,7 @@ do
         if ok then
             state.lastSend = now
             pcall(function()
+                Bedwars.SwordController.lastAttack = Workspace:GetServerTimeNow()
                 Bedwars.SwordController:playSwordEffect(meta, false)
             end)
         end
@@ -15612,12 +15613,14 @@ do
                             end
                             if angOk and wallOk then
                                 local score = dist
-                                if cfg.Sort == "Health" then
+                                if cfg.AlwaysNearest then
+                                    score = dist
+                                elseif cfg.Sort == "Health" then
                                     score = entry.Humanoid.Health
                                 elseif cfg.Sort == "Angle" then
                                     score = -camLook:Dot(toward)
                                 end
-                                if cfg.TargetLock and locked and entry.Model == locked.Model then
+                                if cfg.TargetLock and not cfg.AlwaysNearest and locked and entry.Model == locked.Model then
                                     score = -math.huge -- the locked target always wins while in range
                                 end
                                 if not attackScore or score < attackScore then
@@ -15630,7 +15633,14 @@ do
 
                 -- Target Lock: keep following the same player until they die or get away
                 local focus
-                if cfg.TargetLock and lockedStill and locked then
+                if cfg.AlwaysNearest then
+                    -- whoever is closest right now, re-checked every frame
+                    focus = closest or attackTarget
+                    if attackTarget and closest and attackTarget.Model ~= closest.Model and attackDist and attackDist <= closestDist + 0.5 then
+                        focus = attackTarget
+                    end
+                    locked = focus
+                elseif cfg.TargetLock and lockedStill and locked then
                     focus = attackTarget and attackTarget.Model == locked.Model and attackTarget or locked
                 else
                     focus = attackTarget or closest
@@ -15670,8 +15680,10 @@ do
                     elseif cfg.Chase ~= false and dist > stick then
                         -- plan a block route to them (re-planned when they move or we get stuck)
                         local now = os.clock()
+                        local quick = cfg.AlwaysNearest -- re-plan more often when chasing whoever is nearest
                         local replan = not route.steps or route.model ~= focus.Model
-                            or (now - route.at > 0.5 and route.goal and (focus.Root.Position - route.goal).Magnitude > 6)
+                            or (now - route.at > (quick and 0.3 or 0.5) and route.goal
+                                and (focus.Root.Position - route.goal).Magnitude > (quick and 3 or 6))
                             or now - route.at > 2.5
                         local planInfo
                         if replan and now - route.at > 0.25 and hum.FloorMaterial ~= Enum.Material.Air then
@@ -15739,6 +15751,11 @@ do
                 local ok, err = Bedwars.SendHit(item, attackTarget.Model, root.Position, attackTarget.Root.Position)
                 if ok then
                     lastSend = now
+                    -- stamp the game's own "last attack" like Kill Aura does; without it the game
+                    -- thinks you haven't swung and its own sword animation logic fights ours
+                    pcall(function()
+                        Bedwars.SwordController.lastAttack = Workspace:GetServerTimeNow()
+                    end)
                     pcall(function()
                         Bedwars.SwordController:playSwordEffect(meta, false)
                     end)
@@ -15763,7 +15780,9 @@ do
     autoFight:AddSlider({ Label = "Attack Range", Key = "Range", Min = 5, Max = 22, Default = 14, Step = 0.5, Suffix = " studs" })
     autoFight:AddSlider({ Label = "Max Angle", Key = "Angle", Min = 30, Max = 360, Default = 360, Step = 5, Suffix = "°" })
     autoFight:AddOption({ Label = "Sort", Key = "Sort", Options = { "Distance", "Health", "Angle" }, Default = "Distance" })
-    autoFight:AddToggle({ Label = "Target Lock", Key = "TargetLock", Default = true, Tip = "Stick with the same player until they die or get out of chase range, instead of switching to whoever is closest." })
+    autoFight:AddToggle({ Label = "Always Nearest", Key = "AlwaysNearest", Default = false, Tip = "Always go for whoever is closest to you right now, switching instantly when someone else gets closer." })
+    autoFight:AddToggle({ Label = "Target Lock", Key = "TargetLock", Default = true, ShowIf = function(c) return not c.AlwaysNearest end,
+        Tip = "Stick with the same player until they die or get out of chase range, instead of switching to whoever is closest." })
     autoFight:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
     autoFight:AddSlider({ Label = "CPS", Key = "CPS", Min = 1, Max = 25, Default = 15, Step = 1, Tip = "Clicks per second while fighting someone in range." })
     autoFight:AddToggle({ Label = "Sword Cooldown", Key = "SwordCooldown", Default = false, Tip = "Never click faster than the sword's own attack speed (slower, but every click counts)." })
