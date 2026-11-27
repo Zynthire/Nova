@@ -15092,6 +15092,7 @@ do
             local maxDrop = math.max(1, math.floor((opts.maxDrop or 12) / 3))
             local maxGap = opts.maxGap or 2
             local budget = opts.budget or 4000
+            local avoid = opts.avoid or {} -- [key] = true: cells that failed recently (cost a lot more)
 
             local solidCache = {}
             local function solid(x, y, z)
@@ -15196,6 +15197,9 @@ do
 
             local function consider(from, x, y, z, cost, action)
                 local k = key(x, y, z)
+                if avoid[k] then
+                    cost = cost + 40 -- still possible, but only if there's really no other way
+                end
                 local g = from.g + cost
                 if best[k] and best[k] <= g then
                     return
@@ -15213,12 +15217,20 @@ do
                 if hNode < closestH then
                     closest, closestH = node, hNode
                 end
-                if math.sqrt(dx * dx + dz * dz) <= reach and math.abs(node.y - gy) <= 1 then
+                local flatCells = math.sqrt(dx * dx + dz * dz)
+                local dy = node.y - gy
+                -- arrived: next to them, or close enough to hit them (they may be up on a ledge)
+                if (flatCells <= reach and math.abs(dy) <= 1)
+                    or (opts.hitCells and math.abs(dy) <= 3 and math.sqrt(flatCells * flatCells + dy * dy) <= opts.hitCells) then
                     found = node
                     break
                 end
                 if expanded > budget then
                     break
+                end
+                -- big searches are spread over several frames so they don't freeze the game
+                if opts.yieldEvery and expanded % opts.yieldEvery == 0 then
+                    task.wait()
                 end
                 local x, y, z = node.x, node.y, node.z
                 for _, d in ipairs(DIRS) do
@@ -15240,25 +15252,45 @@ do
                                     break
                                 end
                             end
-                            -- gap jump (straight only): empty gap, landing level or one lower
-                            if not diagonal and not solid(x, y + 2, z) then
-                                for gap = 1, maxGap do
+                            -- gap jumps: straight over 1..maxGap empty cells (landing up to 2 lower, or
+                            -- 1 higher over a 1-block gap), or diagonally over a single corner gap
+                            if not solid(x, y + 2, z) then
+                                local maxSpan = diagonal and 1 or maxGap
+                                for gap = 1, maxSpan do
                                     local blockedGap = false
                                     for i = 1, gap do
-                                        if not open(x + ax * i, y, z + az * i) or solid(x + ax * i, y + 2, z + az * i) then
+                                        local cx, cz = x + ax * i, z + az * i
+                                        if not open(cx, y, cz) or solid(cx, y + 2, cz) then
                                             blockedGap = true
                                             break
+                                        end
+                                    end
+                                    if diagonal and not blockedGap then
+                                        -- the two corners next to the diagonal must be open too
+                                        if not open(x + ax, y, z) or not open(x, y, z + az) then
+                                            blockedGap = true
                                         end
                                     end
                                     if blockedGap then
                                         break
                                     end
                                     local lx, lz = x + ax * (gap + 1), z + az * (gap + 1)
-                                    if standable(lx, y, lz) then
-                                        consider(node, lx, y, lz, 3 + gap, "gap")
-                                        break
-                                    elseif standable(lx, y - 1, lz) then
-                                        consider(node, lx, y - 1, lz, 3 + gap, "gap")
+                                    local landed = false
+                                    if gap == 1 and not diagonal and standable(lx, y + 1, lz) and not solid(x + ax, y + 2, z + az) then
+                                        consider(node, lx, y + 1, lz, 4.5, "gap")
+                                        landed = true
+                                    end
+                                    for down = 0, math.min(2, maxDrop) do
+                                        if standable(lx, y - down, lz) then
+                                            consider(node, lx, y - down, lz, 3 + gap + down * 0.3, "gap")
+                                            landed = true
+                                            break
+                                        end
+                                        if solid(lx, y - down, lz) then
+                                            break
+                                        end
+                                    end
+                                    if landed then
                                         break
                                     end
                                 end
@@ -15369,6 +15401,25 @@ do
             local route = { steps = nil, index = 1, goal = nil, at = 0, model = nil, lastProgress = 0, bestDist = math.huge }
             local plannedJumpAt = -math.huge -- jumps/drops the route planned (void recovery leaves those alone)
             local followingRoute = false
+            -- spots where we got stuck: avoided for a while so the next plan tries another way
+            local failed = {} -- [key] = expiry time
+            local unstickUntil, unstickDir = 0, nil
+            local function avoidKeys()
+                local out, now = {}, os.clock()
+                for k, untilAt in pairs(failed) do
+                    if untilAt > now then
+                        out[k] = true
+                    else
+                        failed[k] = nil
+                    end
+                end
+                return out
+            end
+            local function markFailed(cell)
+                if cell then
+                    failed[cell.X .. "," .. cell.Y .. "," .. cell.Z] = os.clock() + 12
+                end
+            end
 
             local function cellWorld(cell)
                 return cell * 3
@@ -15377,29 +15428,60 @@ do
             local function clearRoute()
                 route.steps, route.index, route.goal, route.model = nil, 1, nil, nil
             end
-            mod.Maid:Give(clearRoute)
+            mod.Maid:Give(function()
+                clearRoute()
+                if route.thread then
+                    pcall(task.cancel, route.thread)
+                    route.thread = nil
+                end
+                route.planning = false
+            end)
 
+            -- Plans in the background (a long route around the map can take a few frames to find);
+            -- the old route keeps being followed until the new one is ready.
             local function planRoute(root, focus)
-                local path, info = planner.find(root.Position, focus.Root.Position, {
+                if route.planning then
+                    return "planning"
+                end
+                route.planning = true
+                route.at = os.clock()
+                local fromPos, toPos, model = root.Position, focus.Root.Position, focus.Model
+                local startCell = Bedwars.BlockController:getBlockPosition(fromPos - Vector3.new(0, 2, 0))
+                local options = {
                     maxDrop = tonumber(cfg.MaxDrop) or 12,
-                    maxGap = cfg.GapJump == false and 0 or 2,
-                    budget = 4000,
+                    maxGap = cfg.GapJump == false and 0 or (tonumber(cfg.MaxGap) or 2),
+                    budget = 20000,
+                    yieldEvery = 1500,
                     partial = true,
                     reachCells = math.max(1, (tonumber(cfg.WalkUntil) or 4.5) / 3),
-                })
-                route.at = os.clock()
-                route.goal = focus.Root.Position
-                route.model = focus.Model
-                route.lastProgress = os.clock()
-                route.bestDist = math.huge
-                if not path then
-                    route.steps = nil
-                    return info
-                end
-                local startCell = Bedwars.BlockController:getBlockPosition(root.Position - Vector3.new(0, 2, 0))
-                path[0] = { cell = startCell, action = "walk" }
-                route.steps, route.index = path, 1
-                return info
+                    hitCells = math.max(1.5, ((tonumber(cfg.Range) or 14) - 2) / 3),
+                    avoid = avoidKeys(),
+                }
+                local thread = task.spawn(function()
+                    local ok, path, info = pcall(planner.find, fromPos, toPos, options)
+                    route.planning = false
+                    if not ok then
+                        route.lastInfo = tostring(path)
+                        return
+                    end
+                    route.lastInfo = info
+                    if not mod.Enabled then
+                        return
+                    end
+                    route.at = os.clock()
+                    route.goal = toPos
+                    route.model = model
+                    route.lastProgress = os.clock()
+                    route.bestDist = math.huge
+                    if not path then
+                        route.steps = nil
+                        return
+                    end
+                    path[0] = { cell = startCell, action = "walk" }
+                    route.steps, route.index = path, 1
+                end)
+                route.thread = thread
+                return route.lastInfo
             end
 
             -- Walks the planned route. Returns true if it moved this frame, or false + reason.
@@ -15428,13 +15510,23 @@ do
                     flat = Vector3.new(target.X - root.Position.X, 0, target.Z - root.Position.Z)
                 end
 
-                -- not getting any closer for a while: plan again
+                -- not getting any closer for a while: remember this spot as bad, wiggle free,
+                -- and plan a different way
                 if flat.Magnitude < route.bestDist - 0.3 then
                     route.bestDist = flat.Magnitude
                     route.lastProgress = os.clock()
-                elseif os.clock() - route.lastProgress > 1.5 then
+                elseif os.clock() - route.lastProgress > (tonumber(cfg.StuckTime) or 1.5) then
+                    if cfg.Unstick ~= false then
+                        markFailed(step.cell)
+                        unstickUntil = os.clock() + 0.5
+                        -- back off toward where we came from (or any safe side)
+                        local prev = steps[route.index - 1]
+                        local back = prev and (cellWorld(prev.cell) - root.Position) or -flat
+                        unstickDir = flatUnit(Vector3.new(back.X, 0, back.Z) + Vector3.new(math.random() - 0.5, 0, math.random() - 0.5))
+                    end
                     clearRoute()
-                    return false, "stuck"
+                    route.at = 0 -- plan again right away
+                    return false, "stuck - trying another way"
                 end
 
                 local onGround = hum.FloorMaterial ~= Enum.Material.Air
@@ -15444,8 +15536,11 @@ do
                     local fromFlat = Vector3.new(root.Position.X - from.X, 0, root.Position.Z - from.Z)
                     local toward = flatUnit(flat)
                     -- jump up as you reach the block; jump gaps right at the edge of your block
+                    -- (diagonal edges are further from the middle of the block)
+                    local fromCell = prev and prev.cell or step.cell
+                    local isDiag = math.abs(step.cell.X - fromCell.X) > 0 and math.abs(step.cell.Z - fromCell.Z) > 0
                     local ready = (step.action == "jump" and flat.Magnitude < 3.6)
-                        or (step.action == "gap" and fromFlat:Dot(toward) > 0.6)
+                        or (step.action == "gap" and fromFlat:Dot(toward) > (isDiag and 1.4 or 1.0))
                     if ready then
                         hum.Jump = true
                         plannedJumpAt = os.clock()
@@ -15677,6 +15772,15 @@ do
                         local dir = nav.steer(root, -flatTo, false)
                         safeMove(hum, root, dir)
                         setStatus(cfg.StatusLine, string.format("low health - backing off (%d%%)", healthPct))
+                    elseif cfg.Chase ~= false and dist > stick and os.clock() < unstickUntil and unstickDir then
+                        -- just got stuck: step back for a moment (safely) before the new plan
+                        if not safeMove(hum, root, unstickDir) then
+                            unstickDir = flatUnit(Vector3.new(-unstickDir.Z, 0, unstickDir.X))
+                        end
+                        setStatus(cfg.StatusLine, "stuck - trying another way")
+                        if not attackTarget then
+                            return
+                        end
                     elseif cfg.Chase ~= false and dist > stick then
                         -- plan a block route to them (re-planned when they move or we get stuck)
                         local now = os.clock()
@@ -15690,9 +15794,12 @@ do
                             planInfo = planRoute(root, focus)
                         end
                         local moved, why = followRoute(hum, root)
+                        if not moved and route.planning then
+                            why = "planning"
+                        end
                         followingRoute = moved
                         if not moved then
-                            if planInfo == "no block store" then
+                            if planInfo == "no block store" or route.lastInfo == "no block store" then
                                 -- block data not available: fall back to simple steering
                                 local dir, reason = nav.steer(root, flatTo, cfg.LedgeJump ~= false)
                                 moved = safeMove(hum, root, dir)
@@ -15814,7 +15921,15 @@ do
     autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 3, Max = 30, Default = 12, Step = 3, Suffix = " studs",
         Tip = "How far down it will drop off a ledge (3 studs = 1 block). Anything deeper counts as void." })
     autoFight:AddToggle({ Label = "Gap Jump", Key = "GapJump", Default = true,
-        Tip = "Jump across 1-2 block gaps when that's the shorter way." })
+        Tip = "Jump across gaps (straight or diagonal) when that's the shorter way." })
+    autoFight:AddSlider({ Label = "Max Gap", Key = "MaxGap", Min = 1, Max = 3, Default = 2, Step = 1, Suffix = " blocks",
+        ShowIf = function(c) return c.GapJump ~= false end,
+        Tip = "Widest gap it will jump straight across. 3 is about the limit of a normal jump." })
+    autoFight:AddSection("Stuck Handling")
+    autoFight:AddToggle({ Label = "Unstick", Key = "Unstick", Default = true,
+        Tip = "When it stops making progress, it steps back, remembers that spot as bad for a few seconds, and plans a different way." })
+    autoFight:AddSlider({ Label = "Stuck Time", Key = "StuckTime", Min = 0.5, Max = 5, Default = 1.5, Step = 0.5, Suffix = " s",
+        Tip = "How long without getting closer counts as stuck." })
     autoFight:AddToggle({ Label = "Skip Void Targets", Key = "SkipVoidTargets", Default = true,
         ShowIf = function(c) return c.VoidSafety ~= false end,
         Tip = "Don't chase players who are bridging or standing over the void." })
