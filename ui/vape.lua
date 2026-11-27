@@ -2521,7 +2521,17 @@ components = {
 		bkg.Parent = slider
 		local fill = bkg:Clone()
 		fill.Name = 'Fill'
-		fill.Size = UDim2.fromScale(math.clamp((optionapi.Value - optionsettings.Min) / optionsettings.Max, 0.04, 0.96), 1)
+		-- Nova fix: where the bar sits = (value - Min) / (Max - Min), the same mapping dragging uses.
+		-- Vape drew it with value / Max (and (value - Min) / Max on creation), so any slider whose
+		-- Min isn't 0 showed the knob in the wrong place until you dragged it.
+		local function fraction(value)
+			local range = optionsettings.Max - optionsettings.Min
+			if range <= 0 then
+				return 1
+			end
+			return math.clamp((value - optionsettings.Min) / range, 0, 1)
+		end
+		fill.Size = UDim2.fromScale(math.clamp(fraction(optionapi.Value), 0.04, 0.96), 1)
 		fill.Position = UDim2.new()
 		fill.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 		fill.Parent = bkg
@@ -2568,7 +2578,7 @@ components = {
 			local check = self.Value ~= value
 			self.Value = value
 			tween:Tween(fill, uipallet.Tween, {
-				Size = UDim2.fromScale(math.clamp(pos or math.clamp(value / optionsettings.Max, 0, 1), 0.04, 0.96), 1)
+				Size = UDim2.fromScale(math.clamp(pos or fraction(value), 0.04, 0.96), 1)
 			})
 			valuebutton.Text = self.Value..(optionsettings.Suffix and ' '..(type(optionsettings.Suffix) == 'function' and optionsettings.Suffix(self.Value) or optionsettings.Suffix) or '')
 			if check or final then
