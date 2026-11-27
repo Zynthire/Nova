@@ -2581,7 +2581,15 @@ function UI:CreateTab(name, subtitle, icon)
 
         -- One-line status (explains why a module failed to start) - shown under its name in the
         -- row, and synced live into the detail panel header when this module is selected.
+        local lastToast, lastToastAt = nil, 0
         function mod:SetStatus(text, kind)
+            -- errors also pop up as a notification (the status line under the module name only
+            -- shows in Nova's own UI, not in the Vape GUI); same message at most every 8 s
+            if kind == "error" and text and text ~= "" and Nova.Notify
+                and (text ~= lastToast or os.clock() - lastToastAt > 8) then
+                lastToast, lastToastAt = text, os.clock()
+                pcall(Nova.Notify, def.Name, text, 4, "error")
+            end
             mod.StatusText, mod.StatusKind = text, kind
             if text and text ~= "" then
                 descLabel.Text = text
@@ -20213,11 +20221,28 @@ do
 end
 
 -- ====================== MODULE: CHEST STEAL ======================
--- Loots chests near you, like aero's ChestSteal: tells the server you're looking into the chest
--- (SetObservedChest), takes every item out of it (ChestGetItem), then closes it again. Chests
--- are found by the "chest" tag; their contents sit in the folder their ChestFolderValue points at.
+-- Loots chests near you using the game's current inventory system (worked out from a recording
+-- of taking items by hand - the old ChestGetItem remote aero uses no longer works):
+--   1. Inventory/SetObservedChest  (FireServer)   chestFolder        -> "I'm looking in this chest"
+--   2. Inventory/GetSlotState      (InvokeServer) chestFolder        -> chest + your inventory, with
+--                                                                     their revision numbers
+--   3. Inventory/TransactSlots     (InvokeServer) one per item:
+--        { operation = "quick_move", slot = { index, container = "chest" },
+--          expectedState = { slots = { that slot } }, expectedChestRevision, expectedPlayerRevision,
+--          seq = last ackSeq + 1, chestFolder }
+--      each reply carries the new state (new revisions) for the next item
+--   4. Inventory/SetObservedChest  (FireServer)   nothing            -> close
+-- The chest's folder is what its ChestFolderValue points at.
 do
     local CollectionService = service("CollectionService")
+    local ReplicatedStorage = service("ReplicatedStorage")
+
+    local function remote(name)
+        local ok, inst = pcall(function()
+            return ReplicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged[name]
+        end)
+        return ok and inst or nil
+    end
 
     local function teamOfChest(chest)
         local best, bestDist
@@ -20240,74 +20265,97 @@ do
         Description = "Takes everything out of chests near you (great for Skywars).",
         OnEnable = function(mod)
             local cfg = mod.Config
-            assert(Bedwars.Resolve(), "Bedwars not loaded")
-            local okNs, inventory = pcall(function()
-                return Bedwars.Client:GetNamespace("Inventory")
-            end)
-            assert(okNs and inventory, "the game's Inventory remotes weren't found")
-            local observe = inventory:Get("SetObservedChest")
-            local takeItem = inventory:Get("ChestGetItem")
-            assert(observe and takeItem, "chest remotes not found (Bedwars update?)")
-            local nextLoot = {} -- [chest] = time it can be looted again
+            local observe = remote("Inventory/SetObservedChest")
+            local getState = remote("Inventory/GetSlotState")
+            local transact = remote("Inventory/TransactSlots")
+            assert(observe and getState and transact, "the game's inventory remotes weren't found (Bedwars update?)")
+            local nextLoot = {} -- [folder] = time it can be looted again
             local running = true
             mod.Maid:Give(function()
                 running = false
             end)
 
-            local function loot(chest, folder)
-                if not folder or #folder:GetChildren() == 0 then
-                    return
+            local function openedByYou()
+                local char = LocalPlayer.Character
+                local observed = char and char:FindFirstChild("ObservedChestFolder")
+                return observed and observed.Value or nil
+            end
+
+            -- returns how many stacks were taken, or nil + error
+            local function loot(folder, alreadyOpen)
+                if (nextLoot[folder] or 0) > os.clock() then
+                    return 0
                 end
-                if (nextLoot[chest] or 0) > os.clock() then
-                    return
+                nextLoot[folder] = os.clock() + 1
+                if not alreadyOpen then
+                    observe:FireServer(folder)
                 end
-                local items = {}
-                for _, item in ipairs(folder:GetChildren()) do
-                    if item:IsA("Accessory") then
-                        items[#items + 1] = item
+                local ok, state = pcall(getState.InvokeServer, getState, folder)
+                if not ok or type(state) ~= "table" or type(state.chest) ~= "table" or type(state.player) ~= "table" then
+                    if not alreadyOpen then
+                        observe:FireServer()
                     end
+                    return nil, "couldn't read the chest (" .. tostring(state) .. ")"
                 end
-                if #items == 0 then
-                    return
+                local taken, failure = 0, nil
+                local slots = {}
+                for _, slot in pairs(state.chest.slots or {}) do
+                    slots[#slots + 1] = slot
+                end
+                if #slots == 0 then
+                    nextLoot[folder] = os.clock() + 3 -- empty: check again in a bit
                 end
                 local spread = cfg.UseDelay and (tonumber(cfg.Delay) or 1) or 0
-                nextLoot[chest] = os.clock() + math.max(0.5, spread)
-                local okOpen, openErr = pcall(function()
-                    observe:SendToServer(chest)
-                end)
-                if not okOpen then
-                    mod:SetStatus("open failed: " .. tostring(openErr), "error")
-                end
-                -- take everything, then close the chest once all the requests have come back
-                local pending = #items
-                local taken, lastErr = 0, nil
-                for _, item in ipairs(items) do
-                    if spread > 0 then
-                        task.wait(spread / #items)
+                for _, slot in ipairs(slots) do
+                    if not running then
+                        break
                     end
-                    task.spawn(function()
-                        local ok, result = pcall(function()
-                            return takeItem:CallServer(chest, item)
-                        end)
-                        if ok then
-                            taken = taken + 1
-                        else
-                            lastErr = result
+                    if spread > 0 then
+                        task.wait(spread / #slots)
+                    end
+                    local request = {
+                        operation = "quick_move",
+                        slot = { index = slot.index, container = "chest" },
+                        expectedState = { slots = { {
+                            amount = slot.amount, itemType = slot.itemType, index = slot.index, container = "chest",
+                        } } },
+                        expectedChestRevision = state.chest.revision,
+                        expectedPlayerRevision = state.player.revision,
+                        seq = (tonumber(state.player.ackSeq) or 0) + 1,
+                        chestFolder = folder,
+                    }
+                    local okCall, reply = pcall(transact.InvokeServer, transact, request)
+                    if okCall and type(reply) == "table" and reply.ok then
+                        taken = taken + 1
+                        if type(reply.state) == "table" and reply.state.chest and reply.state.player then
+                            state = reply.state -- new revisions for the next item
                         end
-                        pending = pending - 1
-                    end)
+                    else
+                        failure = okCall and ("server said no: " .. tostring(type(reply) == "table" and (reply.error or reply.reason) or reply)) or tostring(reply)
+                        -- re-read the state once so the next item uses fresh revisions
+                        local okFresh, fresh = pcall(getState.InvokeServer, getState, folder)
+                        if okFresh and type(fresh) == "table" and fresh.chest and fresh.player then
+                            state = fresh
+                        end
+                    end
                 end
-                local started = os.clock()
-                while pending > 0 and os.clock() - started < 2 do
-                    task.wait()
+                if not alreadyOpen then
+                    observe:FireServer()
                 end
-                pcall(function()
-                    observe:SendToServer(nil)
-                end)
-                if lastErr then
-                    mod:SetStatus("take failed: " .. tostring(lastErr), "error")
-                else
-                    mod:SetStatus(string.format("took %d item%s", taken, taken == 1 and "" or "s"))
+                if taken == 0 and failure then
+                    nextLoot[folder] = os.clock() + 5
+                    return nil, failure
+                end
+                return taken
+            end
+
+            local function report(taken, err)
+                if err then
+                    mod:SetStatus(err, "error")
+                elseif taken and taken > 0 then
+                    local text = string.format("took %d stack%s", taken, taken == 1 and "" or "s")
+                    mod:SetStatus(text)
+                    Nova.Notify("Chest Steal", text .. " from a chest.", 2, "success", true)
                 end
             end
 
@@ -20317,43 +20365,42 @@ do
                     local game_ = state and state.Game or {}
                     local queue = tostring(game_.queueType or "")
                     local allowed = not cfg.OnlySkywars or queue:lower():find("skywars", 1, true)
+                    local mine = openedByYou()
                     if allowed and game_.matchState ~= 2 then
                         local char = LocalPlayer.Character
                         local root = char and char:FindFirstChild("HumanoidRootPart")
-                        if cfg.GuiCheck then
-                            -- only the chest you have open
-                            local observed = char and char:FindFirstChild("ObservedChestFolder")
-                            local folder = observed and observed.Value
-                            if folder then
-                                local chest = folder.Parent and folder.Parent:IsA("BasePart") and folder.Parent or observed
-                                loot(chest, folder)
-                            end
-                        elseif root then
+                        if mine then
+                            -- you have a chest open yourself: empty that one, and don't touch others
+                            -- (opening another would close yours)
+                            report(loot(mine, true))
+                        elseif not cfg.GuiCheck and root then
                             local range = tonumber(cfg.Range) or 18
                             local myTeam = LocalPlayer:GetAttribute("Team")
-                            local tagged = CollectionService:GetTagged("chest")
-                            if #tagged == 0 then
-                                mod:SetStatus("no chests found in this match")
-                            end
-                            for _, chest in ipairs(tagged) do
+                            for _, chest in ipairs(CollectionService:GetTagged("chest")) do
+                                if not running or openedByYou() then
+                                    break
+                                end
                                 if chest:IsA("BasePart") and (chest.Position - root.Position).Magnitude <= range then
-                                    local skip = cfg.TeamCheck and myTeam ~= nil and tostring(teamOfChest(chest)) == tostring(myTeam)
                                     local value = chest:FindFirstChild("ChestFolderValue")
-                                    if not skip and value and value.Value then
-                                        loot(chest, value.Value)
+                                    local folder = value and value.Value
+                                    local skip = cfg.TeamCheck and myTeam ~= nil and tostring(teamOfChest(chest)) == tostring(myTeam)
+                                    -- (don't go by what's in the folder on your side: a chest's items only
+                                    -- show up for you once you look into it, so ask the server instead)
+                                    if folder and not skip then
+                                        report(loot(folder, false))
                                     end
                                 end
                             end
                         end
                     end
-                    task.wait(0.1)
+                    task.wait(0.15)
                 end
             end))
         end,
     })
     chestSteal:AddSlider({ Label = "Range", Key = "Range", Min = 1, Max = 18, Step = 1, Default = 18, Suffix = " studs" })
     chestSteal:AddToggle({ Label = "Only Skywars", Key = "OnlySkywars", Default = false, Tip = "Only works in Skywars matches." })
-    chestSteal:AddToggle({ Label = "GUI Check", Key = "GuiCheck", Default = false, Tip = "Only loot the chest you have open, instead of every chest in range." })
+    chestSteal:AddToggle({ Label = "GUI Check", Key = "GuiCheck", Default = false, Tip = "Only empty a chest when you open it yourself." })
     chestSteal:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = false, Tip = "Leave your own team's chest alone." })
     chestSteal:AddToggle({ Label = "Delay", Key = "UseDelay", Default = false, Tip = "Spread taking the items out over a little time instead of all at once." })
     chestSteal:AddSlider({ Label = "Delay Time", Key = "Delay", Min = 0.1, Max = 5, Step = 0.1, Default = 1, Suffix = " s",
