@@ -15099,7 +15099,7 @@ do
             -- Not everything you can stand on is a game block: some maps have bridges, planks,
             -- logs etc. that are plain parts. Those are collected once per plan (around you and
             -- the target) and marked on the grid too. A cell counts as filled if a part covers
-            -- at least 1 stud of it in every direction.
+            -- at least 0.4 studs of it in every direction.
             local CollectionService = service("CollectionService")
             do
                 local lo = Vector3.new(
@@ -15137,10 +15137,11 @@ do
                         local ez = math.abs(cf.RightVector.Z) * half.X + math.abs(cf.UpVector.Z) * half.Y + math.abs(cf.LookVector.Z) * half.Z
                         local p = cf.Position
                         local minV, maxV = Vector3.new(p.X - ex, p.Y - ey, p.Z - ez), Vector3.new(p.X + ex, p.Y + ey, p.Z + ez)
-                        -- cells (3 studs, centred on multiples of 3) overlapped by >= 1 stud each way
-                        local x0, x1 = math.ceil((minV.X + 0.5) / 3), math.floor((maxV.X - 0.5) / 3)
-                        local y0, y1 = math.ceil((minV.Y + 0.5) / 3), math.floor((maxV.Y - 0.5) / 3)
-                        local z0, z1 = math.ceil((minV.Z + 0.5) / 3), math.floor((maxV.Z - 0.5) / 3)
+                        -- cells (3 studs, centred on multiples of 3) overlapped by at least 0.4 studs
+                        -- each way, so thin planks, slabs and walls count too
+                        local x0, x1 = math.ceil((minV.X - 1.1) / 3), math.floor((maxV.X + 1.1) / 3)
+                        local y0, y1 = math.ceil((minV.Y - 1.1) / 3), math.floor((maxV.Y + 1.1) / 3)
+                        local z0, z1 = math.ceil((minV.Z - 1.1) / 3), math.floor((maxV.Z + 1.1) / 3)
                         local count = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1)
                         if count > 0 and count <= 6000 and marked < 200000 then
                             marked = marked + count
@@ -15316,7 +15317,7 @@ do
                             -- gap jumps: straight over 1..maxGap empty cells (landing up to 2 lower, or
                             -- 1 higher over a 1-block gap), or diagonally over a single corner gap
                             if not solid(x, y + 2, z) then
-                                local maxSpan = diagonal and 1 or maxGap
+                                local maxSpan = diagonal and math.min(2, maxGap) or maxGap
                                 for gap = 1, maxSpan do
                                     local blockedGap = false
                                     for i = 1, gap do
@@ -15337,9 +15338,19 @@ do
                                     end
                                     local lx, lz = x + ax * (gap + 1), z + az * (gap + 1)
                                     local landed = false
-                                    if gap == 1 and not diagonal and standable(lx, y + 1, lz) and not solid(x + ax, y + 2, z + az) then
-                                        consider(node, lx, y + 1, lz, 4.5, "gap")
-                                        landed = true
+                                    -- jumping up one block while crossing (short gaps only)
+                                    if gap <= (diagonal and 1 or 2) and standable(lx, y + 1, lz) then
+                                        local headroom = true
+                                        for i = 1, gap do
+                                            if solid(x + ax * i, y + 2, z + az * i) then
+                                                headroom = false
+                                                break
+                                            end
+                                        end
+                                        if headroom then
+                                            consider(node, lx, y + 1, lz, 4.5 + gap, "gap")
+                                            landed = true
+                                        end
                                     end
                                     for down = 0, math.min(2, maxDrop) do
                                         if standable(lx, y - down, lz) then
@@ -15357,9 +15368,10 @@ do
                                 end
                             end
                         elseif standable(nx, y + 1, nz) and not solid(x, y + 2, z) then
-                            -- one block up (needs headroom to jump)
-                            if not diagonal then
-                                consider(node, nx, y + 1, nz, 2, "jump")
+                            -- one block up (needs headroom to jump); diagonally only if both
+                            -- corners are clear at jump height
+                            if not diagonal or (not solid(x + ax, y + 2, z) and not solid(x, y + 2, z + az)) then
+                                consider(node, nx, y + 1, nz, diagonal and 2.6 or 2, "jump")
                             end
                         end
                     end
@@ -15601,7 +15613,7 @@ do
                     local fromCell = prev and prev.cell or step.cell
                     local isDiag = math.abs(step.cell.X - fromCell.X) > 0 and math.abs(step.cell.Z - fromCell.Z) > 0
                     local ready = (step.action == "jump" and flat.Magnitude < 3.6)
-                        or (step.action == "gap" and fromFlat:Dot(toward) > (isDiag and 1.4 or 1.0))
+                        or (step.action == "gap" and fromFlat:Dot(toward) > (isDiag and 1.7 or 1.25))
                     if ready then
                         hum.Jump = true
                         plannedJumpAt = os.clock()
@@ -15983,9 +15995,9 @@ do
         Tip = "How far down it will drop off a ledge (3 studs = 1 block). Anything deeper counts as void." })
     autoFight:AddToggle({ Label = "Gap Jump", Key = "GapJump", Default = true,
         Tip = "Jump across gaps (straight or diagonal) when that's the shorter way." })
-    autoFight:AddSlider({ Label = "Max Gap", Key = "MaxGap", Min = 1, Max = 3, Default = 2, Step = 1, Suffix = " blocks",
+    autoFight:AddSlider({ Label = "Max Gap", Key = "MaxGap", Min = 1, Max = 4, Default = 3, Step = 1, Suffix = " blocks",
         ShowIf = function(c) return c.GapJump ~= false end,
-        Tip = "Widest gap it will jump straight across. 3 is about the limit of a normal jump." })
+        Tip = "Widest gap it will jump straight across (diagonal gaps up to 2). It jumps right at the edge for the most distance." })
     autoFight:AddSection("Stuck Handling")
     autoFight:AddToggle({ Label = "Unstick", Key = "Unstick", Default = true,
         Tip = "When it stops making progress, it steps back, remembers that spot as bad for a few seconds, and plans a different way." })
