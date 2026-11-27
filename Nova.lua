@@ -15470,6 +15470,40 @@ do
             local strafeSign, strafeFlipAt = 1, 0
             local lastSafe -- last position we stood on solid ground
             local planner = makePathfinder()
+
+            -- Use Kit Ability: runs Nova's AutoKit (which knows how to use every supported kit's
+            -- abilities on nearby enemies) while AutoFight is on. Only switches AutoKit off again
+            -- if AutoFight was the one that turned it on.
+            local kitTurnedOn = false
+            local function findAutoKit()
+                for _, m in ipairs(Nova.ModuleList or {}) do
+                    if m.Name == "AutoKit" then
+                        return m
+                    end
+                end
+            end
+            mod.Maid:Give(task.spawn(function()
+                while mod.Enabled do
+                    local kit = findAutoKit()
+                    if kit then
+                        if cfg.UseKit and not kit.Enabled then
+                            kit:SetEnabled(true, true)
+                            kitTurnedOn = kit.Enabled
+                        elseif not cfg.UseKit and kitTurnedOn and kit.Enabled then
+                            kit:SetEnabled(false, true)
+                            kitTurnedOn = false
+                        end
+                    end
+                    task.wait(1)
+                end
+            end))
+            mod.Maid:Give(function()
+                local kit = kitTurnedOn and findAutoKit()
+                if kit and kit.Enabled then
+                    kit:SetEnabled(false, true)
+                end
+                kitTurnedOn = false
+            end)
             -- current route: steps[0] is where we started, steps[1..] the cells to go through
             local route = { steps = nil, index = 1, goal = nil, at = 0, model = nil, lastProgress = 0, bestDist = math.huge }
             local plannedJumpAt = -math.huge -- jumps/drops the route planned (void recovery leaves those alone)
@@ -15964,6 +15998,8 @@ do
     autoFight:AddToggle({ Label = "Target Lock", Key = "TargetLock", Default = true, ShowIf = function(c) return not c.AlwaysNearest end,
         Tip = "Stick with the same player until they die or get out of chase range, instead of switching to whoever is closest." })
     autoFight:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
+    autoFight:AddToggle({ Label = "Use Kit Ability", Key = "UseKit", Default = false,
+        Tip = "Uses your kit's abilities while fighting (turns on Nova's AutoKit for you, and off again when AutoFight stops)." })
     autoFight:AddSlider({ Label = "CPS", Key = "CPS", Min = 1, Max = 25, Default = 15, Step = 1, Tip = "Clicks per second while fighting someone in range." })
     autoFight:AddToggle({ Label = "Sword Cooldown", Key = "SwordCooldown", Default = false, Tip = "Never click faster than the sword's own attack speed (slower, but every click counts)." })
     autoFight:AddSection("Movement")
@@ -15991,7 +16027,7 @@ do
         Tip = "Back away when your health is at or below this (still hits if they follow). 0 = off." })
     autoFight:AddSection("Void Safety")
     autoFight:AddToggle({ Label = "Void Safety", Key = "VoidSafety", Default = true, Tip = "Never walk or jump toward a spot with no ground under it." })
-    autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 3, Max = 30, Default = 12, Step = 3, Suffix = " studs",
+    autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 3, Max = 60, Default = 18, Step = 3, Suffix = " studs",
         Tip = "How far down it will drop off a ledge (3 studs = 1 block). Anything deeper counts as void." })
     autoFight:AddToggle({ Label = "Gap Jump", Key = "GapJump", Default = true,
         Tip = "Jump across gaps (straight or diagonal) when that's the shorter way." })
