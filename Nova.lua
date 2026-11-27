@@ -15720,8 +15720,14 @@ do
                     return
                 end
 
-                local swordFloor = (meta.sword and type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0
-                local interval = math.max(tonumber(cfg.MinInterval) or 0.05, swordFloor)
+                -- clicks at the CPS you set (with a little natural variation); the sword's own
+                -- cooldown is only respected when "Sword Cooldown" is on
+                local cps = math.clamp(tonumber(cfg.CPS) or 15, 1, 25)
+                local interval = 1 / (cps * (0.9 + math.random() * 0.2))
+                if cfg.SwordCooldown then
+                    local swordFloor = (meta.sword and type(meta.sword.attackSpeed) == "number") and meta.sword.attackSpeed or 0
+                    interval = math.max(interval, swordFloor)
+                end
                 local now = os.clock()
                 if now - lastSend < interval then
                     if not retreating then
@@ -15759,7 +15765,8 @@ do
     autoFight:AddOption({ Label = "Sort", Key = "Sort", Options = { "Distance", "Health", "Angle" }, Default = "Distance" })
     autoFight:AddToggle({ Label = "Target Lock", Key = "TargetLock", Default = true, Tip = "Stick with the same player until they die or get out of chase range, instead of switching to whoever is closest." })
     autoFight:AddToggle({ Label = "Wall Check", Key = "WallCheck", Default = true })
-    autoFight:AddSlider({ Label = "Min Interval", Key = "MinInterval", Min = 0.03, Max = 0.5, Default = 0.05, Step = 0.01, Suffix = "s" })
+    autoFight:AddSlider({ Label = "CPS", Key = "CPS", Min = 1, Max = 25, Default = 15, Step = 1, Tip = "Clicks per second while fighting someone in range." })
+    autoFight:AddToggle({ Label = "Sword Cooldown", Key = "SwordCooldown", Default = false, Tip = "Never click faster than the sword's own attack speed (slower, but every click counts)." })
     autoFight:AddSection("Movement")
     autoFight:AddToggle({ Label = "Walk To Target", Key = "Chase", Default = true })
     autoFight:AddSlider({
