@@ -11704,6 +11704,27 @@ do
         return fallback
     end
 
+    -- shared with AutoFight's bridging (it lives in another part of the file)
+    Nova.Blocks = {
+        Place = placeBlockAt,
+        Exists = worldBlockAt,
+        -- any placeable block in your inventory, wool first (no TNT)
+        AnyBlock = function()
+            local inventory = Bedwars.GetInventory()
+            local fallback
+            for _, item in pairs(inventory and inventory.inventory.items or {}) do
+                local meta = metaOf(item.itemType)
+                if meta and meta.block and (item.amount or 0) > 0 and not string.find(item.itemType, "tnt", 1, true) then
+                    if string.find(item.itemType, "wool", 1, true) then
+                        return item.itemType
+                    end
+                    fallback = fallback or item.itemType
+                end
+            end
+            return fallback
+        end,
+    }
+
     -- Auto Clicker ----------------------------------------------------------------------------------
     local function placeAtMouse()
         local controller = Bedwars.Knit and Bedwars.Knit.Controllers.BlockPlacementController
@@ -14174,69 +14195,6 @@ do
     autoCollect:AddSlider({ Label = "Range", Key = "Range", Min = 4, Max = 20, Default = 10, Step = 0.5, Suffix = " studs" })
     autoCollect:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
 
-    -- Chest Steal: grab items from nearby openable chests
-    local chestSteal = Tabs.Utility:CreateModule({
-        Name = "Chest Steal",
-        Description = "Loots nearby chests when you're close.",
-        OnEnable = function(mod)
-            local cfg = mod.Config
-            local setStatus = makeStatusLabel(mod, "Chest Steal", -150)
-            local CollectionService = service("CollectionService")
-            local last = 0
-            mod.Maid:Give(RunService.Heartbeat:Connect(function()
-                if os.clock() - last < 0.35 then return end
-                last = os.clock()
-                local _, hum, root = Util.GetCharacter(LocalPlayer)
-                if not root or not hum or hum.Health <= 0 then
-                    setStatus(cfg.StatusLine, "waiting")
-                    return
-                end
-                local range = cfg.Range or 12
-                local looted = 0
-                local chests = {}
-                for _, tag in ipairs({ "chest", "Chest", "personal-chest", "team-chest" }) do
-                    pcall(function()
-                        for _, inst in ipairs(CollectionService:GetTagged(tag)) do
-                            chests[#chests + 1] = inst
-                        end
-                    end)
-                end
-                for _, chest in ipairs(chests) do
-                    local pos = chest:IsA("BasePart") and chest.Position
-                        or (chest.PrimaryPart and chest.PrimaryPart.Position)
-                        or (chest:FindFirstChildWhichIsA("BasePart", true) and chest:FindFirstChildWhichIsA("BasePart", true).Position)
-                    if pos and (pos - root.Position).Magnitude <= range then
-                        looted = looted + 1
-                        pcall(function()
-                            if fireproximityprompt then
-                                for _, p in ipairs(chest:GetDescendants()) do
-                                    if p:IsA("ProximityPrompt") then
-                                        fireproximityprompt(p)
-                                    end
-                                end
-                            end
-                            if Bedwars.Client then
-                                for _, name in ipairs({ "ChestGetItem", "OpenChest", "BedwarsOpenChest" }) do
-                                    pcall(function()
-                                        local h = Bedwars.Client:Get(name)
-                                        if h then
-                                            local payload = { chest = chest, chestId = chest:GetAttribute("Id") or chest.Name }
-                                            if h.CallServerAsync then h:CallServerAsync(payload)
-                                            elseif h.CallServer then h:CallServer(payload)
-                                            end
-                                        end
-                                    end)
-                                end
-                            end
-                        end)
-                    end
-                end
-                setStatus(cfg.StatusLine, looted > 0 and ("looting x" .. looted) or "idle")
-            end))
-        end,
-    })
-    chestSteal:AddSlider({ Label = "Range", Key = "Range", Min = 4, Max = 20, Default = 12, Step = 0.5, Suffix = " studs" })
-    chestSteal:AddToggle({ Label = "Status Line", Key = "StatusLine", Default = true })
 
     -- Auto Eat: consume food when HP low
     local autoEat = Tabs.Utility:CreateModule({
@@ -15470,6 +15428,7 @@ do
             local strafeSign, strafeFlipAt = 1, 0
             local lastSafe -- last position we stood on solid ground
             local planner = makePathfinder()
+            local bridgeStep -- defined below (needs the route state)
 
             -- Use Kit Ability: runs Nova's AutoKit (which knows how to use every supported kit's
             -- abilities on nearby enemies) while AutoFight is on. Only switches AutoKit off again
@@ -15589,6 +15548,51 @@ do
                 end)
                 route.thread = thread
                 return route.lastInfo
+            end
+
+            -- Bridging: places a block in front of you (on your floor level, along the main axis
+            -- toward the target), walks onto it, repeat. New blocks are picked up by the next route
+            -- plan, so it switches back to walking as soon as there's a way.
+            local lastPlace = 0
+            bridgeStep = function(hum, root, flatTo)
+                local controller = Bedwars.BlockController
+                if not controller then
+                    return false, "no block controller"
+                end
+                local body = controller:getBlockPosition(root.Position - Vector3.new(0, 2, 0))
+                local floor = body - Vector3.new(0, 1, 0)
+                local dx, dz = 0, 0
+                if math.abs(flatTo.X) >= math.abs(flatTo.Z) then
+                    dx = flatTo.X > 0 and 1 or -1
+                else
+                    dz = flatTo.Z > 0 and 1 or -1
+                end
+                local nextFloor = floor + Vector3.new(dx, 0, dz)
+                local nextWorld = nextFloor * 3
+                local exists = Nova.Blocks.Exists(nextWorld)
+                if not exists then
+                    -- something in the way at body height? then bridging this way won't work
+                    if Nova.Blocks.Exists((body + Vector3.new(dx, 0, dz)) * 3) then
+                        return false, "blocked"
+                    end
+                    local block = Nova.Blocks.AnyBlock()
+                    if not block then
+                        return false, "no blocks to bridge with"
+                    end
+                    if os.clock() - lastPlace >= (tonumber(cfg.BridgeDelay) or 0.12) then
+                        lastPlace = os.clock()
+                        Nova.Blocks.Place(nextWorld, block)
+                    end
+                    -- stand still near the edge until the block is there
+                    hum:Move(Vector3.zero, false)
+                    return true, "bridging"
+                end
+                -- block is there: step onto it
+                local goal = Vector3.new(nextWorld.X - root.Position.X, 0, nextWorld.Z - root.Position.Z)
+                if goal.Magnitude > 0.05 then
+                    hum:Move(goal.Unit, false)
+                end
+                return true, "bridging"
             end
 
             -- Walks the planned route. Returns true if it moved this frame, or false + reason.
@@ -15897,12 +15901,22 @@ do
                                 and (focus.Root.Position - route.goal).Magnitude > (quick and 3 or 6))
                             or now - route.at > 2.5
                         local planInfo
-                        if replan and now - route.at > 0.25 and hum.FloorMaterial ~= Enum.Material.Air then
+                        -- after a plan that couldn't reach them, wait a bit longer before the next try
+                        -- (an unreachable target makes every search run to the limit)
+                        local wait = route.lastInfo == "full" and 0.25 or 1.2
+                        if replan and now - route.at > wait and hum.FloorMaterial ~= Enum.Material.Air then
                             planInfo = planRoute(root, focus)
                         end
                         local moved, why = followRoute(hum, root)
                         if not moved and route.planning then
                             why = "planning"
+                        end
+                        -- no way to walk there (or the route ran out short of them): build a bridge
+                        if not moved and not route.planning and cfg.Bridge and Nova.Blocks
+                            and hum.FloorMaterial ~= Enum.Material.Air then
+                            local built, info = bridgeStep(hum, root, flatTo)
+                            moved = built
+                            why = info
                         end
                         followingRoute = moved
                         if not moved then
@@ -15917,7 +15931,7 @@ do
                         end
                         if not attackTarget then
                             if moved then
-                                setStatus(cfg.StatusLine, string.format("chasing %s (%.0f)", focus.Name, closestDist))
+                                setStatus(cfg.StatusLine, string.format("%s %s (%.0f)", why == "bridging" and "bridging to" or "chasing", focus.Name, closestDist))
                             else
                                 setStatus(cfg.StatusLine, "no way to reach " .. focus.Name .. (why and (" (" .. why .. ")") or ""))
                             end
@@ -16027,13 +16041,17 @@ do
         Tip = "Back away when your health is at or below this (still hits if they follow). 0 = off." })
     autoFight:AddSection("Void Safety")
     autoFight:AddToggle({ Label = "Void Safety", Key = "VoidSafety", Default = true, Tip = "Never walk or jump toward a spot with no ground under it." })
-    autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 3, Max = 60, Default = 18, Step = 3, Suffix = " studs",
+    autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 3, Max = 150, Default = 30, Step = 3, Suffix = " studs",
         Tip = "How far down it will drop off a ledge (3 studs = 1 block). Anything deeper counts as void." })
     autoFight:AddToggle({ Label = "Gap Jump", Key = "GapJump", Default = true,
         Tip = "Jump across gaps (straight or diagonal) when that's the shorter way." })
     autoFight:AddSlider({ Label = "Max Gap", Key = "MaxGap", Min = 1, Max = 4, Default = 3, Step = 1, Suffix = " blocks",
         ShowIf = function(c) return c.GapJump ~= false end,
         Tip = "Widest gap it will jump straight across (diagonal gaps up to 2). It jumps right at the edge for the most distance." })
+    autoFight:AddToggle({ Label = "Bridge", Key = "Bridge", Default = false,
+        Tip = "When there's no way to walk to them, build a bridge toward them with blocks from your inventory (wool first)." })
+    autoFight:AddSlider({ Label = "Bridge Delay", Key = "BridgeDelay", Min = 0.05, Max = 0.5, Default = 0.12, Step = 0.01, Suffix = " s",
+        ShowIf = function(c) return c.Bridge end })
     autoFight:AddSection("Stuck Handling")
     autoFight:AddToggle({ Label = "Unstick", Key = "Unstick", Default = true,
         Tip = "When it stops making progress, it steps back, remembers that spot as bad for a few seconds, and plans a different way." })
@@ -20147,6 +20165,127 @@ do
     autoQueue:AddSlider({ Label = "Delay", Key = "Delay", Min = 0, Max = 10, Step = 0.5, Default = 2, Suffix = " s", Tip = "Wait before queuing." })
     autoQueue:AddOption({ Label = "Queue Type", Key = "QueueMode", Options = MODE_LIST, Default = "Last Played", Dropdown = true,
         Tip = "Last Played queues the mode you were just in (or last played, in the lobby). Random picks any available mode." })
+end
+
+-- ====================== MODULE: CHEST STEAL ======================
+-- Loots chests near you, like aero's ChestSteal: tells the server you're looking into the chest
+-- (SetObservedChest), takes every item out of it (ChestGetItem), then closes it again. Chests
+-- are found by the "chest" tag; their contents sit in the folder their ChestFolderValue points at.
+do
+    local CollectionService = service("CollectionService")
+
+    local function teamOfChest(chest)
+        local best, bestDist
+        for _, tag in ipairs({ "bed", "BedwarsItemShop", "TeamUpgradeShopkeeper" }) do
+            for _, inst in ipairs(CollectionService:GetTagged(tag)) do
+                local pos = inst:IsA("BasePart") and inst.Position or (inst:IsA("Model") and inst:GetPivot().Position)
+                if pos then
+                    local d = (pos - chest.Position).Magnitude
+                    if d <= 150 and (not bestDist or d < bestDist) then
+                        best, bestDist = inst:GetAttribute("TeamId") or inst:GetAttribute("Team"), d
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local chestSteal = Tabs.World:CreateModule({
+        Name = "Chest Steal",
+        Description = "Takes everything out of chests near you (great for Skywars).",
+        OnEnable = function(mod)
+            local cfg = mod.Config
+            assert(Bedwars.Resolve(), "Bedwars not loaded")
+            local okNs, inventory = pcall(function()
+                return Bedwars.Client:GetNamespace("Inventory")
+            end)
+            assert(okNs and inventory, "the game's Inventory remotes weren't found")
+            local observe = inventory:Get("SetObservedChest")
+            local takeItem = inventory:Get("ChestGetItem")
+            assert(observe and takeItem, "chest remotes not found (Bedwars update?)")
+            local nextLoot = {} -- [chest] = time it can be looted again
+            local running = true
+            mod.Maid:Give(function()
+                running = false
+            end)
+
+            local function loot(chest, folder)
+                if not folder or #folder:GetChildren() == 0 then
+                    return
+                end
+                if (nextLoot[chest] or 0) > os.clock() then
+                    return
+                end
+                local items = {}
+                for _, item in ipairs(folder:GetChildren()) do
+                    if item:IsA("Accessory") then
+                        items[#items + 1] = item
+                    end
+                end
+                if #items == 0 then
+                    return
+                end
+                local spread = cfg.UseDelay and (tonumber(cfg.Delay) or 1) or 0
+                nextLoot[chest] = os.clock() + math.max(0.2, spread)
+                pcall(function()
+                    observe:SendToServer(chest)
+                end)
+                for _, item in ipairs(items) do
+                    if spread > 0 then
+                        task.wait(spread / #items)
+                    end
+                    task.spawn(pcall, function()
+                        takeItem:CallServer(chest, item)
+                    end)
+                end
+                pcall(function()
+                    observe:SendToServer(nil)
+                end)
+            end
+
+            mod.Maid:Give(task.spawn(function()
+                while running do
+                    local state = Bedwars.Store and Bedwars.Store:getState()
+                    local game_ = state and state.Game or {}
+                    local queue = tostring(game_.queueType or "")
+                    local allowed = not cfg.OnlySkywars or queue:lower():find("skywars", 1, true)
+                    if allowed and game_.matchState ~= 2 then
+                        local char = LocalPlayer.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+                        if cfg.GuiCheck then
+                            -- only the chest you have open
+                            local observed = char and char:FindFirstChild("ObservedChestFolder")
+                            local folder = observed and observed.Value
+                            if folder then
+                                local chest = folder.Parent and folder.Parent:IsA("BasePart") and folder.Parent or observed
+                                loot(chest, folder)
+                            end
+                        elseif root then
+                            local range = tonumber(cfg.Range) or 18
+                            local myTeam = LocalPlayer:GetAttribute("Team")
+                            for _, chest in ipairs(CollectionService:GetTagged("chest")) do
+                                if chest:IsA("BasePart") and (chest.Position - root.Position).Magnitude <= range then
+                                    local skip = cfg.TeamCheck and myTeam ~= nil and tostring(teamOfChest(chest)) == tostring(myTeam)
+                                    local value = chest:FindFirstChild("ChestFolderValue")
+                                    if not skip and value and value.Value then
+                                        loot(chest, value.Value)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+            end))
+        end,
+    })
+    chestSteal:AddSlider({ Label = "Range", Key = "Range", Min = 1, Max = 18, Step = 1, Default = 18, Suffix = " studs" })
+    chestSteal:AddToggle({ Label = "Only Skywars", Key = "OnlySkywars", Default = false, Tip = "Only works in Skywars matches." })
+    chestSteal:AddToggle({ Label = "GUI Check", Key = "GuiCheck", Default = false, Tip = "Only loot the chest you have open, instead of every chest in range." })
+    chestSteal:AddToggle({ Label = "Team Check", Key = "TeamCheck", Default = false, Tip = "Leave your own team's chest alone." })
+    chestSteal:AddToggle({ Label = "Delay", Key = "UseDelay", Default = false, Tip = "Spread taking the items out over a little time instead of all at once." })
+    chestSteal:AddSlider({ Label = "Delay Time", Key = "Delay", Min = 0.1, Max = 5, Step = 0.1, Default = 1, Suffix = " s",
+        ShowIf = function(c) return c.UseDelay end })
 end
 
 -- ====================== MODULE: DOG ======================
