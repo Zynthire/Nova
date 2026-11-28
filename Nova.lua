@@ -15333,7 +15333,7 @@ do
                                             landed = true
                                         end
                                     end
-                                    for down = 0, math.min(2, maxDrop) do
+                                    for down = 0, math.min(6, maxDrop) do
                                         if standable(lx, y - down, lz) then
                                             consider(node, lx, y - down, lz, 3 + gap + down * 0.3, "gap")
                                             landed = true
@@ -15354,6 +15354,10 @@ do
                             if not diagonal or (not solid(x + ax, y + 2, z) and not solid(x, y + 2, z + az)) then
                                 consider(node, nx, y + 1, nz, diagonal and 2.6 or 2, "jump")
                             end
+                        elseif (opts.climb or 1) >= 2 and not diagonal and standable(nx, y + 2, nz)
+                            and not solid(x, y + 2, z) and not solid(x, y + 3, z) then
+                            -- two blocks up, if your jump is high enough
+                            consider(node, nx, y + 2, nz, 4, "jump")
                         end
                     end
                 end
@@ -15441,6 +15445,11 @@ do
         Description = "Faces, chases, and swings. Auto-equips sword. Never walks into the void.",
         OnEnable = function(mod)
             local cfg = mod.Config
+            -- one-time bump of saved Max Drop values from older versions
+            if not cfg.DropBumped then
+                cfg.MaxDrop = math.max(tonumber(cfg.MaxDrop) or 0, 30)
+                cfg.DropBumped = true
+            end
             local setStatus = makeStatusLabel(mod, "AutoFight", -110)
             local lastSend = 0
             local autoRotateOverridden = nil
@@ -15453,6 +15462,9 @@ do
             local planner = makePathfinder()
             local bridgeStep -- defined below (needs the route state)
             local bridgingUntil = 0
+            -- Collect Loot (Skywars): after a kill, stand where they died for a moment
+            local lastFought -- { Humanoid, Position, At }
+            local loot -- { Position, Since, Arrived }
 
             -- Use Kit Ability: runs Nova's AutoKit (which knows how to use every supported kit's
             -- abilities on nearby enemies) while AutoFight is on. Only switches AutoKit off again
@@ -15515,6 +15527,19 @@ do
                 return cell * 3
             end
 
+            -- how many blocks up your jump can get you (from the humanoid's jump settings)
+            local function climbBlocks()
+                local _, hum = Util.GetCharacter(LocalPlayer)
+                if not hum or cfg.HighJump == false then
+                    return 1
+                end
+                local height = hum.JumpHeight
+                if hum.UseJumpPower then
+                    height = (hum.JumpPower ^ 2) / (2 * Workspace.Gravity)
+                end
+                return (height >= 6.6) and 2 or 1
+            end
+
             local function clearRoute()
                 route.steps, route.index, route.goal, route.model = nil, 1, nil, nil
             end
@@ -15545,6 +15570,7 @@ do
                     partial = true,
                     reachCells = math.max(1, (tonumber(cfg.WalkUntil) or 4.5) / 3),
                     hitCells = math.max(1.5, ((tonumber(cfg.Range) or 14) - 2) / 3),
+                    climb = climbBlocks(),
                     avoid = avoidKeys(),
                 }
                 local thread = task.spawn(function()
@@ -15578,7 +15604,8 @@ do
             -- toward the target), walks onto it, repeat. New blocks are picked up by the next route
             -- plan, so it switches back to walking as soon as there's a way.
             local lastPlace = 0
-            bridgeStep = function(hum, root, flatTo)
+            -- climbUp = target is higher and we're allowed to build stairs up to them
+            bridgeStep = function(hum, root, flatTo, climbUp)
                 local controller = Bedwars.BlockController
                 if not controller then
                     return false, "no block controller"
@@ -15591,43 +15618,58 @@ do
                 else
                     dz = flatTo.Z > 0 and 1 or -1
                 end
-                local nextFloor = floor + Vector3.new(dx, 0, dz)
-                local nextWorld = nextFloor * 3
-                local exists = Nova.Blocks.Exists(nextWorld)
-                if not exists then
-                    -- something in the way at body height? then bridging this way won't work
-                    if Nova.Blocks.Exists((body + Vector3.new(dx, 0, dz)) * 3) then
+                local step = Vector3.new(dx, 0, dz)
+                local nextFloor = floor + step
+                local nextBody = body + step
+                local exists = Nova.Blocks.Exists
+                -- what to place this frame (if anything) and what it's for
+                local placeAt, label
+                if not exists(nextFloor * 3) then
+                    placeAt, label = nextFloor, "bridging"
+                elseif climbUp and not exists(nextBody * 3) and not exists((nextBody + Vector3.new(0, 1, 0)) * 3)
+                    and not exists((nextBody + Vector3.new(0, 2, 0)) * 3) and not exists((body + Vector3.new(0, 2, 0)) * 3) then
+                    -- stairs: a block at body height in front, then jump onto it
+                    placeAt, label = nextBody, "building up"
+                end
+
+                if placeAt then
+                    if label == "bridging" and exists(nextBody * 3) then
                         return false, "blocked"
                     end
                     local block = Nova.Blocks.AnyBlock()
                     if not block then
-                        return false, "no blocks in your hotbar to bridge with"
+                        return false, "no blocks in your hotbar to build with"
                     end
                     bridgingUntil = os.clock() + 0.6 -- keeps AutoFight from swapping back to the sword
                     -- hold the block first, like a real player; place once it's in your hand
                     if Nova.Blocks.Held() ~= block then
                         Nova.Blocks.Hold(block)
                         hum:Move(Vector3.zero, false)
-                        return true, "bridging (switching to blocks)"
+                        return true, label .. " (switching to blocks)"
                     end
                     local placed = nil
                     if os.clock() - lastPlace >= (tonumber(cfg.BridgeDelay) or 0.12) then
                         lastPlace = os.clock()
-                        placed = Nova.Blocks.Place(nextWorld, block)
+                        placed = Nova.Blocks.Place(placeAt * 3, block)
                     end
-                    -- stand still near the edge until the block is there
                     hum:Move(Vector3.zero, false)
                     if placed == false then
-                        return true, "bridging (placing " .. block .. " failed)"
+                        return true, label .. " (placing " .. block .. " failed)"
                     end
-                    return true, "bridging"
+                    return true, label
                 end
-                -- block is there: step onto it
-                local goal = Vector3.new(nextWorld.X - root.Position.X, 0, nextWorld.Z - root.Position.Z)
+
+                -- next spot is ready: step (or jump) onto it
+                local target = (exists(nextBody * 3) and (nextBody + Vector3.new(0, 1, 0)) or nextBody) * 3
+                local goal = Vector3.new(target.X - root.Position.X, 0, target.Z - root.Position.Z)
+                if exists(nextBody * 3) and hum.FloorMaterial ~= Enum.Material.Air then
+                    hum.Jump = true
+                    plannedJumpAt = os.clock()
+                end
                 if goal.Magnitude > 0.05 then
                     hum:Move(goal.Unit, false)
                 end
-                return true, "bridging"
+                return true, climbUp and "building up" or "bridging"
             end
 
             -- Walks the planned route. Returns true if it moved this frame, or false + reason.
@@ -15877,6 +15919,49 @@ do
                     end
                 end
 
+                -- ---------- Collect Loot (Skywars only) ----------
+                if attackTarget then
+                    lastFought = { Humanoid = attackTarget.Humanoid, Position = attackTarget.Root.Position, At = os.clock() }
+                elseif lastFought and os.clock() - lastFought.At > 3 then
+                    lastFought = nil
+                end
+                if lastFought and (lastFought.Humanoid.Health <= 0 or not lastFought.Humanoid.Parent) then
+                    local stateNow = Bedwars.Store and Bedwars.Store:getState()
+                    local queue = tostring(stateNow and stateNow.Game and stateNow.Game.queueType or ""):lower()
+                    if cfg.CollectLoot ~= false and queue:find("skywars", 1, true) then
+                        loot = { Position = lastFought.Position, Since = os.clock() }
+                    end
+                    lastFought = nil
+                end
+                if loot then
+                    local flatToLoot = Vector3.new(loot.Position.X - root.Position.X, 0, loot.Position.Z - root.Position.Z)
+                    local tooLong = os.clock() - loot.Since > 8
+                    if attackTarget or tooLong or (loot.Arrived and os.clock() - loot.Arrived >= (tonumber(cfg.LootTime) or 1)) then
+                        loot = nil -- someone to fight, picked up, or gave up
+                    elseif not userWantsControl() then
+                        box.Adornee = nil
+                        releaseRotation(hum)
+                        if flatToLoot.Magnitude <= 2.5 then
+                            loot.Arrived = loot.Arrived or os.clock()
+                            hum:Move(Vector3.zero, false)
+                            setStatus(cfg.StatusLine, "picking up loot")
+                        else
+                            local pseudo = { Root = { Position = loot.Position }, Model = loot }
+                            local now = os.clock()
+                            if route.model ~= loot and not route.planning and hum.FloorMaterial ~= Enum.Material.Air then
+                                planRoute(root, pseudo)
+                            end
+                            local moved = route.model == loot and followRoute(hum, root)
+                            if not moved then
+                                local dir = nav.steer(root, flatToLoot, cfg.LedgeJump ~= false)
+                                safeMove(hum, root, dir)
+                            end
+                            setStatus(cfg.StatusLine, "going to the loot")
+                        end
+                        return
+                    end
+                end
+
                 -- Target Lock: keep following the same player until they die or get away
                 local focus
                 if cfg.AlwaysNearest then
@@ -15913,7 +15998,10 @@ do
                 end
 
                 local healthPct = hum.Health / math.max(hum.MaxHealth, 1) * 100
+                -- low health: back off, unless the one we're fighting is even lower (finish them)
+                local focusPct = focus.Humanoid and focus.Humanoid.Health / math.max(focus.Humanoid.MaxHealth, 1) * 100 or 100
                 local retreating = (tonumber(cfg.RetreatHealth) or 0) > 0 and healthPct <= cfg.RetreatHealth
+                    and not (cfg.FinishLow ~= false and focusPct < healthPct)
                 local stick = tonumber(cfg.WalkUntil) or 4.5
                 local userControl = userWantsControl()
 
@@ -15954,7 +16042,9 @@ do
                         -- no way to walk there (or the route ran out short of them): build a bridge
                         if not moved and not route.planning and cfg.Bridge and Nova.Blocks
                             and hum.FloorMaterial ~= Enum.Material.Air then
-                            local built, info = bridgeStep(hum, root, flatTo)
+                            local higher = focus.Root.Position.Y - root.Position.Y > 4
+                            local hpOk = healthPct >= (tonumber(cfg.BuildUpHealth) or 60)
+                            local built, info = bridgeStep(hum, root, flatTo, cfg.BuildUp ~= false and higher and hpOk)
                             moved = built
                             why = info
                         end
@@ -16090,12 +16180,21 @@ do
         Tip = "Jump up one block when stuck. Only jumps where there's ground to land on.",
     })
     autoFight:AddToggle({ Label = "Strafe", Key = "Strafe", Default = false, Tip = "Circle around the target while hitting, switching sides now and then (never toward the void)." })
-    autoFight:AddSlider({ Label = "Retreat Health", Key = "RetreatHealth", Min = 0, Max = 80, Default = 0, Step = 5, Suffix = "%",
+    autoFight:AddSlider({ Label = "Retreat Health", Key = "RetreatHealth", Min = 0, Max = 80, Default = 30, Step = 5, Suffix = "%",
         Tip = "Back away when your health is at or below this (still hits if they follow). 0 = off." })
+    autoFight:AddToggle({ Label = "Unless They're Lower", Key = "FinishLow", Default = true,
+        ShowIf = function(c) return (c.RetreatHealth or 0) > 0 end,
+        Tip = "Keep fighting instead of retreating if the enemy has less health (in %) than you." })
+    autoFight:AddToggle({ Label = "Collect Loot", Key = "CollectLoot", Default = true,
+        Tip = "Skywars only: after a kill, walk to where they died and stand there a moment to pick up their items." })
+    autoFight:AddSlider({ Label = "Loot Time", Key = "LootTime", Min = 0.5, Max = 4, Default = 1, Step = 0.5, Suffix = " s",
+        ShowIf = function(c) return c.CollectLoot ~= false end })
     autoFight:AddSection("Void Safety")
     autoFight:AddToggle({ Label = "Void Safety", Key = "VoidSafety", Default = true, Tip = "Never walk or jump toward a spot with no ground under it." })
     autoFight:AddSlider({ Label = "Max Drop", Key = "MaxDrop", Min = 3, Max = 150, Default = 30, Step = 3, Suffix = " studs",
         Tip = "How far down it will drop off a ledge (3 studs = 1 block). Anything deeper counts as void." })
+    autoFight:AddToggle({ Label = "High Jump", Key = "HighJump", Default = true,
+        Tip = "Jump up 2 blocks when your jump is high enough for it (otherwise 1)." })
     autoFight:AddToggle({ Label = "Gap Jump", Key = "GapJump", Default = true,
         Tip = "Jump across gaps (straight or diagonal) when that's the shorter way." })
     autoFight:AddSlider({ Label = "Max Gap", Key = "MaxGap", Min = 1, Max = 4, Default = 3, Step = 1, Suffix = " blocks",
@@ -16105,6 +16204,12 @@ do
         Tip = "When there's no way to walk to them, build a bridge toward them with blocks from your inventory (wool first)." })
     autoFight:AddSlider({ Label = "Bridge Delay", Key = "BridgeDelay", Min = 0.05, Max = 0.5, Default = 0.12, Step = 0.01, Suffix = " s",
         ShowIf = function(c) return c.Bridge end })
+    autoFight:AddToggle({ Label = "Build Up", Key = "BuildUp", Default = true,
+        ShowIf = function(c) return c.Bridge end,
+        Tip = "When the enemy is up higher and there's no way up, build stairs toward them (only with enough health)." })
+    autoFight:AddSlider({ Label = "Build Up Health", Key = "BuildUpHealth", Min = 0, Max = 100, Default = 60, Step = 5, Suffix = "%",
+        ShowIf = function(c) return c.Bridge and c.BuildUp ~= false end,
+        Tip = "Only builds up while your health is at least this." })
     autoFight:AddSection("Stuck Handling")
     autoFight:AddToggle({ Label = "Unstick", Key = "Unstick", Default = true,
         Tip = "When it stops making progress, it steps back, remembers that spot as bad for a few seconds, and plans a different way." })
@@ -20289,8 +20394,20 @@ do
                 nextLoot[folder] = os.clock() + 1
                 if not alreadyOpen then
                     observe:FireServer(folder)
+                    task.wait(0.1) -- let the server register the open chest first
                 end
-                local ok, state = pcall(getState.InvokeServer, getState, folder)
+                -- the chest's contents sometimes aren't ready on the first ask: try a few times
+                local ok, state
+                for attempt = 1, 4 do
+                    ok, state = pcall(getState.InvokeServer, getState, folder)
+                    if ok and type(state) == "table" and type(state.chest) == "table" and type(state.player) == "table" then
+                        break
+                    end
+                    if not alreadyOpen and attempt == 2 then
+                        observe:FireServer(folder) -- ask to open it again
+                    end
+                    task.wait(0.15)
+                end
                 if not ok or type(state) ~= "table" or type(state.chest) ~= "table" or type(state.player) ~= "table" then
                     if not alreadyOpen then
                         observe:FireServer()
