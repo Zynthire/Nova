@@ -16088,6 +16088,24 @@ do
                 local feetY = root.Position.Y - 3
                 local standY = target.Y - 1.5
 
+                -- Already past this step? A new route starts at the centre of the block you're on,
+                -- often behind you - walking back to it made the bot turn around for a moment on
+                -- every re-plan. Skip any step that's behind you on the way to the next one.
+                while steps[route.index + 1] and step.action ~= "drop" and step.action ~= "gap"
+                    and flat.Magnitude < 2.6 and math.abs(feetY - standY) < 2.2 do
+                    local nextWorld = cellWorld(steps[route.index + 1].cell)
+                    local legDir = Vector3.new(nextWorld.X - target.X, 0, nextWorld.Z - target.Z)
+                    local mine = Vector3.new(root.Position.X - target.X, 0, root.Position.Z - target.Z)
+                    if legDir.Magnitude < 0.1 or mine:Dot(legDir.Unit) < -0.2 then
+                        break -- it really is ahead of us
+                    end
+                    route.index = route.index + 1
+                    step = steps[route.index]
+                    target = cellWorld(step.cell)
+                    flat = Vector3.new(target.X - root.Position.X, 0, target.Z - root.Position.Z)
+                    standY = target.Y - 1.5
+                end
+
                 -- reached this step? (drops count once you're over it, the fall does the rest)
                 if flat.Magnitude < 1.1 and (step.action == "drop" or math.abs(feetY - standY) < 2.2) then
                     route.index = route.index + 1
@@ -16104,14 +16122,23 @@ do
                 if flat.Magnitude < route.bestDist - 0.3 then
                     route.bestDist = flat.Magnitude
                     route.lastProgress = os.clock()
-                elseif os.clock() - route.lastProgress > (tonumber(cfg.StuckTime) or 1.5) then
+                elseif os.clock() - route.lastProgress > (tonumber(cfg.StuckTime) or 1.5) * (rushingNow and 1.7 or 1) then
                     if cfg.Unstick ~= false then
                         markFailed(step.cell)
-                        unstickUntil = os.clock() + 0.5
-                        -- back off toward where we came from (or any safe side)
-                        local prev = steps[route.index - 1]
-                        local back = prev and (cellWorld(prev.cell) - root.Position) or -flat
-                        unstickDir = flatUnit(Vector3.new(back.X, 0, back.Z) + Vector3.new(math.random() - 0.5, 0, math.random() - 0.5))
+                        unstickUntil = os.clock() + 0.4
+                        -- step to a safe SIDE (not back the way it came - that read as turning around)
+                        local side = Vector3.new(-flat.Z, 0, flat.X)
+                        if side.Magnitude < 0.1 then
+                            side = Vector3.new(1, 0, 0)
+                        end
+                        side = side.Unit
+                        if math.random() < 0.5 then
+                            side = -side
+                        end
+                        if not nav.safeDir(root.Position, side, 2) or nav.blocked(root.Position, side, 2) then
+                            side = -side
+                        end
+                        unstickDir = side
                     end
                     clearRoute()
                     route.at = 0 -- plan again right away
@@ -16541,6 +16568,14 @@ do
                         route.at = 0
                     end
                 end
+                -- next route still being worked out: keep going toward the goal meanwhile (if it's
+                -- safe and open) instead of standing still - keeps the rush moving
+                if not moved and route.planning and onGround and flatTo.Magnitude > 3 then
+                    local d = flatUnit(flatTo)
+                    if not nav.blocked(root.Position, d, 2.5) and safeMove(hum, root, d) then
+                        moved, why = true, "planning"
+                    end
+                end
                 -- Build only when it's really needed: the planner's last plan for THIS goal found no
                 -- full walking route (or we're genuinely stuck), or we're mid-tower. Not on the frame
                 -- between one route ending and the next being planned - that's what put random
@@ -16571,7 +16606,7 @@ do
                         -- still nothing: pick a safe open side, step there and hop
                         local base = flatUnit(flatTo, root.CFrame.LookVector)
                         local pick
-                        for _, deg in ipairs({ 90, -90, 135, -135, 180, 45, -45 }) do
+                        for _, deg in ipairs({ 90, -90, 45, -45, 135, -135, 180 }) do
                             local d = flatUnit(CFrame.Angles(0, math.rad(deg), 0) * base)
                             if not nav.blocked(root.Position, d, 2.5) and nav.safeDir(root.Position, d, 3) then
                                 pick = d
@@ -16727,7 +16762,7 @@ do
                         -- step out of the spot: a safe open side (furthest from walls first), and a hop
                         local look = flatUnit(root.CFrame.LookVector)
                         local pushed = false
-                        for _, deg in ipairs({ 180, 90, -90, 135, -135, 45, -45, 0 }) do
+                        for _, deg in ipairs({ 90, -90, 45, -45, 135, -135, 180, 0 }) do
                             local d = flatUnit(CFrame.Angles(0, math.rad(deg), 0) * look)
                             if not nav.blocked(root.Position, d, 3) and nav.safeDir(root.Position, d, 3) then
                                 still.forceDir, still.forceUntil = d, nowW + pushTime
