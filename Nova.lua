@@ -4307,16 +4307,34 @@ function Nova.Unload(keepSaved)
     pcall(function()
         UI.Gui:Destroy()
     end)
+    -- the Vape GUI is its own ScreenGui: hide it straight away too (it's fully removed by the
+    -- maid below), so self destruct always looks instant even if something further down is slow
+    pcall(function()
+        local lib = UI.Vape and UI.Vape.Lib
+        if lib and lib.gui then
+            lib.gui.Enabled = false
+        end
+    end)
 
     -- Disable every module so each one restores what it touched (walkspeed, hidden default game
-    -- tags, etc). The visuals are already gone above, so from here this is best-effort state
-    -- cleanup - it no longer gates whether anything stays on screen.
+    -- tags, etc). Each one runs in its own thread with a short time limit: a module whose cleanup
+    -- waits on the server (or hangs) used to stall the whole uninject right here, which is why
+    -- self destruct sometimes did nothing.
+    local pendingDisables = 0
     for _, mod in ipairs(Nova.ModuleList) do
-        pcall(function()
-            if mod.Enabled then
-                mod:SetEnabled(false, true)
-            end
-        end)
+        if mod.Enabled then
+            pendingDisables = pendingDisables + 1
+            task.spawn(function()
+                pcall(function()
+                    mod:SetEnabled(false, true)
+                end)
+                pendingDisables = pendingDisables - 1
+            end)
+        end
+    end
+    local disableStarted = os.clock()
+    while pendingDisables > 0 and os.clock() - disableStarted < 1.5 do
+        task.wait()
     end
 
     pcall(function()
@@ -20466,7 +20484,29 @@ do
                 return taken
             end
 
+            -- The server has already given you the items, but your game only redraws your inventory
+            -- when something in it changes on your side. Flicking to the next hotbar slot and
+            -- straight back (like scrolling once each way) makes it refresh and show them.
+            local function refreshInventory()
+                local inv = Bedwars.GetInventory and Bedwars.GetInventory()
+                local current = inv and tonumber(inv.hotbarSlot)
+                if not (current and Bedwars.Store) then
+                    return
+                end
+                local count = math.max(#(inv.hotbar or {}), 9)
+                pcall(function()
+                    Bedwars.Store:dispatch({ type = "InventorySelectHotbarSlot", slot = (current + 1) % count })
+                end)
+                task.wait(0.05)
+                pcall(function()
+                    Bedwars.Store:dispatch({ type = "InventorySelectHotbarSlot", slot = current })
+                end)
+            end
+
             local function report(taken, err)
+                if taken and taken > 0 then
+                    task.spawn(refreshInventory)
+                end
                 if err then
                     mod:SetStatus(err, "error")
                 elseif taken and taken > 0 then
