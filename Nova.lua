@@ -15558,6 +15558,28 @@ do
                 cfg.ShotDelay, cfg.DangerRange, cfg.RunnerTime = 0.6, 12, 2
                 cfg.SkywarsDefaultsV5 = true
             end
+            if opts.chests and not cfg.SkywarsDefaultsV10 then
+                cfg.RushFightRange = 18
+                cfg.LootRange = 18
+                cfg.BridgeDelay = math.min(tonumber(cfg.BridgeDelay) or 0.08, 0.08) -- faster bridging
+                cfg.SkywarsDefaultsV10 = true
+            end
+            if opts.chests and not cfg.SkywarsDefaultsV9 then
+                cfg.PearlHealth, cfg.PearlMin, cfg.PearlCooldown = 50, 8, 2.5
+                cfg.RushStop = 35
+                cfg.BuildUpHealth = math.min(tonumber(cfg.BuildUpHealth) or 35, 35)
+                cfg.ChaseBridgeRange = 30
+                cfg.SkywarsDefaultsV9 = true
+            end
+            if opts.chests and not cfg.SkywarsDefaultsV8 then
+                cfg.MaxDrop = math.max(tonumber(cfg.MaxDrop) or 0, 80)
+                cfg.SkywarsDefaultsV8 = true
+            end
+            if opts.chests and not cfg.SkywarsDefaultsV7 then
+                cfg.StartLootTime = 30
+                cfg.ResetAfter = 4
+                cfg.SkywarsDefaultsV7 = true
+            end
             if opts.chests and not cfg.SkywarsDefaultsV6 then
                 cfg.LootRange = 16
                 cfg.UseDelay = false -- no spreading items out over time: grab everything at once
@@ -15582,6 +15604,9 @@ do
             local lastMidPearlTry, lastEscapeTry = 0, 0
             local pearlNote = "" -- why it didn't pearl toward the middle (status line)
             local lastPearlFailAt = -math.huge -- last time a pearl toward the middle found no safe landing
+            local hunt = { model = nil, best = math.huge, at = 0 } -- who it's hunting + progress
+            local holdBack = false -- on its way back to the middle (keeps going until it's there)
+            local lastFireballAt = -math.huge
             local shortcut = { untilAt = 0, offUntil = 0, startDist = nil, at = 0 } -- straight bridge to mid
             local needBlocks = false -- ran out of blocks on the way somewhere
             local noBlocksUntil = 0 -- found no blocks anywhere: don't try to build until then
@@ -15667,6 +15692,7 @@ do
             -- current route: steps[0] is where we started, steps[1..] the cells to go through
             local route = { steps = nil, index = 1, goal = nil, at = 0, model = nil, lastProgress = 0, bestDist = math.huge }
             local plannedJumpAt = -math.huge -- jumps/drops the route planned (void recovery leaves those alone)
+            local dropUntil = 0 -- an intended drop is in progress (air control leaves it alone)
             local followingRoute = false
             -- spots where we got stuck: avoided for a while so the next plan tries another way
             local failed = {} -- [key] = expiry time
@@ -15819,6 +15845,16 @@ do
 
                 if placeAt then
                     if label == "bridging" and exists(nextBody * 3) then
+                        -- a block hanging in the way at body height: if there's room on top of it,
+                        -- jump up onto it and carry on from there instead of giving up
+                        if not exists((nextBody + Vector3.new(0, 1, 0)) * 3) and not exists((nextBody + Vector3.new(0, 2, 0)) * 3)
+                            and not exists((body + Vector3.new(0, 2, 0)) * 3) and hum.FloorMaterial ~= Enum.Material.Air then
+                            local up = nextBody * 3 + Vector3.new(0, 3, 0)
+                            hum.Jump = true
+                            plannedJumpAt = os.clock()
+                            hum:Move(flatUnit(Vector3.new(up.X - root.Position.X, 0, up.Z - root.Position.Z)), false)
+                            return true, "stepping up onto a block"
+                        end
                         return false, "blocked"
                     end
                     -- never bridge on and on into nothing (bad goal, target way off): stop here
@@ -15851,7 +15887,15 @@ do
                             end
                         end
                     end
-                    hum:Move(Vector3.zero, false)
+                    -- stay centred on the block you're standing on (sideways to the bridge), so a
+                    -- 1-wide bridge never ends with a foot hanging off the side
+                    local centre = floor * 3
+                    local side = Vector3.new(dz ~= 0 and (centre.X - root.Position.X) or 0, 0, dx ~= 0 and (centre.Z - root.Position.Z) or 0)
+                    if side.Magnitude > 0.5 and nav.safeDir(root.Position, side.Unit, 1) then
+                        hum:Move(side.Unit * 0.6, false)
+                    else
+                        hum:Move(Vector3.zero, false)
+                    end
                     if placed == false then
                         return true, label .. " (placing " .. block .. " failed)"
                     end
@@ -15925,6 +15969,110 @@ do
                 return true, climbUp and "building up" or "bridging"
             end
 
+            -- ---------- Movement helpers: step-up jumps, safe drops ----------
+            local moveParams = RaycastParams.new()
+            moveParams.FilterType = Enum.RaycastFilterType.Exclude
+            local moveParamsAt = 0
+            local function refreshMoveParams()
+                if os.clock() - moveParamsAt < 1 then
+                    return
+                end
+                moveParamsAt = os.clock()
+                local list = { Workspace.CurrentCamera }
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr.Character then
+                        list[#list + 1] = plr.Character
+                    end
+                end
+                moveParams.FilterDescendantsInstances = list
+            end
+            local function solidHit(origin, dir)
+                local hit = Workspace:Raycast(origin, dir, moveParams)
+                return (hit and hit.Instance and hit.Instance.CanCollide) and hit or nil
+            end
+
+            -- Walking into a 1-block step: jump it while still holding forward, like a player.
+            -- Heights come from the character itself (hip height + body size), not a guess - with
+            -- a fixed guess the "block in front" check could pass under or over the block, so it
+            -- never jumped. It jumps when the step is right in front, or as soon as it's been
+            -- pushing into something at knee height for a moment without moving (the backup).
+            -- Never for 2+ high walls (those are for towers/other routes) or without headroom.
+            local lastStepJump, pushStart = 0, nil
+            local function stepUp(hum, root, dir)
+                if not dir or dir.Magnitude < 0.05 or hum.FloorMaterial == Enum.Material.Air
+                    or os.clock() - lastStepJump < 0.35 then
+                    pushStart = nil
+                    return false
+                end
+                refreshMoveParams()
+                local d = flatUnit(dir)
+                local feetY = root.Position.Y - (hum.HipHeight + root.Size.Y / 2)
+                local knee = Vector3.new(root.Position.X, feetY + 1, root.Position.Z)
+                local front = solidHit(knee, d * 2.6)
+                if not front then
+                    pushStart = nil
+                    return false -- nothing to step up onto
+                end
+                if solidHit(Vector3.new(root.Position.X, feetY + 4.2, root.Position.Z), d * 2.8) then
+                    pushStart = nil
+                    return false -- 2+ blocks high: not jumpable
+                end
+                if solidHit(root.Position, Vector3.new(0, 3.5, 0)) then
+                    return false -- no headroom
+                end
+                -- a real top to land on, about one block up (not a thin edge over the void)
+                local top = solidHit(front.Position + d * 1 + Vector3.new(0, 4.5, 0), Vector3.new(0, -5, 0))
+                if not top or top.Position.Y - feetY < 0.5 or top.Position.Y - feetY > 3.8 then
+                    pushStart = nil
+                    return false
+                end
+                local v = root.AssemblyLinearVelocity
+                if Vector3.new(v.X, 0, v.Z).Magnitude < 1.5 then
+                    pushStart = pushStart or os.clock()
+                else
+                    pushStart = nil
+                end
+                local close = (front.Position - knee).Magnitude < 1.9
+                if close or (pushStart and os.clock() - pushStart > 0.25) then
+                    hum.Jump = true
+                    lastStepJump = os.clock()
+                    plannedJumpAt = os.clock()
+                    pushStart = nil
+                    return true
+                end
+                return false
+            end
+
+            -- On a ledge with the goal below and no route down: find a direction to drop off
+            -- onto a proper landing (solid, with floor all around it, within Max Drop).
+            -- Returns the direction and how far down, or nil.
+            local function findDrop(root, flatTo)
+                refreshMoveParams()
+                local maxDrop = tonumber(cfg.MaxDrop) or 30
+                local base = flatUnit(flatTo, root.CFrame.LookVector)
+                for _, deg in ipairs({ 0, 25, -25, 50, -50, 80, -80 }) do
+                    local d = flatUnit(CFrame.Angles(0, math.rad(deg), 0) * base)
+                    -- has to be an edge: no floor right in front
+                    if not solidHit(root.Position + d * 2.5, Vector3.new(0, -4, 0)) then
+                        local probe = root.Position + d * 3.5
+                        local land = solidHit(probe, Vector3.new(0, -(maxDrop + 3), 0))
+                        if land and land.Position.Y < root.Position.Y - 4 then
+                            local wide = true
+                            for _, off in ipairs({ Vector3.new(2.5, 0, 0), Vector3.new(-2.5, 0, 0), Vector3.new(0, 0, 2.5), Vector3.new(0, 0, -2.5) }) do
+                                if not solidHit(Vector3.new(probe.X, land.Position.Y + 3, probe.Z) + off, Vector3.new(0, -5, 0)) then
+                                    wide = false
+                                    break
+                                end
+                            end
+                            if wide then
+                                return d, (root.Position.Y - 3) - land.Position.Y
+                            end
+                        end
+                    end
+                end
+                return nil
+            end
+
             -- Walks the planned route. Returns true if it moved this frame, or false + reason.
             local function followRoute(hum, root)
                 local steps = route.steps
@@ -15988,6 +16136,7 @@ do
                     end
                 elseif step.action == "drop" then
                     plannedJumpAt = os.clock()
+                    dropUntil = os.clock() + 2.5
                 end
                 if flat.Magnitude > 0.05 then
                     local dir = flat.Unit
@@ -16007,6 +16156,7 @@ do
                         route.at = 0
                         return false, "edge - not stepping off"
                     end
+                    stepUp(hum, root, dir)
                     hum:Move(dir, false)
                 end
                 return true
@@ -16043,10 +16193,50 @@ do
             end
 
             -- Moves only if the direction is safe; otherwise stands still. Returns true if moved.
+            -- Boxed in (pit, walls all round): pillar straight up - jump, put a block where you
+            -- were standing once your feet are above it, land on it, repeat - until you can walk out.
+            local pillarUntil = 0
+            local function pillarUp(hum, root)
+                local blocks = Nova.Blocks
+                local controller = Bedwars.BlockController
+                if not (blocks and controller) then
+                    return false, "can't build here"
+                end
+                local block = blocks.AnyBlock()
+                if not block then
+                    return false, "no blocks to build up with"
+                end
+                bridgingUntil = os.clock() + 0.8
+                if blocks.Held() ~= block then
+                    blocks.Hold(block)
+                    hum:Move(Vector3.zero, false)
+                    return true, "building up out of here (switching to blocks)"
+                end
+                hum:Move(Vector3.zero, false)
+                local body = controller:getBlockPosition(root.Position - Vector3.new(0, 2, 0))
+                if blocks.Exists((body + Vector3.new(0, 2, 0)) * 3) then
+                    return false, "no room above to build up"
+                end
+                if hum.FloorMaterial ~= Enum.Material.Air then
+                    towerBase = body
+                    hum.Jump = true
+                    plannedJumpAt = os.clock()
+                elseif towerBase and not blocks.Exists(towerBase * 3) and connectedCell(towerBase)
+                    and root.Position.Y - 3 >= towerBase.Y * 3 + 1.3 then
+                    if blocks.Place(towerBase * 3, block) ~= false then
+                        myBlocks[#myBlocks + 1] = towerBase
+                    end
+                    lastPlace = os.clock()
+                    towerBase = nil
+                end
+                return true, "building up out of here"
+            end
+
             local function safeMove(hum, root, dir)
                 if dir and dir.Magnitude > 0.05 then
                     dir = flatUnit(dir)
                     if not safety() or nav.safeDir(root.Position, dir, 3) then
+                        stepUp(hum, root, dir)
                         hum:Move(dir, false)
                         return true
                     end
@@ -16310,6 +16500,16 @@ do
                 if errand.key ~= key or not errand.pos or (root.Position - errand.pos).Magnitude > 1.5 then
                     errand.key, errand.pos, errand.at = key, root.Position, now
                 end
+                -- pillaring out of a pit
+                if now < pillarUntil then
+                    local ok, note = pillarUp(hum, root)
+                    if ok then
+                        errand.at = now
+                        followingRoute = false
+                        return true, note
+                    end
+                    pillarUntil = 0
+                end
                 -- wiggling free from an earlier stall
                 if now < unstickUntil and unstickDir then
                     if not safeMove(hum, root, unstickDir) then
@@ -16354,6 +16554,18 @@ do
                         needBlocks = true -- the resupply step (Auto Skywars) gets more before anything else
                     end
                 end
+                -- goal below and no walking way down: drop off a ledge onto a proper landing
+                if not moved and (stalled or noWalkway) and onGround and gap < -4 then
+                    local dropDir, depth = findDrop(root, flatTo)
+                    if dropDir then
+                        hum:Move(dropDir, false)
+                        plannedJumpAt = now
+                        dropUntil = now + 3
+                        errand.at = now
+                        followingRoute = false
+                        return true, string.format("dropping down (%.0f)", depth or 0)
+                    end
+                end
                 if not moved and (stalled or not route.planning) then
                     if stalled and onGround then
                         -- still nothing: pick a safe open side, step there and hop
@@ -16375,6 +16587,10 @@ do
                             plannedJumpAt = now
                             safeMove(hum, root, pick)
                             moved, why = true, "stuck - getting out"
+                        elseif Nova.Blocks and Nova.Blocks.AnyBlock() then
+                            -- no open side at all: build up out of it
+                            pillarUntil = now + 3
+                            moved, why = pillarUp(hum, root)
                         else
                             why = "boxed in"
                         end
@@ -16437,7 +16653,7 @@ do
             -- show up), something got stuck. Soft reset: drop the route, the chest it was going
             -- for, any half-done building or mining, skip the start chests if it was on those,
             -- and step out of the spot. It says where it was stuck so it can be fixed properly.
-            local still = { pos = nil, at = os.clock(), resets = 0 }
+            local still = { pos = nil, at = os.clock(), resets = 0, here = 0, lastPos = nil, forceUntil = 0, forceDir = nil }
             local function softReset(where)
                 clearRoute()
                 route.at = 0
@@ -16474,31 +16690,73 @@ do
                 local char, hum, root = Util.GetCharacter(LocalPlayer)
                 if root and hum and hum.Health > 0 and cfg.Watchdog ~= false then
                     local nowW = os.clock()
-                    if not still.pos or (root.Position - still.pos).Magnitude > 2 then
+                    -- sideways movement only: jumping up and down on the spot is NOT progress
+                    if not still.pos or Vector3.new(root.Position.X - still.pos.X, 0, root.Position.Z - still.pos.Z).Magnitude > 2 then
                         still.pos, still.at = root.Position, nowW
                     end
                     local text = lastStatusText
                     -- standing still is fine while fighting, looting, or with nothing to do
                     local okIdle = nowW < fightUntil or (chests and chests.busy)
-                        or text:find("no one in chase range", 1, true) or text:find("no target", 1, true)
+                        or text:find("no one", 1, true) or text:find("no target", 1, true)
                         or text:find("waiting for character", 1, true) or text:find("unavailable", 1, true)
                         or text:find("0/", 1, true) and text:find("- waiting", 1, true) -- pre-game cage
                         or userWantsControl()
                     if okIdle then
                         still.at = nowW
-                    elseif nowW - still.at > (tonumber(cfg.ResetAfter) or 6) then
+                    elseif nowW - still.at > (tonumber(cfg.ResetAfter) or 4) then
                         softReset(text)
                         still.at = nowW
-                        -- step out of the spot: a safe open side, and a hop
+                        -- stuck in the same area again? escalate: that spot is bad, find a different
+                        -- way to wherever it was going, push out for longer
+                        if still.lastPos and Vector3.new(root.Position.X - still.lastPos.X, 0, root.Position.Z - still.lastPos.Z).Magnitude < 8 then
+                            still.here = still.here + 1
+                        else
+                            still.here = 1
+                        end
+                        still.lastPos = root.Position
+                        local pushTime = 0.6
+                        if still.here >= 2 then
+                            badWaypoints[#badWaypoints + 1] = { pos = root.Position, untilAt = nowW + 60 }
+                            midBestAt, lastWaypointTry = -math.huge, 0 -- look for another way now
+                            if locked then
+                                ignoreChase[locked.Model] = nowW + 15
+                                locked = nil
+                            end
+                            pushTime = 1.4
+                        end
+                        -- step out of the spot: a safe open side (furthest from walls first), and a hop
                         local look = flatUnit(root.CFrame.LookVector)
-                        for _, deg in ipairs({ 90, -90, 180, 45, -45, 135, -135, 0 }) do
+                        local pushed = false
+                        for _, deg in ipairs({ 180, 90, -90, 135, -135, 45, -45, 0 }) do
                             local d = flatUnit(CFrame.Angles(0, math.rad(deg), 0) * look)
-                            if not nav.blocked(root.Position, d, 2.5) and nav.safeDir(root.Position, d, 3) then
-                                unstickDir, unstickUntil = d, nowW + 0.6
+                            if not nav.blocked(root.Position, d, 3) and nav.safeDir(root.Position, d, 3) then
+                                still.forceDir, still.forceUntil = d, nowW + pushTime
+                                unstickDir, unstickUntil = d, nowW + pushTime
                                 hum.Jump = true
                                 plannedJumpAt = nowW
+                                pushed = true
                                 break
                             end
+                        end
+                        if not pushed then
+                            pillarUntil = nowW + 3 -- no way out sideways: build up out of it
+                        end
+                    end
+                    if nowW < pillarUntil and not userWantsControl() then
+                        local ok, note = pillarUp(hum, root)
+                        if ok then
+                            setStatus(cfg.StatusLine, note)
+                            return
+                        end
+                        pillarUntil = 0
+                    end
+                    -- the push-out runs whatever the bot was doing (still never off an edge)
+                    if nowW < still.forceUntil and still.forceDir and not userWantsControl() then
+                        if not safeMove(hum, root, still.forceDir) then
+                            still.forceUntil = 0
+                        else
+                            setStatus(cfg.StatusLine, "was stuck - getting out")
+                            return
                         end
                     end
                 end
@@ -16551,7 +16809,18 @@ do
                             hum:Move(-flatV.Unit, false)
                             edgeBraking = true -- keep braking, but still swing at anyone in range (below)
                         end
-                    elseif lastSafe and not nav.groundAt(root.Position, 80)
+                    elseif lastSafe and os.clock() > dropUntil and not nav.groundAt(root.Position, 12)
+                        and nav.groundAt(lastSafe, 6) and root.Position.Y >= lastSafe.Y - 1.5 then
+                        -- Air control: in the air (a jump, a bump, a step) and drifting over nothing,
+                        -- but not falling yet - steer straight back over the last ground you stood
+                        -- on now, before it turns into a fall into the void
+                        local back = Vector3.new(lastSafe.X - root.Position.X, 0, lastSafe.Z - root.Position.Z)
+                        if back.Magnitude > 0.3 then
+                            hum:Move(back.Unit, false)
+                        end
+                        setStatus(cfg.StatusLine, "in the air over nothing - steering back")
+                        return
+                    elseif lastSafe and not nav.groundAt(root.Position, 100)
                         and root.Position.Y < lastSafe.Y - 1.5
                         and (os.clock() - plannedJumpAt > 1.2 or root.AssemblyLinearVelocity.Y < -25) then
                         -- in the air over the void (knockback, a missed jump): steer back toward the
@@ -16606,6 +16875,8 @@ do
                 local nearestEnemy = math.huge -- any living enemy, chaseable or not
                 local enemiesNear = 0 -- living enemies within 16 studs
                 local fleeVec = Vector3.zero -- away from everyone within 30 studs, closer ones count more
+                local huntEntry, huntDist = nil, math.huge -- nearest enemy anywhere (for when there's nothing else to do)
+                local aliveEnemies = 0 -- living enemy players (for endgame mode)
                 for _, entry in ipairs(Util.GetTargets(cfg.Targets or "Players")) do
                     if entry.Root and entry.Humanoid and entry.Humanoid.Health > 0
                         and not (entry.Player and Util.IsTeammate(entry.Player)) then
@@ -16616,6 +16887,12 @@ do
                         end
                         if dist <= 16 then
                             enemiesNear = enemiesNear + 1
+                        end
+                        if dist < huntDist and (ignoreChase[entry.Model] or 0) <= os.clock() then
+                            huntEntry, huntDist = entry, dist
+                        end
+                        if entry.Player then
+                            aliveEnemies = aliveEnemies + 1
                         end
                         if dist <= 30 then
                             local away = Vector3.new(root.Position.X - entry.Root.Position.X, 0, root.Position.Z - entry.Root.Position.Z)
@@ -16677,12 +16954,35 @@ do
                     lockedStill = false
                 end
 
+                -- ---------- Endgame ----------
+                -- Only a few players left (Endgame Players or fewer): hunting beats looting. No going
+                -- out of the way for chests, no holding the middle, and it bridges much further to get
+                -- to them (Endgame Bridge Range). Chests it walks past still get grabbed.
+                local endgame = chests ~= nil and cfg.EndgameHunt ~= false and aliveEnemies > 0
+                    and aliveEnemies <= (tonumber(cfg.EndgamePlayers) or 3)
+                local chaseBridgeLimit = tonumber(cfg.ChaseBridgeRange) or 30
+                if endgame then
+                    chaseBridgeLimit = math.max(chaseBridgeLimit, tonumber(cfg.EndgameBridgeRange) or 90)
+                    if phase == "rush" then
+                        phase = "play" -- endgame started mid-rush: go hunting instead
+                        clearRoute()
+                    end
+                end
+
                 -- ---------- Rush priority ----------
                 -- Start of the game (Auto Skywars rush): getting to the middle beats everything
                 -- except actually being hit or being nearly dead. Players just standing near you
                 -- are ignored - no stopping, no sword swap, no cancelling the bridge.
                 local beingHit = os.clock() - hurtAt < (tonumber(cfg.HurtCooldown) or 3)
-                rushingNow = chests ~= nil and phase == "rush" and cfg.RushPriority ~= false and not beingHit
+                -- Only someone RIGHT on you (Rush Fight Range) stops the rush. Getting hit from range
+                -- (bows, max-reach hits) doesn't turn it around anymore - it keeps going and swings
+                -- at whoever is in reach while it walks.
+                -- "actively attacked" = you took damage in the last few seconds AND someone is
+                -- within melee distance (Rush Fight Range). Bow hits, people standing around or
+                -- running after you don't count: it keeps going to the middle.
+                local attacked = beingHit and nearestEnemy <= (tonumber(cfg.RushFightRange) or 18)
+                rushingNow = chests ~= nil and phase == "rush" and cfg.RushPriority ~= false
+                    and not attacked
                     and not (hum.Health / math.max(hum.MaxHealth, 1) * 100 <= (tonumber(cfg.CriticalHealth) or 30)
                         and nearestEnemy <= 20)
 
@@ -16799,7 +17099,7 @@ do
                         chests.skip(chests.folder, phase == "start" and 3 or 15)
                     end
 
-                    local lootRange = tonumber(cfg.LootRange) or 16
+                    local lootRange = tonumber(cfg.LootRange) or 18
                     local function onLooted(_, taken, finished)
                         if phase == "start" and (finished or taken > 0) then
                             startLooted = startLooted + 1
@@ -16836,6 +17136,16 @@ do
                             clearRoute()
                             hum:Move(Vector3.zero, false)
                             setStatus(cfg.StatusLine, "can't reach that chest - skipping it")
+                            return
+                        end
+                        -- close chest on about the same level with nothing in the way: walk straight
+                        -- at it (no waiting on the route planner) - much quicker on your base
+                        local flatToChest = Vector3.new(chest.Position.X - root.Position.X, 0, chest.Position.Z - root.Position.Z)
+                        if flatToChest.Magnitude < 30 and math.abs(chest.Position.Y - root.Position.Y) < 4
+                            and flatToChest.Magnitude > 0.5 and not nav.blocked(root.Position, flatToChest.Unit, math.min(flatToChest.Magnitude, 8))
+                            and safeMove(hum, root, flatToChest) then
+                            followingRoute = false
+                            setStatus(cfg.StatusLine, string.format("going to a chest (%.0f)%s", chestDist, lootTag))
                             return
                         end
                         local _, why = goTo(hum, root, chest.Position, chest, cfg.BuildToReach ~= false)
@@ -16898,8 +17208,9 @@ do
                                 outOfCageAt = now
                             end
                             local timeUp = now - phaseSince >= (tonumber(cfg.StartTime) or 40)
-                                or (outOfCageAt and now - outOfCageAt >= (tonumber(cfg.StartLootTime) or 15))
-                            if startLooted >= wanted or timeUp then
+                                or (outOfCageAt and now - outOfCageAt >= (tonumber(cfg.StartLootTime) or 30))
+                            -- the last one being emptied right now counts: go as soon as it's open
+                            if startLooted + ((chests.busy and startLooted >= wanted - 1) and 1 or 0) >= wanted or timeUp then
                                 phase, phaseSince = "rush", now
                                 center = chests.mapCenter()
                                 center = center and items.groundNear(center) -- the middle island, not empty air
@@ -16962,10 +17273,12 @@ do
                                 releaseRotation(hum)
                                 -- got a pearl (start chests often have one)? throw it onto the middle
                                 -- island - only onto solid ground with a clear arc, never short
-                                if opts.items and cfg.PearlMiddle ~= false and not items.busy
+                                -- (not when you're already on the middle island or can just walk there)
+                                local canWalkThere = route.model == RUSH_GOAL and route.lastInfo == "full"
+                                if opts.items and cfg.PearlMiddle ~= false and not items.busy and not canWalkThere
                                     and hum.FloorMaterial ~= Enum.Material.Air and now - lastPearlAt > 3
                                     and now - lastMidPearlTry > 1
-                                    and flatToMid.Magnitude > (tonumber(cfg.RushStop) or 25) + 15 then
+                                    and flatToMid.Magnitude > (tonumber(cfg.RushStop) or 35) + 25 then
                                     lastMidPearlTry = now
                                     local pearl = items.findPearl()
                                     local land, high = nil, nil
@@ -17047,7 +17360,7 @@ do
                                 -- Turned off for 15 s if it stops making progress that way.
                                 if cfg.BridgeShortcut ~= false and cfg.RushBridge ~= false and now >= shortcut.offUntil
                                     and now >= shortcut.untilAt and route.model == RUSH_GOAL and route.steps
-                                    and #route.steps * 3 > flatToMid.Magnitude * 1.8 + 20
+                                    and #route.steps * 3 > flatToMid.Magnitude * 1.4 + 12
                                     and hotbarBlocks() >= flatToMid.Magnitude / 3 + 4 then
                                     shortcut.untilAt, shortcut.startDist, shortcut.at = now + 4, flatToMid.Magnitude, now
                                 end
@@ -17092,7 +17405,10 @@ do
 
                         -- ----- play: loot when nobody is near -----
                         if phase == "play" and safe then
-                            local chest, chestDist, folder = chests.nearest(root, tonumber(cfg.ChestRange) or 80, maxHeight)
+                            local chest, chestDist, folder = nil, nil, nil
+                            if not endgame then
+                                chest, chestDist, folder = chests.nearest(root, tonumber(cfg.ChestRange) or 80, maxHeight)
+                            end
                             -- only close chests, or ones at the middle - not a trail of chests across
                             -- the map away from where the fights are
                             if chest and center and chestDist > (tonumber(cfg.NearChest) or 30) then
@@ -17108,9 +17424,46 @@ do
                             chestGoal = nil
                             -- nothing to loot and nobody to chase: hold the middle (that's where
                             -- people come, and where the loot is)
-                            if not closest and center and cfg.HoldMiddle ~= false then
+                            -- Nothing to loot and nobody in chase range: always have a goal.
+                            -- 1) Hunt the nearest enemy, and STICK with them. If it isn't getting
+                            --    closer for 6 s (they're somewhere it can't get to), drop them for
+                            --    25 s and pick someone else. (Before, hunting and "back to the
+                            --    middle" took turns every frame at the 45-stud line = shaking.)
+                            if not closest and huntEntry and cfg.HuntAnywhere ~= false then
+                                if hunt.model ~= huntEntry.Model then
+                                    hunt.model, hunt.best, hunt.at = huntEntry.Model, huntDist, now
+                                end
+                                if huntDist < hunt.best - 3 then
+                                    hunt.best, hunt.at = huntDist, now
+                                end
+                                if now - hunt.at > 6 then
+                                    ignoreChase[huntEntry.Model] = now + 25
+                                    hunt.model = nil
+                                    clearRoute()
+                                else
+                                    holdBack = false
+                                    box.Adornee = nil
+                                    releaseRotation(hum)
+                                    -- walks to them; only builds when they're close (no bridges to their base)
+                                    local canBuildHunt = cfg.Bridge ~= false and huntDist <= chaseBridgeLimit
+                                    local _, why = goTo(hum, root, huntEntry.Root.Position, huntEntry.Model, canBuildHunt)
+                                    local note = (type(why) == "string" and why ~= "") and (" - " .. why) or ""
+                                    setStatus(cfg.StatusLine, string.format("%s %s (%.0f)%s%s", endgame and ("endgame (" .. aliveEnemies .. " left) - hunting") or "hunting",
+                                        huntEntry.Name, huntDist, note, lootTag))
+                                    return
+                                end
+                            end
+                            -- 2) Nobody to hunt: back to the middle. Starts beyond Middle Stop + 15,
+                            --    keeps going until within Middle Stop (no flickering on one line).
+                            if not closest and center and cfg.HoldMiddle ~= false and not endgame then
                                 local flatToMid = Vector3.new(center.X - root.Position.X, 0, center.Z - root.Position.Z)
-                                if flatToMid.Magnitude > (tonumber(cfg.RushStop) or 25) + 10 then
+                                local stopAt = tonumber(cfg.RushStop) or 35
+                                if flatToMid.Magnitude > stopAt + 15 then
+                                    holdBack = true
+                                elseif flatToMid.Magnitude <= stopAt then
+                                    holdBack = false
+                                end
+                                if holdBack then
                                     box.Adornee = nil
                                     releaseRotation(hum)
                                     local _, why = goTo(hum, root, center, RUSH_GOAL, cfg.RushBridge ~= false)
@@ -17220,7 +17573,7 @@ do
                 -- ---------- items (Auto Skywars): pearl onto low enemies, bow/crossbow ----------
                 -- Never while bridging/building, in the air, or with someone in hitting range for
                 -- the bow. Shots run in the background, so movement below carries on as normal.
-                if opts.items and not userControl and not inFight and not items.busy and os.clock() >= bridgingUntil
+                if opts.items and not userControl and not items.busy and os.clock() >= bridgingUntil
                     and hum.FloorMaterial ~= Enum.Material.Air then
                     local now = os.clock()
                     if chaseModel ~= focus.Model or attackTarget then
@@ -17231,14 +17584,23 @@ do
 
                     -- Pearl onto a low enemy: only when there's solid floor under and around them,
                     -- and the throw has a clear arc to it (so it can't land short in the void)
-                    if cfg.UsePearl ~= false and not retreating and focusPct <= (tonumber(cfg.PearlHealth) or 40)
-                        and dist3 >= (tonumber(cfg.PearlMin) or 14) and dist3 <= (tonumber(cfg.PearlMax) or 70)
-                        and now - lastPearlAt > 4 then
+                    -- (allowed with them close by - just not when you can already hit them)
+                    if cfg.UsePearl ~= false and not retreating and not attackTarget
+                        and focusPct <= (tonumber(cfg.PearlHealth) or 50)
+                        and dist3 >= (tonumber(cfg.PearlMin) or 8) and dist3 <= (tonumber(cfg.PearlMax) or 70)
+                        and now - lastPearlAt > (tonumber(cfg.PearlCooldown) or 2.5) then
                         local pearl = items.findPearl()
                         local land = pearl and items.safeLanding(focus.Root)
                         local clear, high = false, false
                         if land then
                             clear, high = items.pearlArcClear(root.Position, land)
+                        end
+                        if pearl and not clear then
+                            -- right under them isn't safe/reachable: solid ground close to them
+                            local near, nearHigh = items.middleLanding(focus.Root.Position, root.Position)
+                            if near and (near - focus.Root.Position).Magnitude <= 9 then
+                                land, clear, high = near, true, nearHigh
+                            end
                         end
                         if clear then
                             -- thrown at the spot that was checked (not wherever they've moved to)
@@ -17253,9 +17615,41 @@ do
                         end
                     end
 
+                    -- Fireball: they're close but behind a wall (sword and bow can't get them) -
+                    -- throw it at them; it blows up at the wall right next to them. Never when the
+                    -- wall is right in front of you (the blast would hit you instead).
+                    if not used and cfg.UseFireball ~= false and dist3 >= 6
+                        and dist3 <= (tonumber(cfg.FireballRange) or 24)
+                        and now - lastFireballAt > (tonumber(cfg.FireballCooldown) or 2) then
+                        local hidden = true
+                        for _, h in ipairs({ 1.5, 0, 2.6 }) do
+                            if Util.HasLineOfSight(root.Position + Vector3.new(0, h, 0), focus.Root.Position + Vector3.new(0, h, 0)) then
+                                hidden = false
+                                break
+                            end
+                        end
+                        local ball = hidden and items.findItem("fireball")
+                        local eye = root.Position + Vector3.new(0, 1.5, 0)
+                        local wallAt = ball and items.firstHit(eye, focus.Root.Position)
+                        if ball and wallAt and wallAt >= 5 then
+                            local target = focus
+                            if items.fire(ball, "fireball", function()
+                                if not target.Root.Parent then
+                                    return nil
+                                end
+                                return target.Root.Position, nil
+                            end, 0.06) then
+                                lastFireballAt = now
+                                bridgingUntil = now + 0.4
+                                used = true
+                                setStatus(cfg.StatusLine, string.format("fireball at %s (behind a wall)", focus.Name))
+                            end
+                        end
+                    end
+
                     -- Bow/crossbow: they're out of sword reach, and either nobody is close enough
                     -- to hit you, or you've been chasing them for a while (they keep running)
-                    if not used and cfg.UseBow ~= false and not attackTarget
+                    if not used and cfg.UseBow ~= false and not attackTarget and not inFight
                         and dist3 > attackRange + 2 and dist3 <= (tonumber(cfg.BowRange) or 90)
                         and (nearestEnemy > (tonumber(cfg.DangerRange) or 12)
                             or now - chaseSince > (tonumber(cfg.RunnerTime) or 2))
@@ -17323,14 +17717,26 @@ do
                             why = "planning"
                         end
                         -- no way to walk there (or the route ran out short of them): build a bridge
-                        if not moved and not route.planning and cfg.Bridge and Nova.Blocks and not inFight
+                        -- * not blocked by "someone close": a player up a pillar can be close sideways and
+                        --   still out of reach - that's exactly when to build up to them
+                        -- * never bridges further than Chase Bridge Range to chase someone (it used to
+                        --   bridge all the way to people standing on their own island)
+                        if not moved and not route.planning and cfg.Bridge and Nova.Blocks and not attackTarget
+                            and dist <= chaseBridgeLimit
                             and (route.lastInfo ~= "full" or towerBase ~= nil) -- only when there's no walkable way
                             and (hum.FloorMaterial ~= Enum.Material.Air or towerBase ~= nil) then
-                            local higher = focus.Root.Position.Y - root.Position.Y > 4
-                            local hpOk = healthPct >= (tonumber(cfg.BuildUpHealth) or 60)
-                            local built, info = bridgeStep(hum, root, flatTo, cfg.BuildUp ~= false and higher and hpOk)
-                            moved = built
-                            why = info
+                            local rise = focus.Root.Position.Y - root.Position.Y
+                            local higher = rise > 4
+                            local hpOk = healthPct >= (tonumber(cfg.BuildUpHealth) or 35)
+                            if cfg.BuildUp ~= false and higher and hpOk and dist <= 4 then
+                                -- they're (nearly) straight above you: pillar up under yourself
+                                local built, info = pillarUp(hum, root)
+                                moved, why = built, info
+                            else
+                                local built, info = bridgeStep(hum, root, flatTo, cfg.BuildUp ~= false and higher and hpOk)
+                                moved = built
+                                why = info
+                            end
                         end
                         followingRoute = moved
                         if not moved then
@@ -17461,8 +17867,13 @@ do
             -- thrown - those keep you alive.
             local forcedSwap = 0
             mod.Maid:Give(RunService.Heartbeat:Connect(function()
-                if cfg.ForceSwing == false or rushingNow then
-                    return -- (rushing the middle: only swings once someone is actually hitting us)
+                if cfg.ForceSwing == false then
+                    return
+                end
+                -- rushing: swing at people in reach while walking, but never break a bridge or tower
+                -- for it (that's what made it stop and turn back)
+                if rushingNow and (os.clock() < bridgingUntil or towerBase ~= nil or items.busy) then
+                    return
                 end
                 local _, hum, root = Util.GetCharacter(LocalPlayer)
                 if not (hum and root and hum.Health > 0) then
@@ -17488,13 +17899,15 @@ do
                 end
                 fightUntil = os.clock() + 1.5 -- also keeps Auto Eat paused
 
-                local overVoid = hum.FloorMaterial == Enum.Material.Air and not nav.groundAt(root.Position, 80)
+                local overVoid = hum.FloorMaterial == Enum.Material.Air and not nav.groundAt(root.Position, 100)
                 if overVoid or (items.busy and items.kind == "pearl") then
                     return
                 end
                 -- drop whatever else was going on and get the sword out
-                bridgingUntil = 0
-                towerBase = nil
+                if not rushingNow then
+                    bridgingUntil = 0
+                    towerBase = nil
+                end
                 local item, meta = Bedwars.GetHeldSword()
                 if not item then
                     if os.clock() - forcedSwap > 0.12 then
@@ -17569,18 +17982,46 @@ do
 
         -- middle of the map: the average of every chest's position (Skywars maps are symmetric,
         -- so the spawn islands' chests cancel out around the middle island)
+        -- The middle island: the middle has the most chests close together (spawn islands have
+        -- ~3 each), and it sits near the centre of all chests. So: for every chest, count chests
+        -- within 35 studs; the best bunch (most chests, closest to the overall centre) is the
+        -- middle, and its average position is returned. A plain average of all chests could land
+        -- near an enemy island on lopsided maps - that's how it bridged to someone's base.
         function looter.mapCenter()
-            local sum, count = Vector3.zero, 0
+            local list = {}
+            local sum = Vector3.zero
             for _, chest in ipairs(CollectionService:GetTagged("chest")) do
                 if chest:IsA("BasePart") then
+                    list[#list + 1] = chest.Position
                     sum = sum + chest.Position
-                    count = count + 1
                 end
             end
-            if count < 4 then
+            if #list < 4 then
                 return nil -- not enough chests to tell where the middle is
             end
-            return sum / count
+            local avg = sum / #list
+            local spread = 0
+            for _, p in ipairs(list) do
+                spread = math.max(spread, Vector3.new(p.X - avg.X, 0, p.Z - avg.Z).Magnitude)
+            end
+            local best, bestScore
+            for _, p in ipairs(list) do
+                local bunch, n = Vector3.zero, 0
+                for _, q in ipairs(list) do
+                    if Vector3.new(p.X - q.X, 0, p.Z - q.Z).Magnitude <= 35 then
+                        bunch = bunch + q
+                        n = n + 1
+                    end
+                end
+                local centre = bunch / n
+                local off = Vector3.new(centre.X - avg.X, 0, centre.Z - avg.Z).Magnitude
+                -- more chests together = better; far from the map centre = worse
+                local score = n * 10 - off / math.max(spread, 1) * 30
+                if not bestScore or score > bestScore then
+                    best, bestScore = centre, score
+                end
+            end
+            return best
         end
         local skipUntil = {} -- [folder] = don't go for it again before this time
         local thread = nil
@@ -17833,6 +18274,13 @@ do
         -- launch velocity that lands on `target` (low arc), and the flight time; nil if out of range
         local function ballistic(origin, target, speed, gravity, high)
             local delta = target - origin
+            if gravity < 0.5 then
+                -- no gravity (fireballs): straight at it
+                if delta.Magnitude < 0.5 then
+                    return nil
+                end
+                return delta.Unit * speed, delta.Magnitude / speed
+            end
             local flat = Vector3.new(delta.X, 0, delta.Z)
             local dx, dy = flat.Magnitude, delta.Y
             if dx < 0.5 then
@@ -18035,6 +18483,25 @@ do
                 end
             end
             return nil
+        end
+
+        -- an item in the hotbar whose name contains `name` (e.g. "fireball")
+        function user.findItem(name)
+            local inv = inventory()
+            for _, slot in ipairs(inv and inv.hotbar or {}) do
+                local item = slot and slot.item
+                if item and (item.amount or 0) > 0 and tostring(item.itemType):lower():find(name, 1, true) then
+                    return item.itemType
+                end
+            end
+            return nil
+        end
+
+        -- distance to the first solid thing between two points (players ignored), or nil
+        function user.firstHit(from, to)
+            refreshRay()
+            local hit = Workspace:Raycast(from, to - from, rayParams)
+            return hit and (hit.Position - from).Magnitude or nil
         end
 
         function user.anyPearl()
@@ -18243,7 +18710,7 @@ do
                         end
                         local landPt = ground + Vector3.new(0, 0.2, 0)
                         local left = Vector3.new(goal.X - landPt.X, 0, goal.Z - landPt.Z).Magnitude
-                        if solidAround and left < total - 15 then
+                        if solidAround and left < total - 25 then
                             local ok, isHigh = user.pearlArcClear(origin, landPt)
                             if ok then
                                 return landPt, isHigh
@@ -18265,6 +18732,8 @@ do
             local speed, gravity, offset
             if kind == "pearl" then
                 speed, gravity, offset = pearlPhysics()
+            elseif kind == "fireball" then
+                gravity = 0
             end
             speed, gravity, offset = speed or 150, gravity or 196.2, offset or Vector3.new(0, 1.5, 0)
             local launch = solve(myRoot.Position + offset, point, vel, speed, gravity, high)
@@ -18427,7 +18896,10 @@ do
     m:AddToggle({ Label = "Build Up", Key = "BuildUp", Default = true,
         ShowIf = function(c) return c.Bridge end,
         Tip = "When the enemy is up higher and there's no way up, build stairs toward them (only with enough health)." })
-    m:AddSlider({ Label = "Build Up Health", Key = "BuildUpHealth", Min = 0, Max = 100, Default = 60, Step = 5, Suffix = "%",
+    m:AddSlider({ Label = "Chase Bridge Range", Key = "ChaseBridgeRange", Min = 6, Max = 120, Default = 30, Step = 2, Suffix = " studs",
+        ShowIf = function(c) return c.Bridge end,
+        Tip = "Only bridges/builds to chase someone this close. Further away it walks (or lets them go) - no bridging across to enemy islands." })
+    m:AddSlider({ Label = "Build Up Health", Key = "BuildUpHealth", Min = 0, Max = 100, Default = opts.chests and 35 or 60, Step = 5, Suffix = "%",
         ShowIf = function(c) return c.Bridge and c.BuildUp ~= false end,
         Tip = "Only builds up while your health is at least this." })
     m:AddToggle({ Label = "Block Clutch", Key = "BlockClutch", Default = true,
@@ -18439,7 +18911,7 @@ do
     m:AddSection("Stuck Handling")
     m:AddToggle({ Label = "Watchdog", Key = "Watchdog", Default = true,
         Tip = "If it stands still for Reset After seconds when it should be doing something, it resets itself (new route, skips that chest, steps out) and tells you where it was stuck." })
-    m:AddSlider({ Label = "Reset After", Key = "ResetAfter", Min = 3, Max = 20, Default = 6, Step = 1, Suffix = " s",
+    m:AddSlider({ Label = "Reset After", Key = "ResetAfter", Min = 2, Max = 20, Default = 4, Step = 1, Suffix = " s",
         ShowIf = function(c) return c.Watchdog ~= false end })
     m:AddToggle({ Label = "Unstick", Key = "Unstick", Default = true,
         Tip = "When it stops making progress, it steps back, remembers that spot as bad for a few seconds, and plans a different way." })
@@ -18470,7 +18942,7 @@ do
     autoSkywars:AddSlider({ Label = "Start Time Limit", Key = "StartTime", Min = 10, Max = 120, Default = 40, Step = 5, Suffix = " s",
         ShowIf = function(c) return c.RushMiddle ~= false end,
         Tip = "Rush anyway if the start chests still aren't looted this long after you spawn (includes the pre-game cage)." })
-    autoSkywars:AddSlider({ Label = "Middle Stop Distance", Key = "RushStop", Min = 10, Max = 60, Default = 25, Step = 5, Suffix = " studs",
+    autoSkywars:AddSlider({ Label = "Middle Stop Distance", Key = "RushStop", Min = 10, Max = 80, Default = 35, Step = 5, Suffix = " studs",
         ShowIf = function(c) return c.RushMiddle ~= false end,
         Tip = "Counts as 'in the middle' this close to the centre of the map. After that it plays normally." })
     autoSkywars:AddToggle({ Label = "Bridge To Middle", Key = "RushBridge", Default = true,
@@ -18479,7 +18951,10 @@ do
     autoSkywars:AddToggle({ Label = "Rush Priority", Key = "RushPriority", Default = true,
         ShowIf = function(c) return c.RushMiddle ~= false end,
         Tip = "While rushing the middle, ignore players who aren't hitting you (no stopping, no sword swap, no loot detours). Being hit or nearly dead still comes first." })
-    autoSkywars:AddSlider({ Label = "Start Chest Time", Key = "StartLootTime", Min = 5, Max = 60, Default = 15, Step = 1, Suffix = " s",
+    autoSkywars:AddSlider({ Label = "Rush Fight Range", Key = "RushFightRange", Min = 3, Max = 30, Default = 18, Step = 1, Suffix = " studs",
+        ShowIf = function(c) return c.RushMiddle ~= false end,
+        Tip = "While rushing, it only stops to fight when it's been hit in the last few seconds by someone this close (being actively attacked). Everything else: keep going to the middle." })
+    autoSkywars:AddSlider({ Label = "Start Chest Time", Key = "StartLootTime", Min = 5, Max = 60, Default = 30, Step = 1, Suffix = " s",
         ShowIf = function(c) return c.RushMiddle ~= false end,
         Tip = "Once you're out of the cage, at most this long on the start chests before rushing the middle." })
     autoSkywars:AddSlider({ Label = "Rush Give Up", Key = "RushGiveUp", Min = 30, Max = 600, Default = 180, Step = 10, Suffix = " s",
@@ -18487,6 +18962,16 @@ do
         Tip = "Only stops trying to reach the middle after this long (it keeps finding other ways until then)." })
     autoSkywars:AddSlider({ Label = "Near Chest Range", Key = "NearChest", Min = 10, Max = 80, Default = 30, Step = 5, Suffix = " studs",
         Tip = "After the rush, only goes for chests this close to you, or chests at the middle." })
+    autoSkywars:AddToggle({ Label = "Endgame Hunt", Key = "EndgameHunt", Default = true,
+        Tip = "With only a few players left: stop going for chests and holding the middle, and hunt them down (bridging further to reach them)." })
+    autoSkywars:AddSlider({ Label = "Endgame Players", Key = "EndgamePlayers", Min = 1, Max = 8, Default = 3, Step = 1,
+        ShowIf = function(c) return c.EndgameHunt ~= false end,
+        Tip = "Endgame starts when this many enemy players (or fewer) are still alive." })
+    autoSkywars:AddSlider({ Label = "Endgame Bridge Range", Key = "EndgameBridgeRange", Min = 30, Max = 200, Default = 90, Step = 5, Suffix = " studs",
+        ShowIf = function(c) return c.EndgameHunt ~= false end,
+        Tip = "In the endgame it bridges/builds to chase anyone this close (instead of Chase Bridge Range)." })
+    autoSkywars:AddToggle({ Label = "Hunt Anywhere", Key = "HuntAnywhere", Default = true,
+        Tip = "Nothing to loot and nobody in chase range: goes after the nearest enemy wherever they are, instead of waiting." })
     autoSkywars:AddToggle({ Label = "Bridge Shortcut", Key = "BridgeShortcut", Default = true,
         ShowIf = function(c) return c.RushMiddle ~= false end,
         Tip = "If the walking way to the middle is a long way round and you have enough blocks, bridge straight there instead." })
@@ -18502,7 +18987,7 @@ do
         Tip = "After you take damage, don't touch chests for this long (someone is fighting you)." })
     autoSkywars:AddSlider({ Label = "Chest Range", Key = "ChestRange", Min = 10, Max = 250, Default = 80, Step = 5, Suffix = " studs",
         Tip = "How far it will walk to get to a chest." })
-    autoSkywars:AddSlider({ Label = "Loot Range", Key = "LootRange", Min = 4, Max = 18, Default = 16, Step = 1, Suffix = " studs",
+    autoSkywars:AddSlider({ Label = "Loot Range", Key = "LootRange", Min = 4, Max = 18, Default = 18, Step = 1, Suffix = " studs",
         Tip = "Opens the chest once you're this close (same as Chest Steal's Range)." })
     autoSkywars:AddSlider({ Label = "Chest Timeout", Key = "ChestTimeout", Min = 4, Max = 40, Default = 18, Step = 1, Suffix = " s",
         Tip = "If it can't reach a chest in this long, it skips that chest for a while." })
@@ -18525,14 +19010,22 @@ do
     autoSkywars:AddSection("Items")
     autoSkywars:AddToggle({ Label = "Use Pearls", Key = "UsePearl", Default = true,
         Tip = "Pearls onto low-health enemies - only onto solid ground with a clear throw." })
-    autoSkywars:AddSlider({ Label = "Pearl At Health", Key = "PearlHealth", Min = 5, Max = 100, Default = 40, Step = 5, Suffix = "%",
+    autoSkywars:AddSlider({ Label = "Pearl At Health", Key = "PearlHealth", Min = 5, Max = 100, Default = 50, Step = 5, Suffix = "%",
         ShowIf = function(c) return c.UsePearl ~= false end, Tip = "Only pearls onto enemies at or below this health." })
-    autoSkywars:AddSlider({ Label = "Pearl Min Distance", Key = "PearlMin", Min = 6, Max = 40, Default = 14, Step = 1, Suffix = " studs",
+    autoSkywars:AddSlider({ Label = "Pearl Min Distance", Key = "PearlMin", Min = 4, Max = 40, Default = 8, Step = 1, Suffix = " studs",
         ShowIf = function(c) return c.UsePearl ~= false end, Tip = "Closer than this it just walks." })
+    autoSkywars:AddSlider({ Label = "Pearl Cooldown", Key = "PearlCooldown", Min = 1, Max = 15, Default = 2.5, Step = 0.5, Suffix = " s",
+        ShowIf = function(c) return c.UsePearl ~= false end, Tip = "Minimum time between pearls onto enemies." })
     autoSkywars:AddSlider({ Label = "Pearl Max Distance", Key = "PearlMax", Min = 20, Max = 120, Default = 70, Step = 5, Suffix = " studs",
         ShowIf = function(c) return c.UsePearl ~= false end })
     autoSkywars:AddToggle({ Label = "Escape Pearl", Key = "EscapePearl", Default = true,
         Tip = "Backing off (low health or outnumbered) with someone right on you: pearls away onto safe ground." })
+    autoSkywars:AddToggle({ Label = "Use Fireballs", Key = "UseFireball", Default = true,
+        Tip = "Throws a fireball at a close enemy hiding behind a wall (the blast goes off next to them). Never with the wall right in front of you." })
+    autoSkywars:AddSlider({ Label = "Fireball Range", Key = "FireballRange", Min = 8, Max = 50, Default = 24, Step = 2, Suffix = " studs",
+        ShowIf = function(c) return c.UseFireball ~= false end })
+    autoSkywars:AddSlider({ Label = "Fireball Cooldown", Key = "FireballCooldown", Min = 0.5, Max = 10, Default = 2, Step = 0.5, Suffix = " s",
+        ShowIf = function(c) return c.UseFireball ~= false end })
     autoSkywars:AddToggle({ Label = "Use Bow / Crossbow", Key = "UseBow", Default = true,
         Tip = "Shoots enemies out of sword reach while it keeps moving (crossbow first, needs arrows)." })
     autoSkywars:AddToggle({ Label = "Instant Shot", Key = "InstantShot", Default = true,
@@ -18548,7 +19041,7 @@ do
         Tip = "Chasing the same player this long without reaching them: shoot them even if Danger Range isn't clear." })
     autoSkywars:AddSlider({ Label = "Shot Delay", Key = "ShotDelay", Min = 0.2, Max = 5, Default = 0.6, Step = 0.1, Suffix = " s",
         ShowIf = function(c) return c.UseBow ~= false end, Tip = "Minimum time between shots." })
-    addFightOptions(autoSkywars, { kit = false, noGap = true, nearest = true, bridge = true, maxDrop = 60 })
+    addFightOptions(autoSkywars, { kit = false, noGap = true, nearest = true, bridge = true, maxDrop = 80, chests = true })
 
     -- ===================== Auto Play [BETA] =====================
     local autoPlay = Tabs.Automation:CreateModule({
